@@ -7,7 +7,10 @@
 # Bash 3.2 compatible (macOS ships no newer bash on PATH by default).
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# MERGE_REPO_ROOT override lets the orchestrator run a COPY of this script — merge.sh
+# checks out branches mid-run, and bash reading the executing file while a checkout swaps
+# it is undefined behavior. Copy to a temp path, set the env var, run the copy.
+repo_root="${MERGE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$repo_root"
 
 die() {
@@ -78,14 +81,17 @@ if [[ -z "$issue_branch" ]]; then
     die "$issue_id has no 'branch:' set in frontmatter"
 fi
 
-review_dir="$repo_root/reviews"
-latest_review=""
-if [[ -d "$review_dir" ]]; then
-    latest_review="$(find "$review_dir" -maxdepth 1 -name "${issue_id}-round*.md" 2>/dev/null | sort -V | tail -n1 || true)"
+# Review records live on the FEATURE BRANCH (doc 05 §5.2) and only reach main via the
+# squash merge — so read them from the branch's tree, not the current working tree.
+issue_branch_early="$(frontmatter_value "$issue_file" "branch")"
+latest_review_path="$(git ls-tree -r --name-only "$issue_branch_early" -- reviews/ 2>/dev/null \
+    | grep "^reviews/${issue_id}-round.*\.md$" | sort -V | tail -n1 || true)"
+if [[ -z "$latest_review_path" ]]; then
+    die "no review file found for $issue_id on branch '$issue_branch_early' (expected reviews/${issue_id}-round*.md)"
 fi
-if [[ -z "$latest_review" ]]; then
-    die "no review file found for $issue_id in $review_dir (expected ${issue_id}-round*.md)"
-fi
+latest_review="$(mktemp "${TMPDIR:-/tmp}/merge-review.XXXXXX")"
+git show "${issue_branch_early}:${latest_review_path}" > "$latest_review"
+trap 'rm -f "$latest_review"' EXIT
 
 review_verdict="$(frontmatter_value "$latest_review" "verdict")"
 review_commit="$(frontmatter_value "$latest_review" "reviewed-commit")"
