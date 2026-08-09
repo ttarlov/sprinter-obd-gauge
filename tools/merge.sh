@@ -111,7 +111,13 @@ branch_head="$(git rev-parse "$issue_branch")"
 branch_head_short="$(git rev-parse --short "$issue_branch")"
 
 if [[ "$review_commit" != "$branch_head" && "$review_commit" != "$branch_head_short" ]]; then
-    die "stale approval: reviewed-commit '$review_commit' != branch head '$branch_head_short' (any commit after approval voids it)"
+    # Review-record commits land on the branch AFTER the commit they review (doc 05 §5.2),
+    # so exempt commits that touch only reviews/ — any other path after approval voids it.
+    non_review_paths="$(git diff --name-only "$review_commit".."$branch_head" -- . ':!reviews/' 2>/dev/null || echo "DIFF_FAILED")"
+    if [[ -n "$non_review_paths" ]]; then
+        die "stale approval: reviewed-commit '$review_commit' != branch head '$branch_head_short' and non-review paths changed since approval: $non_review_paths"
+    fi
+    echo "  OK — commits after $review_commit touch reviews/ only (review records)"
 fi
 
 echo "  OK — $issue_id in-review on '$issue_branch'; $latest_review approved at $branch_head_short"
