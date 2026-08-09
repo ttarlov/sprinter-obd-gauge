@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.detekt)
+    alias(libs.plugins.roborazzi)
 }
 
 android {
@@ -49,7 +50,10 @@ android {
     }
 
     testOptions {
-        unitTests.isIncludeAndroidResources = false
+        // Robolectric (OBD-10) needs the merged manifest/resources on the unit-test
+        // classpath — it resolves `androidx.activity.ComponentActivity` (compose-ui-test's
+        // default test host, registered by `ui-test-manifest`) from there.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -60,12 +64,15 @@ kotlin {
 }
 
 dependencies {
+    // OBD-10 (gauge dashboard v1) builds only against the frozen contracts and the fake
+    // data source. Real ObdLink -> VehicleDataSource wiring (:core:ble, :core:protocol)
+    // arrives with Phase 4 integration; see app/MODULE.md.
     implementation(project(":core:model"))
-    implementation(project(":core:protocol"))
-    implementation(project(":core:ble"))
+    implementation(project(":core:testing"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
 
@@ -85,7 +92,13 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(project(":core:testing"))
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(libs.roborazzi.junit.rule)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)
@@ -96,4 +109,13 @@ dependencies {
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+}
+
+// Unit tests run on the debug variant only: the suite is Robolectric/Roborazzi-based and
+// Robolectric cannot instrument release-variant activities, while running the same JVM
+// tests twice per gate adds time and no signal.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        variant.enableUnitTest = false
+    }
 }
