@@ -1,0 +1,17 @@
+# Path prefix -> owning role(s). Machine-read by tools/module-isolation.sh.
+# A branch may only touch paths owned by its author role (plus reviews/ for reviewers).
+/app/                ui-agent
+/core/model/         orchestrator
+/core/protocol/      protocol-agent
+/core/ble/           ble-agent
+/core/testing/       orchestrator protocol-agent
+/tools/              orchestrator
+/docs/               orchestrator
+/research/           researcher
+/gradle/             orchestrator
+DECISIONS.md         orchestrator
+STATUS.md            orchestrator
+README.md            orchestrator
+OWNERSHIP            orchestrator
+issues/              orchestrator
+reviews/             reviewer merge-agent

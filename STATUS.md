@@ -1,0 +1,128 @@
+# STATUS — Sprinter OBD Gauge App
+
+> **The single source of truth for what's done and what's next.** The orchestrator updates this file at every wave start and wave end, and reconciles it against ground truth (`grep status: issues/`, `git branch -a`, `git log main`) before spawning any agent. A mismatch between this file and the repo is a process bug — fix the mismatch before doing new work. Agents get the relevant slice of this file in their brief.
+>
+> Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
+
+**Last updated:** 2026-08-09 — pre-kickoff. Nothing built yet; planning docs complete.
+
+---
+
+## Where we are
+
+| | |
+|---|---|
+| Current phase | **Pre-kickoff** — awaiting "go" on Sprint 0 |
+| Repo | Not created |
+| Blockers | None |
+| Next action | Taras: "run Sprint 0, +200k" |
+
+## Wave board
+
+| Wave | Budget | Status | Actual spend | Merged / rolled |
+|---|---|---|---|---|
+| Sprint 0 — Skeleton & Contracts | +200k | ⬜ not started | — | — |
+| Sprint 1 — Decision & Demo Dashboard | +400k | ⬜ not started | — | — |
+| Sprint 2a — Protocol | +300k | ⬜ not started | — | — |
+| Sprint 2b — BLE | +300k | ⬜ not started | — | — |
+| Sprint 2c — UI charts/settings | +150k | ⬜ not started | — | — |
+| Sprint 3 — Real Van (software half) | +300k | ⬜ blocked: needs 2a+2b | — | — |
+| Sprint 4 — Telemetry & Hardening | +400k | ⬜ not started | — | — |
+
+Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (name the blocker)
+
+---
+
+## Sprint 0 — Skeleton & Contracts (orchestrator + Sonnet scaffold agent)
+
+- [x] Persisted agent definitions in `.claude/agents/` (ui, protocol, ble, telemetry, researcher, rev-correctness, rev-platform, rev-arch, merge) — created 2026-08-09 pre-kickoff
+- [ ] Repo init; `OWNERSHIP`; issue/review directory structure
+- [ ] `tools/gate.sh` (build, test, ktlint+detekt, module-isolation) — green on empty scaffold
+- [ ] `tools/module-isolation.sh` (changed paths vs OWNERSHIP, vs merge-base)
+- [ ] `tools/merge.sh` (full §6 procedure incl. stale-approval + hardware-verify checks)
+- [ ] OBD-2: multi-module Gradle scaffold (`:app`, `:core:model`, `:core:protocol`, `:core:ble`, `:core:testing`), version catalog, Kotlin 2.1+, Compose BOM, targetSdk 36 — `assembleDebug` green
+- [ ] OBD-3: Phase-0 contracts frozen (`ObdLink`, `VehicleDataSource`, `PidDefinition`, `Reading`, `LinkState`) + KDoc + `DECISIONS.md` freeze entry
+- [ ] OBD-4: `FakeVehicleDataSource` — IDLE / TOWN_HEAT_SOAK / GRADE_CLIMB / DISCONNECT_RECONNECT scenarios, deterministic, tested
+- [ ] OBD-5: `FakeObdLink` transcript replayer — latency + garbage + timeout injection, tested
+- [ ] All 34 issue files committed; `_sprint-N.md` indexes; this file moved into repo
+- [ ] **Exit:** gate green on main; wave ledger entry written
+
+**Prereq on Taras's Mac (check FIRST, before anything):** JDK 17+, Android SDK. ⬜ unverified
+
+## Sprint 1 — Decision & Demo Dashboard
+
+- [ ] OBD-6: library-advocate position (`research/library-position.md`) — Sonnet R1
+- [ ] OBD-7: custom-layer position (`research/custom-position.md`) — Sonnet R2
+- [ ] OBD-8: constraints analysis, 40/25/15/10/10 rubric (`research/constraints.md`) — Sonnet R3
+- [ ] OBD-9: rebuttal round + decision merged to `DECISIONS.md` — **🖐 TARAS sign-off required**
+- [ ] OBD-10: gauge dashboard v1 (tiles, threshold coloring, dark, landscape) + screenshot tests — ui-agent
+- [ ] OBD-11: connection banner + stale-data treatment + Compose test — ui-agent
+- [ ] OBD-12: demo flavor wired to fake; installable APK — ui-agent
+- [ ] **Milestone: demo APK on the Pixel running a scripted grade climb**
+
+## Sprint 2a — Protocol (Opus)
+
+- [ ] OBD-13: ELM327 init state machine, typed failures, every failure mode tested
+- [ ] OBD-14: standard PID registry + parser (0105/010C/010B/0133/010F/010D); property test: never throws; SAE scaling verified
+- [ ] OBD-15: mode-22 Mercedes PIDs (ATSH/ATCRA framing; trans-temp from X-Gauge codes); `unverified` flag plumbing
+- [ ] OBD-16: computed boost (MAP − baro) + FAST/SLOW scheduler; 3 baro fixtures
+- [ ] Parser+scheduler coverage >90%
+
+## Sprint 2b — BLE (Opus)
+
+- [ ] OBD-17: Android 12+ permission flow + filtered scanner + remembered-device fast path
+- [ ] OBD-18: GATT serial bridge — UUID probe w/ fallback, CCCD, MTU 512, `>`-terminated reassembly, single-flight mutex; fragmented fixture passes
+- [ ] OBD-19: debug console screen (raw AT REPL) — buildable without hardware; **verification is the Sprint-2 hardware demo**
+- [ ] Reconnect/reassembly logic extracted & unit-tested against GATT doubles
+
+## Sprint 2c — UI round 2 (Sonnet)
+
+- [ ] OBD-20: 5-min sparkline strips, no jank at 4 Hz (frame timing test)
+- [ ] OBD-21: settings screen (gauges, thresholds, units, keep-screen-on, poll rate; DataStore; live recolor test)
+
+## Sprint 3 — Real Van
+
+Software (no hardware):
+- [ ] OBD-23: reconnect state machine — backoff, resume, key-off recovery; 50-cycle scripted soak
+- [ ] OBD-24: foreground service (`connectedDevice`), persistent notification, screen-off polling
+- [ ] OBD-25: prod-flavor DI wiring; JVM end-to-end test over real fixtures
+- [ ] OBD-27: unverified-PID badge + raw-response viewer — ui-agent
+
+Hardware gates — **🖐 TARAS**:
+- [ ] 🖐 OBD-22a (dongle powered, engine off — bench or parked van): init banner, UUID map, fragmentation capture, error frames → fixtures committed
+- [ ] 🖐 OBD-22b (ignition on): standard PIDs at idle, mode-22 trans-temp exchange, unplug-mid-response capture → all Sprint-2 protocol tests re-run green on real transcripts
+- [ ] 🖐 OBD-26: in-van bring-up checklist — idle sanity (boost ≈0, RPM ~780), cold-soak convergence, drive test (boost mid-teens), kill tests; each mode-22 PID flipped verified/unverified with raw response
+- [ ] **Milestone: live coolant + boost + trans temp on the dash mount, engine running**
+
+## Sprint 4 — Telemetry & Hardening
+
+- [ ] OBD-28: Room drive logging + fused location, bounded storage — telemetry (Sonnet)
+- [ ] OBD-29: post-drive charts vs elevation profile — telemetry
+- [ ] OBD-30: CSV + GPX export via SAF — telemetry
+- [ ] OBD-31: threshold alerts with hysteresis — ui-agent
+- [ ] OBD-32: preset profiles ("Loaded Revel — summer" default) — ui-agent
+- [ ] OBD-33: chaos & battery soak — scripted portion buildable; 🖐 overnight measurement needs hardware
+- [ ] OBD-34: Baseline Profile, splash, permission onboarding — ui-agent
+
+---
+
+## Open decisions
+
+| # | Decision | Owner | Status |
+|---|---|---|---|
+| D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | ⬜ open — blocks 2a's final shape (standard-PID work is decision-independent) |
+| D2 | Hilt vs Koin | orchestrator, logged in DECISIONS.md | ⬜ open — decided in Sprint 0 |
+| D3 | Publish to GitHub | 🖐 Taras, per-action | ⬜ deferred |
+
+## Standing rules (validate every wave)
+
+1. Local `main` merges pre-authorized (this project only). Any `git push`: per-action OK from Taras.
+2. Model matrix + budget table: workflow doc §10. Escalations spend from the wave pool.
+3. 🖐 items are Taras's — never auto-closed, never worked around.
+4. Reconcile this file ↔ repo state at wave start AND wave end; update "Last updated" line every edit.
+
+## Budget ledger
+
+| Wave | Target | Actual | Escalations | Notes |
+|---|---|---|---|---|
+| — | — | — | — | populated as waves run |
