@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Pre-Compose splash/window background theme, dark by default: the dash mount runs at
+      night. Compose's own MaterialTheme (ui/theme/Theme.kt) takes over for all app content.
+    -->
+    <style name="Theme.ObdGauge" parent="android:Theme.Material.NoActionBar" />
+</resources>

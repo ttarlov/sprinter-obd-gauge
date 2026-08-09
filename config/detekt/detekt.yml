@@ -1,0 +1,17 @@
+# Targeted overrides on top of detekt's default ruleset (buildUponDefaultConfig = true in
+# each module's build.gradle.kts). Nothing here disables a rule wholesale — each override
+# narrows one rule around an idiomatic Compose/Kotlin pattern the default ruleset doesn't
+# know about, per docs/05-local-workflow.md scaffold requirements.
+naming:
+  FunctionNaming:
+    # @Composable functions are conventionally PascalCase (they read as UI elements).
+    ignoreAnnotated: ['Composable']
+style:
+  UnusedPrivateMember:
+    # @Preview composables are only invoked by tooling, never from app code.
+    ignoreAnnotated: ['Preview']
+  MagicNumber:
+    # ARGB color literals are inherently "magic numbers"; naming each one would obscure
+    # the palette rather than clarify it. Test fixtures assert against literal expected
+    # values as a matter of course. Real production logic still gets the default rule.
+    excludes: ['**/ui/theme/Color.kt', '**/test/**']

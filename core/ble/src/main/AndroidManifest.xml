@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BLUETOOTH_SCAN / BLUETOOTH_CONNECT runtime permissions and the connectedDevice
+  foreground service arrive with the real ObdLink implementation in Sprint 2b (OBD-17/18).
+  Intentionally empty at scaffold time: no components, no permissions yet.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

@@ -23,6 +23,24 @@ injection everywhere; modules provide bindings at the `:app` edge.
 
 ---
 
+## Contract freeze — Phase-0 interfaces (2026-08-09)
+
+**Frozen** in `:core:model` (`com.revel.obdgauge.model`): `ObdLink`, `VehicleDataSource`,
+`PidDefinition`, `ObdRequest`, `Reading`, `LinkState`/`LinkError`, `MeasurementUnit`,
+`PollPriority`. Changing any of these from here on requires `type: contract-change` on the
+issue, an entry in this file, and Taras sign-off BEFORE work starts (doc 05 §6.3).
+
+Deviations from the build-plan sketch, deliberate:
+- `PidDefinition.unit` typed as `MeasurementUnit` enum (the sketch's `Unit` clashes with
+  `kotlin.Unit`).
+- `ObdRequest` made a sealed interface: `StandardPid(mode, pid)` | `Mode22(header,
+  rxFilter, request)` — carries the ATSH/ATCRA framing the Mercedes PIDs need.
+- `PidDefinition.verified: Boolean = true` — mode-22 hypotheses ship `false` until
+  hardware-verified (Phase 4), surfaced in the UI per OBD-27.
+- `Reading.timestamp` is `java.time.Instant` (available API 26+, no desugaring needed).
+
+---
+
 ## D1 — Library vs custom ELM327 layer
 
 ⬜ Open. Decided by the Sprint 1 research panel + rubric (OBD-9), Taras sign-off.
