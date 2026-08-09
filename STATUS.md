@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-09 — Sprint 0 complete. Repo live, gate green on main, contracts frozen, fakes tested.
+**Last updated:** 2026-08-09 — Sprint 1 wave ended early on budget wind-down. OBD-6/7/8/10 merged, OBD-9 awaits 🖐 D1 sign-off, OBD-11/12 rolled. Gate green on main.
 
 ---
 
@@ -12,17 +12,17 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 0 done** — awaiting "go" on Sprint 1 |
-| Repo | Live at repo root; 5 commits on main, gate green |
-| Blockers | None |
-| Next action | Taras: "run Sprint 1, +400k" (panel + demo dashboard) |
+| Current phase | **Sprint 1 partial** — dashboard merged; wound down over budget |
+| Repo | Gate green on main; no open branches |
+| Blockers | 🖐 D1 sign-off (OBD-9); Sprint-1b funding decision for OBD-11/12 |
+| Next action | Taras: sign off D1 in DECISIONS.md; then "run Sprint 1b, +<N>k" (OBD-11/12 finish the demo-APK milestone) |
 
 ## Wave board
 
 | Wave | Budget | Status | Actual spend | Merged / rolled |
 |---|---|---|---|---|
 | Sprint 0 — Skeleton & Contracts | +200k | ✅ done 2026-08-09 | ~230k (est.) | 5 merged / 0 rolled |
-| Sprint 1 — Decision & Demo Dashboard | +400k | ⬜ not started | — | — |
+| Sprint 1 — Decision & Demo Dashboard | +400k | 🔄 partial 2026-08-09 (wound down over budget) | ~1.0M | 4 merged + 1 🖐 / OBD-11+12 rolled |
 | Sprint 2a — Protocol | +300k | ⬜ not started | — | — |
 | Sprint 2b — BLE | +300k | ⬜ not started | — | — |
 | Sprint 2c — UI charts/settings | +150k | ⬜ not started | — | — |
@@ -51,14 +51,14 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 
 ## Sprint 1 — Decision & Demo Dashboard
 
-- [ ] OBD-6: library-advocate position (`research/library-position.md`) — Sonnet R1
-- [ ] OBD-7: custom-layer position (`research/custom-position.md`) — Sonnet R2
-- [ ] OBD-8: constraints analysis, 40/25/15/10/10 rubric (`research/constraints.md`) — Sonnet R3
-- [ ] OBD-9: rebuttal round + decision merged to `DECISIONS.md` — **🖐 TARAS sign-off required**
-- [ ] OBD-10: gauge dashboard v1 (tiles, threshold coloring, dark, landscape) + screenshot tests — ui-agent
-- [ ] OBD-11: connection banner + stale-data treatment + Compose test — ui-agent
-- [ ] OBD-12: demo flavor wired to fake; installable APK — ui-agent
-- [ ] **Milestone: demo APK on the Pixel running a scripted grade climb**
+- [x] OBD-6: library-advocate position (`research/library-position.md`) — Sonnet R1
+- [x] OBD-7: custom-layer position (`research/custom-position.md`) — Sonnet R2
+- [x] OBD-8: constraints analysis, 40/25/15/10/10 rubric (`research/constraints.md`) — Sonnet R3
+- [ ] OBD-9: rebuttal round done, panel unanimous (custom + vendored kotlin-obd-api tables); D1 PROPOSED in DECISIONS.md — **🖐 TARAS sign-off required**
+- [x] OBD-10: gauge dashboard v1 merged (`cd59774`) — 38 tests incl. Roborazzi screenshot verify now in gate; 3 review rounds (1 blocker + 9 major found & fixed)
+- [ ] OBD-11: connection banner + stale-data treatment — **rolled** (budget wind-down)
+- [ ] OBD-12: demo flavor wired to fake; installable APK — **rolled** (budget wind-down)
+- [ ] **Milestone: demo APK on the Pixel running a scripted grade climb** — needs OBD-11/12 (Sprint 1b)
 
 ## Sprint 2a — Protocol (Opus)
 
@@ -110,7 +110,7 @@ Hardware gates — **🖐 TARAS**:
 
 | # | Decision | Owner | Status |
 |---|---|---|---|
-| D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | ⬜ open — blocks 2a's final shape (standard-PID work is decision-independent) |
+| D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | 🖐 PROPOSED in DECISIONS.md (custom + vendored scaling tables; panel unanimous, rubric 8.75 vs 3.20) — awaiting Taras |
 | D2 | Hilt vs Koin | orchestrator, logged in DECISIONS.md | ✅ Hilt (2026-08-09) — compile-time graph validation is the only enforcement an agent-driven repo has |
 | D3 | Publish to GitHub | 🖐 Taras, per-action | ⬜ deferred |
 
@@ -126,3 +126,4 @@ Hardware gates — **🖐 TARAS**:
 | Wave | Target | Actual | Escalations | Notes |
 |---|---|---|---|---|
 | Sprint 0 | +200k | ~230k (est.) | 0 | Calibration wave. 3 Sonnet agents (scaffold, issues, fakes) + Fable orchestrator; no per-agent token metering available — estimate. ~15% over target; issue-file generation (39 files) was the unbudgeted chunk. |
+| Sprint 1 | +400k | ~1.0M | 0 tier / 1 arb | 2.5× over — wind-down invoked after ui-agent alone burned 352k (measured). Measured: ui 352k, fix-round 176k, reviews 68.5k+72.5k+104.5k = 774k; panel+rebuttals+rev-arch+orchestrator est. ~230k. Lessons for recalibration: (a) a Compose module with screenshot-test infra setup is a 350k task, not 60k — budget UI-bootstrap waves accordingly or split infra-setup from feature work; (b) a rigorous 2-round Opus review cycle costs ~250k per branch — the +400k table row cannot fund 3 UI branches + a panel; (c) review quality was worth it: 1 blocker + 9 majors were real. Table needs recalibration before Sprint 2. |

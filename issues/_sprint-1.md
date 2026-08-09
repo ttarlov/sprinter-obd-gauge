@@ -9,13 +9,13 @@ Sprint goal: the library-vs-custom decision is made and logged; a demo-flavor da
 
 | ID | Title | Owner | Pts | Status |
 |----|-------|-------|-----|--------|
-| OBD-6 | Research position — adopt existing OBD library | researcher | 2 | open |
-| OBD-7 | Research position — custom ELM327 layer | researcher | 2 | open |
-| OBD-8 | Constraints analysis — library vs custom | researcher | 3 | open |
-| OBD-9 | Library-vs-custom decision and DECISIONS.md entry | orchestrator | 2 | open |
-| OBD-10 | Gauge dashboard v1 | ui-agent | 5 | open |
-| OBD-11 | Connection state banner and stale-data treatment | ui-agent | 2 | open |
-| OBD-12 | Demo build flavor wired to fake data source | ui-agent | 2 | open |
+| OBD-6 | Research position — adopt existing OBD library | researcher | 2 | merged |
+| OBD-7 | Research position — custom ELM327 layer | researcher | 2 | merged |
+| OBD-8 | Constraints analysis — library vs custom | researcher | 3 | merged |
+| OBD-9 | Library-vs-custom decision and DECISIONS.md entry | orchestrator | 2 | in-review 🖐 |
+| OBD-10 | Gauge dashboard v1 | ui-agent | 5 | merged |
+| OBD-11 | Connection state banner and stale-data treatment | ui-agent | 2 | rolled → next wave |
+| OBD-12 | Demo build flavor wired to fake data source | ui-agent | 2 | rolled → next wave |
 
 Sprint 1 velocity: 18 pts.
 
@@ -25,4 +25,4 @@ Sprint 1 velocity: 18 pts.
 
 | Planned target | Actual spend | Merged vs rolled | Escalations |
 |---|---|---|---|
-| — | — | — | — |
+| +400k | ~1.0M (measured 774k across 5 metered agents + est. panel/orchestrator) | 4 merged + 1 in-review / 2 rolled (OBD-11, OBD-12) | 0 tier-escalations; 1 orchestrator arbitration (round 3) |
