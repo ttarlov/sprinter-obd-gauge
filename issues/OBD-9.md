@@ -4,7 +4,7 @@ title: Library-vs-custom decision and DECISIONS.md entry
 module: process
 owner: orchestrator
 sprint: 1
-status: open
+status: in-review
 type: process
 hardware-verify: false
 blocked-by: [OBD-6, OBD-7, OBD-8]

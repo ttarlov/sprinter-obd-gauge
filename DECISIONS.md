@@ -41,9 +41,28 @@ Deviations from the build-plan sketch, deliberate:
 
 ---
 
-## D1 — Library vs custom ELM327 layer
+## D1 — Library vs custom ELM327 layer — PROPOSED, 🖐 awaiting Taras sign-off (2026-08-09)
 
-⬜ Open. Decided by the Sprint 1 research panel + rubric (OBD-9), Taras sign-off.
+**Proposed decision:** custom ELM327 layer in `:core:protocol`, scoped exactly to this
+app (init state machine, 6 standard PIDs, 2-3 mode-22 Mercedes PIDs, tolerant parser,
+single-flight scheduler — ~590 LOC est.), **vendoring** kotlin-obd-api's standard-PID
+scaling constants and its Response/Exceptions parsing patterns under Apache-2.0 with
+attribution. No runtime library dependency.
+
+**Panel record** (`research/`): library-position.md (R1), custom-position.md (R2),
+constraints.md (R3). Rubric outcome: library 3.20 / custom ~8.75 weighted. The case
+turned on the 40%-weighted constraint: neither obd-java-api (archived 2017) nor
+kotlin-obd-api (alive, v1.4.1) ships ATSH/ATCRA header control or mode-22 support —
+kotlin-obd-api's `SetHeadersCommand` is the ATH display toggle, not ATSH, with no raw
+escape hatch — and its transport owns raw streams, which would bypass the frozen
+`ObdLink` boundary. After rebuttals BOTH advocates converged on custom + vendoring.
+
+**What the vendoring buys:** community-verified SAE scaling for the six standard PIDs
+(neutralizes the hand-derived-formula risk R2 conceded) and battle-tested
+SEARCHING/NO DATA/STOPPED error typing as reference. Mode-22 MTH scaling remains
+hypothesis-until-hardware (Sprint 3 flips `verified`).
+
+**On sign-off:** flip this heading to "decided", set OBD-9 → merged, unblock OBD-15.
 
 ## D3 — Publish to GitHub
 

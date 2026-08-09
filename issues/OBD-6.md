@@ -4,7 +4,7 @@ title: Research position — adopt existing OBD library
 module: research
 owner: researcher
 sprint: 1
-status: in-progress
+status: merged
 type: process
 hardware-verify: false
 blocked-by: []
