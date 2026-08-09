@@ -4,7 +4,7 @@ title: Gauge dashboard v1
 module: app
 owner: ui-agent
 sprint: 1
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []

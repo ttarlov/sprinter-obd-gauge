@@ -4,7 +4,7 @@ title: Research position — custom ELM327 layer
 module: research
 owner: researcher
 sprint: 1
-status: open
+status: in-progress
 type: process
 hardware-verify: false
 blocked-by: []

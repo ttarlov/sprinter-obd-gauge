@@ -8,7 +8,7 @@
 /tools/              orchestrator
 /docs/               orchestrator
 /research/           researcher
-/gradle/             orchestrator
+/gradle/             orchestrator ui-agent protocol-agent ble-agent telemetry-agent
 DECISIONS.md         orchestrator
 STATUS.md            orchestrator
 README.md            orchestrator
