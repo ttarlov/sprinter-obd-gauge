@@ -1,5 +1,7 @@
 package com.revel.obdgauge.testing.datasource
 
+import com.revel.obdgauge.model.PidIds
+
 /**
  * Named, scripted scenarios [FakeVehicleDataSource] can replay. Each is a fixed narrative used
  * for UI development (`:app`'s `demo` flavor) and exact-sequence unit tests; see
@@ -24,13 +26,15 @@ enum class Scenario {
 }
 
 /**
- * Stable channel keys the scripted [Scenario]s emit, shaped like
- * [com.revel.obdgauge.model.PidDefinition.id] so callers can build matching [PidDefinition]s.
+ * Stable channel keys the scripted [Scenario]s emit — aliases of the canonical
+ * [com.revel.obdgauge.model.PidIds] contract constants. Production code should reference
+ * [com.revel.obdgauge.model.PidIds] directly; this object exists so fixture scripts read
+ * naturally and stays for source compatibility.
  */
 object ScenarioChannel {
-    const val COOLANT = "coolant"
-    const val OIL_TEMP = "oilTemp"
-    const val TRANS_TEMP = "transTemp"
-    const val BOOST = "boost"
-    const val RPM = "rpm"
+    const val COOLANT = PidIds.COOLANT
+    const val OIL_TEMP = PidIds.OIL_TEMP
+    const val TRANS_TEMP = PidIds.TRANS_TEMP
+    const val BOOST = PidIds.BOOST
+    const val RPM = PidIds.RPM
 }

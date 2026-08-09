@@ -98,6 +98,14 @@ else
     run_step "ktlintCheck" ./gradlew ktlintCheck
     run_step "detekt" ./gradlew detekt
 
+    # Screenshot references are only load-bearing if the gate actually diffs against them.
+    if ./gradlew help --task :app:verifyRoborazziDebug >/dev/null 2>&1; then
+        run_step "verifyRoborazzi" ./gradlew :app:verifyRoborazziDebug
+    else
+        echo ""
+        echo "==> verifyRoborazziDebug: task not present — skipping"
+    fi
+
     if ./gradlew help --task :app:assembleDemoDebug >/dev/null 2>&1; then
         run_step "assembleDemoDebug" ./gradlew assembleDemoDebug
     else

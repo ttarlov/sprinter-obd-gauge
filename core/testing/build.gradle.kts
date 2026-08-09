@@ -11,14 +11,13 @@ kotlin {
 }
 
 dependencies {
-    implementation(project(":core:model"))
+    // api: PidIds/contract types appear in this module's public fake signatures.
+    api(project(":core:model"))
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.junit)
-    implementation(libs.kotlinx.coroutines.test)
-    implementation(libs.turbine)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
 }
 
 detekt {

@@ -16,3 +16,6 @@ captures/
 
 # Kotlin
 .kotlin/
+
+# Agent worktrees
+.claude/worktrees/
