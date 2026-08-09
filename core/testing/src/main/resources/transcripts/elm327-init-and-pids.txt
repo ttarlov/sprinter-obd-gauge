@@ -1,0 +1,71 @@
+# Synthetic ELM327 transcript for FakeObdLink (OBD-5).
+# Covers: full init sequence, standard-PID responses, and a mode-22 trans-temp exchange.
+# Format: REQUEST: <command> / RESPONSE: / one or more response lines / a lone `>` prompt.
+
+REQUEST: ATZ
+RESPONSE:
+ATZ
+ELM327 v2.1
+>
+
+REQUEST: ATE0
+RESPONSE:
+ATE0
+OK
+>
+
+REQUEST: ATL0
+RESPONSE:
+OK
+>
+
+REQUEST: ATS0
+RESPONSE:
+OK
+>
+
+REQUEST: ATSP0
+RESPONSE:
+OK
+>
+
+REQUEST: 0100
+RESPONSE:
+SEARCHING...
+41 00 BE 3E B8 11
+>
+
+REQUEST: 0105
+RESPONSE:
+41 05 5A
+>
+
+REQUEST: 010B
+RESPONSE:
+41 0B 64
+>
+
+REQUEST: 0133
+RESPONSE:
+41 33 62
+>
+
+REQUEST: 010C
+RESPONSE:
+41 0C 1F 40
+>
+
+REQUEST: ATSH7E1
+RESPONSE:
+OK
+>
+
+REQUEST: ATCRA7E9
+RESPONSE:
+OK
+>
+
+REQUEST: 220543
+RESPONSE:
+62 05 43 5C
+>
