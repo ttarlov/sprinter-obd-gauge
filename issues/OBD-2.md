@@ -4,7 +4,7 @@ title: Multi-module Gradle scaffold
 module: process
 owner: orchestrator
 sprint: 0
-status: open
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

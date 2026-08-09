@@ -4,7 +4,7 @@ title: Repo and workflow rails
 module: process
 owner: orchestrator
 sprint: 0
-status: open
+status: merged
 type: process
 hardware-verify: false
 blocked-by: []

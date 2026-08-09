@@ -4,7 +4,7 @@ title: Phase-0 contracts freeze
 module: core/model
 owner: orchestrator
 sprint: 0
-status: open
+status: merged
 type: contract-change
 hardware-verify: false
 blocked-by: []

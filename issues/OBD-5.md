@@ -4,7 +4,7 @@ title: FakeObdLink transcript replayer
 module: core/testing
 owner: orchestrator
 sprint: 0
-status: open
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

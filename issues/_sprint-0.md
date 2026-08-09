@@ -9,11 +9,11 @@ Sprint goal: a compiling multi-module repo with frozen contracts and working fak
 
 | ID | Title | Owner | Pts | Status |
 |----|-------|-------|-----|--------|
-| OBD-1 | Repo and workflow rails | orchestrator | 3 | open |
-| OBD-2 | Multi-module Gradle scaffold | orchestrator | 3 | open |
-| OBD-3 | Phase-0 contracts freeze | orchestrator | 2 | open |
-| OBD-4 | FakeVehicleDataSource scenarios | orchestrator | 3 | open |
-| OBD-5 | FakeObdLink transcript replayer | orchestrator | 3 | open |
+| OBD-1 | Repo and workflow rails | orchestrator | 3 | merged |
+| OBD-2 | Multi-module Gradle scaffold | orchestrator | 3 | merged |
+| OBD-3 | Phase-0 contracts freeze | orchestrator | 2 | merged |
+| OBD-4 | FakeVehicleDataSource scenarios | orchestrator | 3 | merged |
+| OBD-5 | FakeObdLink transcript replayer | orchestrator | 3 | merged |
 
 Sprint 0 velocity: 14 pts.
 
@@ -23,4 +23,4 @@ Sprint 0 velocity: 14 pts.
 
 | Planned target | Actual spend | Merged vs rolled | Escalations |
 |---|---|---|---|
-| — | — | — | — |
+| +200k | ~230k (est. — 3 Sonnet agents + Fable orchestrator; no per-agent metering this wave) | 5 merged / 0 rolled | 0 |

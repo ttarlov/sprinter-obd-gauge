@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-09 — pre-kickoff. Nothing built yet; planning docs complete.
+**Last updated:** 2026-08-09 — Sprint 0 complete. Repo live, gate green on main, contracts frozen, fakes tested.
 
 ---
 
@@ -12,16 +12,16 @@
 
 | | |
 |---|---|
-| Current phase | **Pre-kickoff** — awaiting "go" on Sprint 0 |
-| Repo | Not created |
+| Current phase | **Sprint 0 done** — awaiting "go" on Sprint 1 |
+| Repo | Live at repo root; 5 commits on main, gate green |
 | Blockers | None |
-| Next action | Taras: "run Sprint 0, +200k" |
+| Next action | Taras: "run Sprint 1, +400k" (panel + demo dashboard) |
 
 ## Wave board
 
 | Wave | Budget | Status | Actual spend | Merged / rolled |
 |---|---|---|---|---|
-| Sprint 0 — Skeleton & Contracts | +200k | ⬜ not started | — | — |
+| Sprint 0 — Skeleton & Contracts | +200k | ✅ done 2026-08-09 | ~230k (est.) | 5 merged / 0 rolled |
 | Sprint 1 — Decision & Demo Dashboard | +400k | ⬜ not started | — | — |
 | Sprint 2a — Protocol | +300k | ⬜ not started | — | — |
 | Sprint 2b — BLE | +300k | ⬜ not started | — | — |
@@ -36,18 +36,18 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 ## Sprint 0 — Skeleton & Contracts (orchestrator + Sonnet scaffold agent)
 
 - [x] Persisted agent definitions in `.claude/agents/` (ui, protocol, ble, telemetry, researcher, rev-correctness, rev-platform, rev-arch, merge) — created 2026-08-09 pre-kickoff
-- [ ] Repo init; `OWNERSHIP`; issue/review directory structure
-- [ ] `tools/gate.sh` (build, test, ktlint+detekt, module-isolation) — green on empty scaffold
-- [ ] `tools/module-isolation.sh` (changed paths vs OWNERSHIP, vs merge-base)
-- [ ] `tools/merge.sh` (full §6 procedure incl. stale-approval + hardware-verify checks)
-- [ ] OBD-2: multi-module Gradle scaffold (`:app`, `:core:model`, `:core:protocol`, `:core:ble`, `:core:testing`), version catalog, Kotlin 2.1+, Compose BOM, targetSdk 36 — `assembleDebug` green
-- [ ] OBD-3: Phase-0 contracts frozen (`ObdLink`, `VehicleDataSource`, `PidDefinition`, `Reading`, `LinkState`) + KDoc + `DECISIONS.md` freeze entry
-- [ ] OBD-4: `FakeVehicleDataSource` — IDLE / TOWN_HEAT_SOAK / GRADE_CLIMB / DISCONNECT_RECONNECT scenarios, deterministic, tested
-- [ ] OBD-5: `FakeObdLink` transcript replayer — latency + garbage + timeout injection, tested
-- [ ] All 34 issue files committed; `_sprint-N.md` indexes; this file moved into repo
-- [ ] **Exit:** gate green on main; wave ledger entry written
+- [x] Repo init; `OWNERSHIP`; issue/review directory structure
+- [x] `tools/gate.sh` (build, test, ktlint+detekt, module-isolation) — green on scaffold
+- [x] `tools/module-isolation.sh` (changed paths vs OWNERSHIP, vs merge-base)
+- [x] `tools/merge.sh` (full §6 procedure incl. stale-approval + hardware-verify checks) — syntax-checked; first live run will be Sprint 1's first merge
+- [x] OBD-2: multi-module Gradle scaffold — Kotlin 2.1.21, AGP 8.13.2, Gradle 8.13 wrapper, Compose BOM 2026.06.01, Hilt 2.57.2 (D2: Hilt over Koin, see DECISIONS.md), targetSdk 36 — `assembleDebug` green
+- [x] OBD-3: Phase-0 contracts frozen in `:core:model` + KDoc + `DECISIONS.md` freeze entry (deviations logged: `MeasurementUnit` rename, sealed `ObdRequest`, `verified` flag)
+- [x] OBD-4: `FakeVehicleDataSource` — all 4 scenarios, virtual-clock deterministic, 7 tests
+- [x] OBD-5: `FakeObdLink` transcript replayer — latency + 5 fault modes + strict half-duplex, synthetic ELM327 fixture, 17 tests
+- [x] All 34 issue files committed; `_sprint-N.md` indexes; this file now repo-tracked
+- [x] **Exit:** gate green on main; wave ledger entry written (`issues/_sprint-0.md`)
 
-**Prereq on Taras's Mac (check FIRST, before anything):** JDK 17+, Android SDK. ⬜ unverified
+**Prereq on Taras's Mac:** ✅ verified 2026-08-09 — JDK 17.0.19 (Homebrew, `JAVA_HOME=/opt/homebrew/opt/openjdk@17/...` — system default is JDK 25, gate.sh handles this), Android SDK at `/opt/homebrew/share/android-commandlinetools` (platforms 35+36).
 
 ## Sprint 1 — Decision & Demo Dashboard
 
@@ -111,7 +111,7 @@ Hardware gates — **🖐 TARAS**:
 | # | Decision | Owner | Status |
 |---|---|---|---|
 | D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | ⬜ open — blocks 2a's final shape (standard-PID work is decision-independent) |
-| D2 | Hilt vs Koin | orchestrator, logged in DECISIONS.md | ⬜ open — decided in Sprint 0 |
+| D2 | Hilt vs Koin | orchestrator, logged in DECISIONS.md | ✅ Hilt (2026-08-09) — compile-time graph validation is the only enforcement an agent-driven repo has |
 | D3 | Publish to GitHub | 🖐 Taras, per-action | ⬜ deferred |
 
 ## Standing rules (validate every wave)
@@ -125,4 +125,4 @@ Hardware gates — **🖐 TARAS**:
 
 | Wave | Target | Actual | Escalations | Notes |
 |---|---|---|---|---|
-| — | — | — | — | populated as waves run |
+| Sprint 0 | +200k | ~230k (est.) | 0 | Calibration wave. 3 Sonnet agents (scaffold, issues, fakes) + Fable orchestrator; no per-agent token metering available — estimate. ~15% over target; issue-file generation (39 files) was the unbudgeted chunk. |

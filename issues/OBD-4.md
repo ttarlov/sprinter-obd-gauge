@@ -4,7 +4,7 @@ title: FakeVehicleDataSource scenarios
 module: core/testing
 owner: orchestrator
 sprint: 0
-status: open
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []
