@@ -15,7 +15,7 @@
 | Current phase | **Sprint 1 + 1b complete** — demo APK built; Sprint 2 next |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
-| Next action | Taras: install demo APK on the Pixel (milestone); then "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) |
+| Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
 
 ## Wave board
 
@@ -62,7 +62,7 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 - [x] OBD-10: gauge dashboard v1 merged (`cd59774`) — 38 tests incl. Roborazzi screenshot verify now in gate; 3 review rounds (1 blocker + 9 major found & fixed)
 - [x] OBD-11: connection banner (all LinkState treatments, DISCONNECT_RECONNECT walk test) + stale-clock fix w/ regression coverage — merged 0fc2024 (Sprint 1b)
 - [x] OBD-12: demo/prod flavors; :core:testing fenced off prod classpath (dex-verified); demo APK at app/build/outputs/apk/demo/debug/app-demo-debug.apk — merged 0fc2024 (Sprint 1b)
-- [ ] 🖐 **Milestone: demo APK on the Pixel running a scripted grade climb** — APK built; installing on the Pixel is Taras's step (adb install or transfer)
+- [x] **Milestone: demo APK on the Pixel running a scripted grade climb** — installed + verified live on the Pixel 5 (dev phone) 2026-08-10: both orientations, trans-amber threshold crossing, boost arc sweeping, rotation preserves state
 
 ## Sprint 2a — Protocol (Opus)
 
