@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-09 — Sprint 1 wave ended early on budget wind-down. OBD-6/7/8/10 merged, D1 signed off (custom+vendor), OBD-11/12 rolled. Gate green on main.
+**Last updated:** 2026-08-09 — Sprint 1b done: OBD-11+12 merged (0fc2024), demo APK built. All Sprint-0/1 issues closed. Gate green on main.
 
 ---
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 1 partial** — dashboard merged; wound down over budget |
+| Current phase | **Sprint 1 + 1b complete** — demo APK built; Sprint 2 next |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
-| Next action | Taras: "run Sprint 1b, +350k" (OBD-11+12, one batched Tier-B branch → demo APK) |
+| Next action | Taras: install demo APK on the Pixel (milestone); then "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) |
 
 ## Wave board
 
@@ -23,7 +23,7 @@
 |---|---|---|---|---|
 | Sprint 0 — Skeleton & Contracts | +200k | ✅ done 2026-08-09 | ~230k (est.) | 5 merged / 0 rolled |
 | Sprint 1 — Decision & Demo Dashboard | +400k | 🔄 partial 2026-08-09 (wound down over budget) | ~1.0M | 4 merged + 1 🖐 / OBD-11+12 rolled |
-| Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ⬜ not started | — | — |
+| Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ✅ done 2026-08-09 | ~390k | 2 merged / 0 rolled |
 | Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ⬜ not started | — | — |
 | Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | ⬜ not started | — | — |
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ⬜ not started | — | — |
@@ -60,9 +60,9 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 - [x] OBD-8: constraints analysis, 40/25/15/10/10 rubric (`research/constraints.md`) — Sonnet R3
 - [x] OBD-9: panel unanimous; D1 signed off by Taras 2026-08-09 — custom + vendored tables. Merged.
 - [x] OBD-10: gauge dashboard v1 merged (`cd59774`) — 38 tests incl. Roborazzi screenshot verify now in gate; 3 review rounds (1 blocker + 9 major found & fixed)
-- [ ] OBD-11: connection banner + stale-data treatment — **rolled** (budget wind-down)
-- [ ] OBD-12: demo flavor wired to fake; installable APK — **rolled** (budget wind-down)
-- [ ] **Milestone: demo APK on the Pixel running a scripted grade climb** — needs OBD-11/12 (Sprint 1b)
+- [x] OBD-11: connection banner (all LinkState treatments, DISCONNECT_RECONNECT walk test) + stale-clock fix w/ regression coverage — merged 0fc2024 (Sprint 1b)
+- [x] OBD-12: demo/prod flavors; :core:testing fenced off prod classpath (dex-verified); demo APK at app/build/outputs/apk/demo/debug/app-demo-debug.apk — merged 0fc2024 (Sprint 1b)
+- [ ] 🖐 **Milestone: demo APK on the Pixel running a scripted grade climb** — APK built; installing on the Pixel is Taras's step (adb install or transfer)
 
 ## Sprint 2a — Protocol (Opus)
 
@@ -131,3 +131,4 @@ Hardware gates — **🖐 TARAS**:
 |---|---|---|---|---|
 | Sprint 0 | +200k | ~230k (est.) | 0 | Calibration wave. 3 Sonnet agents (scaffold, issues, fakes) + Fable orchestrator; no per-agent token metering available — estimate. ~15% over target; issue-file generation (39 files) was the unbudgeted chunk. |
 | Sprint 1 | +400k | ~1.0M | 0 tier / 1 arb | 2.5× over — wind-down invoked after ui-agent alone burned 352k (measured). Measured: ui 352k, fix-round 176k, reviews 68.5k+72.5k+104.5k = 774k; panel+rebuttals+rev-arch+orchestrator est. ~230k. Lessons for recalibration: (a) a Compose module with screenshot-test infra setup is a 350k task, not 60k — budget UI-bootstrap waves accordingly or split infra-setup from feature work; (b) a rigorous 2-round Opus review cycle costs ~250k per branch — the +400k table row cannot fund 3 UI branches + a panel; (c) review quality was worth it: 1 blocker + 9 majors were real. Table needs recalibration before Sprint 2. |
+| Sprint 1b | +350k | ~390k | 0 | Tier-B validated: combined-lens review found 2 real majors (incl. a mutation-proven coverage hole) at ~60% of flat-matrix cost. Build still the big line item (252k). ~11% over — trend right. |
