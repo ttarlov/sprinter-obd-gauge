@@ -113,6 +113,8 @@ Sprint 4 velocity: 23 pts.
 | OBD-37 | OBDLink LX/MX+ support (Classic BT transport variant) | Second `ObdLink` implementation; contracts already allow it |
 | OBD-38 | Fuel-burn vs terrain correlation | Needs fuel-rate PID validation on OM642 |
 | OBD-39 | Android Auto / dashboard-mode display | Investigate app-category eligibility first |
+| OBD-40 | User-defined PID gauges (add gauges in-app: X-Gauge-style code entry → live tile, unverified-by-default) | Requested 2026-08-10; issue filed. Depends on OBD-15/21/27 |
+| OBD-41 | Live PID discovery session → committed OM642 code database (Claude drives the link, Taras supplies ground truth; read-only probing) | Requested 2026-08-10; issue filed. Depends on OBD-18/19; feeds OBD-40's picker and the protocol registry |
 
 ---
 
