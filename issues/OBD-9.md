@@ -4,7 +4,7 @@ title: Library-vs-custom decision and DECISIONS.md entry
 module: process
 owner: orchestrator
 sprint: 1
-status: in-review
+status: merged
 type: process
 hardware-verify: false
 blocked-by: [OBD-6, OBD-7, OBD-8]
@@ -28,3 +28,6 @@ N/A — process/decision record; validity is the presence of the sign-off, not a
 
 ## Out of scope
 Implementing the chosen approach — that's Sprint 2, OBD-13 onward.
+
+## Sign-off
+Taras approved D1 (custom ELM327 layer + vendored kotlin-obd-api scaling tables) 2026-08-09; recorded in DECISIONS.md.

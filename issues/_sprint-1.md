@@ -12,7 +12,7 @@ Sprint goal: the library-vs-custom decision is made and logged; a demo-flavor da
 | OBD-6 | Research position — adopt existing OBD library | researcher | 2 | merged |
 | OBD-7 | Research position — custom ELM327 layer | researcher | 2 | merged |
 | OBD-8 | Constraints analysis — library vs custom | researcher | 3 | merged |
-| OBD-9 | Library-vs-custom decision and DECISIONS.md entry | orchestrator | 2 | in-review 🖐 |
+| OBD-9 | Library-vs-custom decision and DECISIONS.md entry | orchestrator | 2 | merged |
 | OBD-10 | Gauge dashboard v1 | ui-agent | 5 | merged |
 | OBD-11 | Connection state banner and stale-data treatment | ui-agent | 2 | rolled → next wave |
 | OBD-12 | Demo build flavor wired to fake data source | ui-agent | 2 | rolled → next wave |

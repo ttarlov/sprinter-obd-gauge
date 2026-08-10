@@ -41,9 +41,9 @@ Deviations from the build-plan sketch, deliberate:
 
 ---
 
-## D1 — Library vs custom ELM327 layer — PROPOSED, 🖐 awaiting Taras sign-off (2026-08-09)
+## D1 — Library vs custom ELM327 layer: custom + vendored tables (2026-08-09, Taras-approved)
 
-**Proposed decision:** custom ELM327 layer in `:core:protocol`, scoped exactly to this
+**Decision:** custom ELM327 layer in `:core:protocol`, scoped exactly to this
 app (init state machine, 6 standard PIDs, 2-3 mode-22 Mercedes PIDs, tolerant parser,
 single-flight scheduler — ~590 LOC est.), **vendoring** kotlin-obd-api's standard-PID
 scaling constants and its Response/Exceptions parsing patterns under Apache-2.0 with
@@ -62,7 +62,7 @@ escape hatch — and its transport owns raw streams, which would bypass the froz
 SEARCHING/NO DATA/STOPPED error typing as reference. Mode-22 MTH scaling remains
 hypothesis-until-hardware (Sprint 3 flips `verified`).
 
-**On sign-off:** flip this heading to "decided", set OBD-9 → merged, unblock OBD-15.
+**Signed off** by Taras 2026-08-09 ("approved"). OBD-9 merged; OBD-15 unblocked.
 
 ## D4 — Risk-tiered review policy (2026-08-09, Taras-approved)
 

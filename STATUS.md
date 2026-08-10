@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-09 — Sprint 1 wave ended early on budget wind-down. OBD-6/7/8/10 merged, OBD-9 awaits 🖐 D1 sign-off, OBD-11/12 rolled. Gate green on main.
+**Last updated:** 2026-08-09 — Sprint 1 wave ended early on budget wind-down. OBD-6/7/8/10 merged, D1 signed off (custom+vendor), OBD-11/12 rolled. Gate green on main.
 
 ---
 
@@ -14,8 +14,8 @@
 |---|---|
 | Current phase | **Sprint 1 partial** — dashboard merged; wound down over budget |
 | Repo | Gate green on main; no open branches |
-| Blockers | 🖐 D1 sign-off (OBD-9) |
-| Next action | Taras: sign off D1; then "run Sprint 1b, +350k" (OBD-11+12, one batched Tier-B branch → demo APK) |
+| Blockers | None |
+| Next action | Taras: "run Sprint 1b, +350k" (OBD-11+12, one batched Tier-B branch → demo APK) |
 
 ## Wave board
 
@@ -58,7 +58,7 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 - [x] OBD-6: library-advocate position (`research/library-position.md`) — Sonnet R1
 - [x] OBD-7: custom-layer position (`research/custom-position.md`) — Sonnet R2
 - [x] OBD-8: constraints analysis, 40/25/15/10/10 rubric (`research/constraints.md`) — Sonnet R3
-- [ ] OBD-9: rebuttal round done, panel unanimous (custom + vendored kotlin-obd-api tables); D1 PROPOSED in DECISIONS.md — **🖐 TARAS sign-off required**
+- [x] OBD-9: panel unanimous; D1 signed off by Taras 2026-08-09 — custom + vendored tables. Merged.
 - [x] OBD-10: gauge dashboard v1 merged (`cd59774`) — 38 tests incl. Roborazzi screenshot verify now in gate; 3 review rounds (1 blocker + 9 major found & fixed)
 - [ ] OBD-11: connection banner + stale-data treatment — **rolled** (budget wind-down)
 - [ ] OBD-12: demo flavor wired to fake; installable APK — **rolled** (budget wind-down)
@@ -114,7 +114,7 @@ Hardware gates — **🖐 TARAS**:
 
 | # | Decision | Owner | Status |
 |---|---|---|---|
-| D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | 🖐 PROPOSED in DECISIONS.md (custom + vendored scaling tables; panel unanimous, rubric 8.75 vs 3.20) — awaiting Taras |
+| D1 | Library vs custom ELM327 layer (OBD-9) | Panel → orchestrator → 🖐 Taras | ✅ custom + vendored kotlin-obd-api scaling tables (Taras-approved 2026-08-09) |
 | D2 | Hilt vs Koin | orchestrator, logged in DECISIONS.md | ✅ Hilt (2026-08-09) — compile-time graph validation is the only enforcement an agent-driven repo has |
 | D3 | Publish to GitHub | 🖐 Taras, per-action | ⬜ deferred |
 
