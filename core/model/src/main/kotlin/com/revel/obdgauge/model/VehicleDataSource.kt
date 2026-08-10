@@ -21,9 +21,21 @@ interface VehicleDataSource {
     /** Current connection lifecycle state, forwarded from (or derived from) the underlying [ObdLink]. */
     val connection: StateFlow<LinkState>
 
-    /** Begin connecting and polling for exactly the given [pids]. Calling again replaces the active set. */
+    /**
+     * Begin connecting and polling for exactly the given [pids]. Calling again replaces the
+     * active set.
+     *
+     * Restart-safe by contract: consumers gate polling on UI subscription
+     * (`WhileSubscribed`), so implementations MUST tolerate `start` after `stop` (fresh
+     * session) and repeated `start` (replace, not duplicate) without leaking a prior
+     * poll loop. (Pinned per OBD-10 round-2 review.)
+     */
     fun start(pids: List<PidDefinition>)
 
-    /** Stop polling and release the underlying connection. */
+    /**
+     * Stop polling and release the underlying connection. Idempotent by contract: consumers
+     * may call this more than once per session (subscription teardown + owner teardown) —
+     * a second `stop` MUST be a safe no-op.
+     */
     fun stop()
 }

@@ -4,11 +4,11 @@ title: Connection state banner and stale-data treatment
 module: app
 owner: ui-agent
 sprint: 1
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ui/11-connection-banner
+branch: ui/11-12-banner-demo-flavor
 ---
 
 ## Feature

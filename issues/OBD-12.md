@@ -4,11 +4,11 @@ title: Demo build flavor wired to fake data source
 module: app
 owner: ui-agent
 sprint: 1
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: [OBD-10, OBD-11]
-branch: ui/12-demo-flavor
+branch: ui/11-12-banner-demo-flavor
 ---
 
 ## Feature
