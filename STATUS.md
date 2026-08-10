@@ -14,8 +14,8 @@
 |---|---|
 | Current phase | **Sprint 1 partial** — dashboard merged; wound down over budget |
 | Repo | Gate green on main; no open branches |
-| Blockers | 🖐 D1 sign-off (OBD-9); Sprint-1b funding decision for OBD-11/12 |
-| Next action | Taras: sign off D1 in DECISIONS.md; then "run Sprint 1b, +<N>k" (OBD-11/12 finish the demo-APK milestone) |
+| Blockers | 🖐 D1 sign-off (OBD-9) |
+| Next action | Taras: sign off D1; then "run Sprint 1b, +350k" (OBD-11+12, one batched Tier-B branch → demo APK) |
 
 ## Wave board
 
@@ -23,11 +23,15 @@
 |---|---|---|---|---|
 | Sprint 0 — Skeleton & Contracts | +200k | ✅ done 2026-08-09 | ~230k (est.) | 5 merged / 0 rolled |
 | Sprint 1 — Decision & Demo Dashboard | +400k | 🔄 partial 2026-08-09 (wound down over budget) | ~1.0M | 4 merged + 1 🖐 / OBD-11+12 rolled |
-| Sprint 2a — Protocol | +300k | ⬜ not started | — | — |
-| Sprint 2b — BLE | +300k | ⬜ not started | — | — |
-| Sprint 2c — UI charts/settings | +150k | ⬜ not started | — | — |
-| Sprint 3 — Real Van (software half) | +300k | ⬜ blocked: needs 2a+2b | — | — |
-| Sprint 4 — Telemetry & Hardening | +400k | ⬜ not started | — | — |
+| Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ⬜ not started | — | — |
+| Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ⬜ not started | — | — |
+| Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | ⬜ not started | — | — |
+| Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ⬜ not started | — | — |
+| Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ blocked: needs 2a+2b | — | — |
+| Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
+
+Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
+original table was ~3.5× optimistic against Sprint 0–1 actuals.
 
 Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (name the blocker)
 

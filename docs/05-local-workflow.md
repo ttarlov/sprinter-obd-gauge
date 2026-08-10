@@ -156,6 +156,30 @@ Fix commits on the same branch (no force-push — reviewer diffs the delta), plu
 
 The reviewer roles never author feature commits; the `Role:` trailer makes this auditable: a review file is invalid if its reviewer's role appears as author of any non-review commit on the branch. In practice (one Claude session playing all roles) this means: **feature authoring and review of the same branch never happen in the same agent context** — the reviewer is a fresh subagent that gets only the issue file, the diff, and the checklist. Contamination is the failure mode; context isolation is the countermeasure.
 
+### 5.5 Risk-tiered review (D4, Taras-approved 2026-08-09 — supersedes the flat §5.1 matrix)
+
+Review depth follows consequence-of-being-wrong, not habit. Sprint-1 calibration: the full
+two-Opus treatment found 1 blocker + 9 majors on a "green" branch (worth it), but a single
+combined-lens Opus round found the same class of issues at ~60% of the cost.
+
+| Tier | Scope | Review |
+|---|---|---|
+| **A** | `:core:protocol`, `:core:ble`, anything touching `:core:model` contracts, DI/prod wiring (OBD-25) | Full matrix: rev-correctness + rev-platform (Opus, separate contexts) + rev-arch (Haiku). Mutation spot-checks required in round 2 |
+| **B** | `:app` feature work in established patterns | ONE combined-lens Opus reviewer + rev-arch (Haiku). Mutation spot-checks on new test suites |
+| **C** | Sprint-4 telemetry, polish, docs/process | One Sonnet reviewer + scripts; escalate to Tier B on structural smell |
+
+Rules:
+- **Ratchet, not faith:** a module drops one tier after two consecutive reviews with ≤1 major;
+  any BLOCKER anywhere bumps its module up one tier for the rest of the sprint.
+- **A wrong gauge is Tier A forever:** anything that computes or scales a displayed value
+  never drops below Tier A. A plausible-but-wrong trans temp is the project's worst failure mode.
+- **Batching (amends §4):** small, cohesive, same-module issues MAY share one branch and one
+  review (e.g. OBD-11+12, OBD-20+21). The review record lists all issue ids; merge.sh runs
+  per lead issue with `Closes` lines for each. One issue per branch remains the default for
+  anything Tier A or > 3 pts.
+- Everything else stands: fresh reviewer contexts (§5.4), delta-only re-reviews, two-round cap,
+  Haiku rev-arch everywhere (near-free), verified-item lists required for approval.
+
 ---
 
 ## 6. The merge gate and merge procedure
@@ -244,15 +268,21 @@ Every subagent runs on an explicit model tier — the cheapest model competent f
 
 Budgets are set **per wave**, not per agent (a mid-task cap turns spent tokens into a half-finished branch — pure waste) and not per issue (too fine to estimate; spend tracks reading + review rounds, not story points). Taras sets the target when kicking off a wave (e.g. "go, +300k"); it is a hard ceiling on that turn.
 
+Recalibrated 2026-08-09 after Sprints 0–1 actuals (0: ~230k vs 200k; 1: ~1.0M vs 400k).
+Working units observed: module bootstrap ≈ 350k; reviewed branch ≈ 300–400k at the old flat
+matrix, ≈ 200–250k at Tier B; a Tier-A two-Opus cycle ≈ 250k of any branch's cost. Original
+table was ~3.5× optimistic; this one assumes §5.5 tiering + batching.
+
 | Wave | Target | Notes |
 |---|---|---|
-| Sprint 0 (scaffold/contracts/fakes/gate) | +200k | Calibration wave — record actual |
-| Sprint 1 (panel + UI + decision) | +400k | |
-| Sprint 2a (protocol, Opus) | +300k | |
-| Sprint 2b (BLE, Opus) | +300k | |
-| Sprint 2c (UI charts/settings) | +150k | |
-| Sprint 3 (reconnect/service/DI) | +300k | Rest is human-gated |
-| Sprint 4 (telemetry + hardening) | +400k | |
+| Sprint 0 (scaffold/contracts/fakes/gate) | ~~+200k~~ actual ~230k | done |
+| Sprint 1 (panel + OBD-10) | ~~+400k~~ actual ~1.0M | done; OBD-11/12 rolled to 1b |
+| Sprint 1b (OBD-11+12, one batched Tier-B branch) | +350k | demo-APK milestone |
+| Sprint 2a (protocol, Tier A, batch 13+14 and 15+16) | +900k | |
+| Sprint 2b (BLE, Tier A, batch 17+18; 19 solo) | +900k | |
+| Sprint 2c (UI, Tier B, batch 20+21) | +400k | |
+| Sprint 3 (reconnect/service/DI — Tier A; OBD-27 Tier B) | +900k | Rest is human-gated |
+| Sprint 4 (telemetry + hardening, Tier B/C, batched) | +1.2M | |
 
 Rules:
 - **No agent starts that can't plausibly finish** within remaining budget. At ~20% remaining: stop spawning, land in-flight reviews/merges only, report.

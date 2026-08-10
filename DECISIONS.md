@@ -64,6 +64,24 @@ hypothesis-until-hardware (Sprint 3 flips `verified`).
 
 **On sign-off:** flip this heading to "decided", set OBD-9 → merged, unblock OBD-15.
 
+## D4 — Risk-tiered review policy (2026-08-09, Taras-approved)
+
+**Decision:** replace the flat two-Opus-per-branch review matrix with consequence-tiered
+review — full matrix for `:core:protocol`/`:core:ble`/contract-touching work (Tier A),
+one combined-lens Opus reviewer for established `:app` work (Tier B), Sonnet + scripts for
+telemetry/polish (Tier C) — plus small-issue batching onto shared branches. Evidence-driven
+ratchet moves modules between tiers. Full spec: docs/05-local-workflow.md §5.5.
+
+**Rationale:** Sprint-1 data. Review caught 1 blocker + 9 real majors on a self-reported
+green branch (process validated), but a single combined-lens round proved equivalent at
+~60% cost, and flat provisioning priced the remaining ~22 branches at ~5M tokens of review
+alone. Anything that computes a displayed gauge value stays Tier A permanently.
+
+**Impact:** remaining-project estimate drops from ~6–8M to ~4.7M tokens (recalibrated
+table in doc 05 §10.3).
+
+---
+
 ## D3 — Publish to GitHub
 
 ⬜ Deferred. Per-action OK from Taras; see docs/05-local-workflow.md §9.
