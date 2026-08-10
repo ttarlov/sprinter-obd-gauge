@@ -4,7 +4,7 @@ title: Demo build flavor wired to fake data source
 module: app
 owner: ui-agent
 sprint: 1
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: [OBD-10, OBD-11]
