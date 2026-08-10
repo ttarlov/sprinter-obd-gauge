@@ -32,3 +32,8 @@ Sprint 2 velocity: 30 pts (three agents in parallel).
 | 2a | — | — | — | — |
 | 2b | — | — | — | — |
 | 2c | — | — | — | — |
+
+## Ledger (2b wave 1)
+| Planned target | Actual spend | Merged vs rolled | Escalations |
+|---|---|---|---|
+| +900k | ~1.15M (build 248k + fix 351k + reviews ~440k + orchestrator ~110k incl. arbitration) | 2 merged (batch d838cc7) / OBD-19 rolled | 1 orchestrator arbitration (round-2 blocker); 2 agent stalls recovered |
