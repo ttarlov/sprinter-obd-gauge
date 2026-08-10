@@ -99,11 +99,20 @@ else
     run_step "detekt" ./gradlew detekt
 
     # Screenshot references are only load-bearing if the gate actually diffs against them.
-    if ./gradlew help --task :app:verifyRoborazziDebug >/dev/null 2>&1; then
-        run_step "verifyRoborazzi" ./gradlew :app:verifyRoborazziDebug
+    # Task name depends on whether :app has flavors (verifyRoborazziDebug pre-flavor,
+    # verifyRoborazziDemoDebug after OBD-12).
+    roborazzi_task=""
+    for candidate in :app:verifyRoborazziDemoDebug :app:verifyRoborazziDebug; do
+        if ./gradlew help --task "$candidate" >/dev/null 2>&1; then
+            roborazzi_task="$candidate"
+            break
+        fi
+    done
+    if [[ -n "$roborazzi_task" ]]; then
+        run_step "verifyRoborazzi" ./gradlew "$roborazzi_task"
     else
         echo ""
-        echo "==> verifyRoborazziDebug: task not present — skipping"
+        echo "==> verifyRoborazzi: no verify task present — skipping"
     fi
 
     if ./gradlew help --task :app:assembleDemoDebug >/dev/null 2>&1; then
