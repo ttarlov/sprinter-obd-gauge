@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-09 — Sprint 1b done: OBD-11+12 merged (0fc2024), demo APK built. All Sprint-0/1 issues closed. Gate green on main.
+**Last updated:** 2026-08-10 — Sprint 2b wave started: OBD-17+18 batched on ble/17-18-scanner-gatt-bridge; OBD-19 follows. OBD-40/41 filed; milestone verified on Pixel.
 
 ---
 
@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 1 + 1b complete** — demo APK built; Sprint 2 next |
+| Current phase | **Sprint 2b running** — BLE scanner + GATT bridge in build |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
@@ -25,7 +25,7 @@
 | Sprint 1 — Decision & Demo Dashboard | +400k | 🔄 partial 2026-08-09 (wound down over budget) | ~1.0M | 4 merged + 1 🖐 / OBD-11+12 rolled |
 | Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ✅ done 2026-08-09 | ~390k | 2 merged / 0 rolled |
 | Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ⬜ not started | — | — |
-| Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | ⬜ not started | — | — |
+| Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | 🔄 in progress 2026-08-10 | — | — |
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ⬜ not started | — | — |
 | Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ blocked: needs 2a+2b | — | — |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
