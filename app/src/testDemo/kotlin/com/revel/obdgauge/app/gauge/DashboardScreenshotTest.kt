@@ -19,7 +19,7 @@ import java.time.Instant
 
 /**
  * Screenshot references (OBD-10 AC: "Screenshot tests cover both orientations"), committed
- * under `src/test/screenshots/`. Uses the TOWN_HEAT_SOAK tail so the reference image also
+ * under `src/testDemo/screenshots/`. Uses the TOWN_HEAT_SOAK tail so the reference image also
  * documents the amber threshold coloring visually, not just the two green/neutral states.
  *
  * Roborazzi's `captureRoboImage` no-ops unless invoked via its own Gradle tasks
@@ -66,6 +66,8 @@ class DashboardScreenshotTest {
         // Roborazzi's default record-path strategy resolves a bare filename against the JVM's
         // current working directory (the module dir for a Gradle `Test` task), so this prefix
         // is what actually lands references under version control instead of `app/*.png`.
-        const val SCREENSHOT_DIR = "src/test/screenshots/"
+        // Lives under src/testDemo/ (OBD-12) alongside this test, which only runs for the
+        // `demo` flavor.
+        const val SCREENSHOT_DIR = "src/testDemo/screenshots/"
     }
 }

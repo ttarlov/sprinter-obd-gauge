@@ -30,9 +30,22 @@ android {
         }
     }
 
-    // The `demo` flavor (wired to FakeVehicleDataSource, OBD-12) arrives in Sprint 1.
-    // Declared now so tools/gate.sh's `assembleDemoDebug` check has a stable target to look for later;
-    // left undefined here since there is nothing to flavor yet — see docs/05-local-workflow.md gate spec.
+    // OBD-12: `demo`/`prod` product flavors, one dimension. `demo` DI-wires
+    // FakeVehicleDataSource (src/demo/) against Scenario.GRADE_CLIMB, zero Bluetooth
+    // permissions required. `prod` DI-wires a stub VehicleDataSource (src/prod/) that sits
+    // Disconnected with empty readings — the real ObdLink/:core:protocol chain arrives in
+    // OBD-25. See app/MODULE.md and the HARD CONSTRAINT in issues/OBD-12.md:
+    // `:core:testing` must never reach the prod runtime classpath (enforced below by scoping
+    // its dependency to `demoImplementation`).
+    flavorDimensions += "environment"
+    productFlavors {
+        create("demo") {
+            dimension = "environment"
+        }
+        create("prod") {
+            dimension = "environment"
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -64,11 +77,12 @@ kotlin {
 }
 
 dependencies {
-    // OBD-10 (gauge dashboard v1) builds only against the frozen contracts and the fake
-    // data source. Real ObdLink -> VehicleDataSource wiring (:core:ble, :core:protocol)
-    // arrives with Phase 4 integration; see app/MODULE.md.
+    // :core:model is the frozen contract surface both flavors build against. :core:testing
+    // (FakeVehicleDataSource) is `demo`-only by design (OBD-12 HARD CONSTRAINT) — real
+    // ObdLink -> VehicleDataSource wiring (:core:ble, :core:protocol) for `prod` arrives with
+    // OBD-25; see app/MODULE.md.
     implementation(project(":core:model"))
-    implementation(project(":core:testing"))
+    "demoImplementation"(project(":core:testing"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -109,6 +123,13 @@ dependencies {
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    // Verified empirically against `main`: the plain (non-variant-aware) `detekt` task's
+    // default source set is `src/main/kotlin` only — test sources were never in its scope
+    // (pre-existing behavior, not something OBD-11/12 changes). OBD-12 adds two more
+    // production source sets, `src/demo/kotlin` and `src/prod/kotlin` (DI wiring + the prod
+    // stub), which need the same coverage `src/main/kotlin` already had — listed explicitly
+    // here since the default doesn't know about flavor source sets at all.
+    source.setFrom("src/main/kotlin", "src/demo/kotlin", "src/prod/kotlin")
 }
 
 // Unit tests run on the debug variant only: the suite is Robolectric/Roborazzi-based and

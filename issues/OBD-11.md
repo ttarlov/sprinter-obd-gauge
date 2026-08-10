@@ -4,7 +4,7 @@ title: Connection state banner and stale-data treatment
 module: app
 owner: ui-agent
 sprint: 1
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

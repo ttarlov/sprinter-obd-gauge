@@ -1,8 +1,58 @@
 # :app
 
 Android application. Compose + Material 3, Hilt-wired end to end. Depends on `:core:model`
-and `:core:testing` only (see OBD-10 scope note below); no `:core:protocol`/`:core:ble` at
-this stage.
+unconditionally; `:core:testing` only on the `demo` flavor (see "Build flavors" below). No
+`:core:protocol`/`:core:ble` at this stage.
+
+## Build flavors (OBD-12)
+
+One flavor dimension (`environment`), two flavors, both sharing `src/main/` (Compose UI,
+theme, `MainActivity`, `ObdGaugeApplication` — none of it depends on either flavor):
+
+- **`demo`** — `src/demo/kotlin/.../di/DataSourceModule.kt` binds `VehicleDataSource` to
+  `FakeVehicleDataSource(Scenario.GRADE_CLIMB)` wrapped in `RestartAnchoredDataSource`
+  (`src/demo/.../datasource/`), which stamps each `start()` with wall-clock time and supplies
+  the EPOCH-re-anchoring `Clock` the stale-age math needs (see Known limitations). Zero
+  Bluetooth permissions (the manifest declares none, common or flavor-specific).
+  `:core:testing` is a `demoImplementation` dependency — see the HARD CONSTRAINT below.
+- **`prod`** — `src/prod/kotlin/.../di/DataSourceModule.kt` binds `VehicleDataSource` to
+  `StubVehicleDataSource` (`src/prod/.../datasource/`), a placeholder that sits
+  `LinkState.Disconnected` with empty readings and no-op `start`/`stop`. Real `ObdLink` →
+  `:core:protocol` → `VehicleDataSource` wiring lands in OBD-25.
+
+**HARD CONSTRAINT**: `:core:testing` (and therefore `FakeVehicleDataSource`/`Scenario`) must
+never reach the `prod` runtime classpath. Enforced by scoping the dependency to
+`demoImplementation` in `app/build.gradle.kts` and keeping every reference to
+`com.revel.obdgauge.testing` inside `src/demo/` or `src/testDemo/`. Verify with:
+```
+./gradlew :app:dependencies --configuration prodReleaseRuntimeClasspath | grep -Ei "junit|turbine|coroutines-test|core:testing"
+```
+(expect empty output).
+
+Unit tests that exercise `FakeVehicleDataSource` (`DashboardViewModelTest`,
+`DashboardScreenTest`, `DashboardScreenshotTest`, `ThresholdConfigTest`,
+`ConnectionBannerTest`) live in `src/testDemo/` and only run as `testDemoDebugUnitTest`.
+`GaugeFormattingTest`/`BoostArcTest` have no `:core:testing` dependency and stay in the common
+`src/test/`, running for both `testDemoDebugUnitTest` and `testProdDebugUnitTest`. The `test`
+aggregate task runs both variants; `testProdDebugUnitTest` only ever sees the two
+flavor-agnostic suites.
+
+Unit tests remain debug-variant-only (both flavors) via the existing
+`androidComponents { beforeVariants(...) { variant.enableUnitTest = false } }` release gate.
+
+`./gradlew :app:assembleDemoDebug` output: `app/build/outputs/apk/demo/debug/app-demo-debug.apk`.
+`./gradlew :app:assembleProdDebug` output: `app/build/outputs/apk/prod/debug/app-prod-debug.apk`.
+The plain `assembleDebug`/`test`/`ktlintCheck` aggregate tasks (as run by `tools/gate.sh`)
+transparently cover both flavors. **Roborazzi's task names became flavor-qualified**:
+`verifyRoborazziDebug` no longer exists — it's now `verifyRoborazziDemoDebug` (the only
+variant with screenshot tests; `verifyRoborazziProdDebug` exists too and passes trivially,
+since `DashboardScreenshotTest` lives in `src/testDemo/`).
+
+`detekt`'s plain (non-variant-aware) task defaults to scanning `src/main/kotlin` only — this
+was already true before OBD-12 (verified against `main`; test sources were never in its
+scope). `app/build.gradle.kts`'s `detekt { source.setFrom(...) }` now also lists
+`src/demo/kotlin` and `src/prod/kotlin` so the new DI wiring and stub don't silently escape
+the gate; `src/test*/` intentionally stays out of scope, matching prior behavior.
 
 ## Public surface
 
@@ -36,51 +86,86 @@ this stage.
   - `DashboardViewModel` — `@HiltViewModel`; `StateFlow<DashboardUiState>` out, formatting
     only. Takes an injected `VehicleDataSource` and `java.time.Clock` (the latter only for
     stale-text "seconds ago" math, injected so tests can fix it).
-  - `DashboardScreen.kt` — `GaugeDashboard` (landscape: single `Row`; portrait: scrollable
-    `Column`, tiles sized to content so nothing clips), `GaugeTile`, `BoostArc` (sweep arc,
-    −2..+18 PSI, always neutral-colored — see `BoostArc.kt`). Each tile exposes a
-    `testTag("gauge-<id>")` root with a `stateDescription` semantics property carrying the
-    threshold zone name, plus `testTag("gauge-<id>-value")` on the value text — this is how
-    tests assert color without pixel-diffing.
-- `di/DataSourceModule.kt` — Hilt bindings: `VehicleDataSource` → `FakeVehicleDataSource(
-  Scenario.GRADE_CLIMB)` (demo wiring, sanctioned for OBD-10 per the build plan; OBD-12
-  formalizes a `demo` build flavor), `Clock` → `Clock.systemDefaultZone()`.
+  - `DashboardScreen.kt` — `GaugeDashboard`: `ConnectionBanner` (OBD-11) as the top sibling,
+    then the tile layout (landscape: single `Row`; portrait: scrollable `Column`, tiles sized
+    to content so nothing clips) in a `Modifier.weight(1f)` box below it. `safeDrawingPadding()`
+    is applied once at the outer `Column` (moved here from each orientation branch in OBD-10 —
+    now that the banner is a sibling rather than nested inside the tile layout, one application
+    covers both). `GaugeTile`, `BoostArc` (sweep arc, −2..+18 PSI, always neutral-colored — see
+    `BoostArc.kt`). Each tile exposes a `testTag("gauge-<id>")` root with a `stateDescription`
+    semantics property carrying the threshold zone name, plus `testTag("gauge-<id>-value")` on
+    the value text — this is how tests assert color without pixel-diffing.
+  - `ConnectionBanner.kt` (OBD-11) — `ConnectionBanner(connection: LinkState)`, presentation
+    only (no reconnect logic — that's OBD-23). `LinkState.Ready` renders nothing at all (no
+    node); every other state renders a full-width bar: `Scanning`/`Connecting` get a spinner +
+    status text, `Disconnected` a plain neutral line, `Error(cause)` the theme's error
+    container plus a "Reconnecting…" affordance (intent, not a guarantee — presentation only).
+    `testTag("connection-banner")` (present unless `Ready`) carries a `stateDescription` of the
+    lowercase state name (`"disconnected"`/`"scanning"`/`"connecting"`/`"ready"`/`"error"`);
+    `testTag("connection-banner-message")` and (`Error` only) `"connection-banner-reconnecting"`
+    carry the text. `connectionBannerMessage`/`connectionBannerStateName` are pure functions,
+    `internal` for test use.
+- `di/DataSourceModule.kt` — now flavor-specific; see "Build flavors" above. Was a single
+  `src/main/` file through OBD-10; split for OBD-12.
 
 ## Tests
 
-- `ThresholdConfigTest`, `GaugeFormattingTest` — plain JVM, no Robolectric.
+- `ThresholdConfigTest`, `DashboardViewModelTest`, `DashboardScreenTest`,
+  `DashboardScreenshotTest`, `ConnectionBannerTest`, `DataSourceModuleClockTest` —
+  `src/testDemo/` (need `FakeVehicleDataSource`/`Scenario`, so `testDemoDebugUnitTest`-only;
+  see "Build flavors").
+  `GaugeFormattingTest`, `BoostArcTest` — plain JVM, no Robolectric, `src/test/` (flavor-common).
+- `DataSourceModuleClockTest` (OBD-11 round-1 M2) — exercises the real demo DI providers:
+  injected clock reads ≈ `EPOCH` at provisioning and re-anchors ≈ `EPOCH` after a delayed
+  `start()`; fails loudly if wall-clock wiring (`systemDefaultZone`) ever returns.
 - `DashboardViewModelTest` — plain JVM; drives `FakeVehicleDataSource` + `DashboardViewModel`
   under `kotlinx-coroutines-test`. Asserts IDLE tail (green) and TOWN_HEAT_SOAK tail (amber
   coolant/oil/trans, per seed thresholds).
 - `DashboardScreenTest` — Robolectric + compose-ui-test. Same two scenarios, rendered through
   `GaugeDashboard`, asserted via `testTag`/`stateDescription` and value text.
+- `ConnectionBannerTest` (OBD-11) — Robolectric + compose-ui-test. Hand-built `LinkState`
+  values cover each banner treatment in isolation (mirrors `DashboardScreenTest`'s hand-built
+  RED-zone test for states a scripted scenario doesn't hit); one scenario-driven test replays
+  the real `Scenario.DISCONNECT_RECONNECT` script, recording every `(readings, connection)`
+  combination the fake emits (not just its tail state, via `combine(...).collect{}` on a
+  `TestScope`) and renders each milestone through a single composition (`setContent` may only
+  be called once per test — subsequent milestones drive a `mutableStateOf`, not repeated
+  `setContent` calls), asserting banner presence/content and stale-text correctness at each of
+  `Ready → Error(Timeout) → Scanning → Connecting → Ready`. Its expected "last seen Xs ago"
+  values are hand-derived from the script's fixed tick arithmetic (documented inline per
+  assertion) using a `TickingClock`-style test `Clock` anchored to the `TestScope`'s virtual
+  time — the test-side counterpart of the `demo` flavor's DI clock fix below.
 - `DashboardScreenshotTest` — Roborazzi, landscape (`w800dp-h360dp-land`) and portrait
-  (`w360dp-h640dp-port`), TOWN_HEAT_SOAK tail state. References committed under
-  `src/test/screenshots/`. Regenerate with `./gradlew :app:recordRoborazziDebug`; verify with
-  `./gradlew :app:verifyRoborazziDebug`. `captureRoboImage` no-ops (doesn't compare or write)
-  under a plain `testDebugUnitTest` run — only the dedicated Roborazzi tasks (or
-  `-Proborazzi.test.record=true` / `-Proborazzi.test.verify=true`) actually record/compare, so
-  the base build gate never fails on an environment-sensitive pixel diff.
+  (`w360dp-h640dp-port`), TOWN_HEAT_SOAK tail state (`connection = Ready`, so the OBD-11 banner
+  renders nothing — these references are unchanged pixel-for-pixel from OBD-10 despite the
+  `GaugeDashboard` layout restructuring, confirmed by re-recording and diffing byte-identical).
+  References committed under `src/testDemo/screenshots/` (moved from `src/test/screenshots/`
+  alongside the test file, OBD-12). Regenerate with `./gradlew :app:recordRoborazziDemoDebug`;
+  verify with `./gradlew :app:verifyRoborazziDemoDebug` (see "Build flavors" for why the task
+  name changed from the pre-flavor `verifyRoborazziDebug`). `captureRoboImage` no-ops (doesn't
+  compare or write) under a plain `testDemoDebugUnitTest` run — only the dedicated Roborazzi
+  tasks (or `-Proborazzi.test.record=true` / `-Proborazzi.test.verify=true`) actually
+  record/compare, so the base build gate never fails on an environment-sensitive pixel diff.
 - `app/src/test/resources/robolectric.properties` pins `sdk=34` for all Robolectric tests in
   this module (independent of `compileSdk`/`targetSdk` 36).
 
 ## Known limitations
 
-- Connection state banner, live sparklines, and the settings screen (OBD-11/20/21) are not
-  built yet — out of scope for OBD-10 per `issues/OBD-10.md`. `DashboardUiState.connection`
-  carries the `LinkState` for OBD-11 to consume; it isn't rendered yet.
-- `DataSourceModule` wires `FakeVehicleDataSource(Scenario.GRADE_CLIMB)` unconditionally —
-  there is no `prod` binding yet. Phase-4 integration replaces this with the real
-  `ObdLink`→`VehicleDataSource` chain for a `prod` flavor while a `demo` flavor (OBD-12) keeps
-  this fake wiring.
-- `DataSourceModule`'s `Clock` is `Clock.systemDefaultZone()` (real wall clock), but
-  `FakeVehicleDataSource`'s default `startInstant` is `Instant.EPOCH` — "last seen Xs ago"
-  would render a nonsensical huge number if a demo scenario ever went stale. Not an issue
-  today: `GRADE_CLIMB` never disconnects. Worth revisiting if the demo default scenario ever
-  changes to `DISCONNECT_RECONNECT`.
+- `DataSourceModule`'s clock/`FakeVehicleDataSource` timeline mismatch (OBD-10 era) is fixed
+  via `RestartAnchoredDataSource` (`src/demo/.../datasource/`): a decorator that records the
+  wall-clock instant of every `start()` and derives the injected `Clock` as
+  `EPOCH + (now − lastStart)`, so the clock re-anchors in lockstep with the fake's virtual
+  timeline on every `WhileSubscribed` background/foreground restart. Regression-covered by
+  `DataSourceModuleClockTest` (provisioning + restart re-anchor; fails under the original
+  `systemDefaultZone` wiring).
 - `DASHBOARD_PIDS`' `request`/`parse`/`pollPriority` fields are placeholders (unused by the
   fake); do not treat them as verified PID definitions. The real registry is
   `:core:protocol`'s responsibility.
+- Live sparklines and the settings screen (OBD-20/21) are not built yet.
+- `ConnectionBanner` has no dedicated light-theme/rotation screenshot coverage (only the
+  existing `DashboardScreenshotTest` references, which happen to be in the `Ready`/hidden
+  state) — `ConnectionBannerTest`'s Robolectric assertions (testTag/stateDescription/text) are
+  the source of truth for its visual states instead.
 - `createComposeRule()` (compose-ui-test) is deprecated in favor of a v2 API using
   `StandardTestDispatcher`; left as-is for OBD-10 since it compiles and passes today. Revisit
   on the next compose-ui-test bump.

@@ -44,11 +44,17 @@ private const val TILE_PADDING_DP = 16
  * The full gauge dashboard. Landscape (a phone on a dash mount, the primary target) lays the
  * four tiles out in a single row; portrait stacks them in a scrollable column so content
  * never clips regardless of screen height (OBD-10 AC: "portrait doesn't crash or clip").
+ * [ConnectionBanner] (OBD-11) sits above the tiles in both orientations, driven by
+ * [DashboardUiState.connection].
  *
  * Orientation is read from this composable's own measured [BoxWithConstraints] bounds, not
  * [androidx.compose.ui.platform.LocalConfiguration]'s device screen size — this dashboard can
  * be hosted in a container narrower than the full device screen (e.g. multi-window, or a
  * future embedded placement), and layout should follow the space it's actually given.
+ *
+ * `safeDrawingPadding()` is applied once here, at the outer column, rather than separately in
+ * each orientation branch below (as it was pre-OBD-11) — now that the banner is a sibling of
+ * the tile layout rather than nested inside it, a single top-level application covers both.
  */
 @Composable
 fun GaugeDashboard(
@@ -58,34 +64,36 @@ fun GaugeDashboard(
     val tiles = listOf(uiState.coolant, uiState.transTemp, uiState.oilTemp)
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val isLandscape = maxWidth >= maxHeight
-            if (isLandscape) {
-                Row(
-                    modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(TILE_SPACING_DP.dp),
-                    horizontalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
-                ) {
-                    tiles.forEach { tile -> GaugeTile(tile, modifier = Modifier.weight(1f).fillMaxSize()) }
-                    BoostTile(uiState.boost, modifier = Modifier.weight(1f).fillMaxSize())
-                }
-            } else {
-                // No fixed tile height here: each tile sizes to its own content (label +
-                // value, or label + arc + value for boost). Combined with the scroll below,
-                // this is what guarantees portrait never clips regardless of font scale or
-                // screen height.
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .safeDrawingPadding()
-                            .verticalScroll(rememberScrollState())
-                            .padding(TILE_SPACING_DP.dp),
-                    verticalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
-                ) {
-                    tiles.forEach { tile ->
-                        GaugeTile(tile, modifier = Modifier.fillMaxWidth())
+        Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+            ConnectionBanner(uiState.connection, modifier = Modifier.fillMaxWidth())
+            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                val isLandscape = maxWidth >= maxHeight
+                if (isLandscape) {
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(TILE_SPACING_DP.dp),
+                        horizontalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
+                    ) {
+                        tiles.forEach { tile -> GaugeTile(tile, modifier = Modifier.weight(1f).fillMaxSize()) }
+                        BoostTile(uiState.boost, modifier = Modifier.weight(1f).fillMaxSize())
                     }
-                    BoostTile(uiState.boost, modifier = Modifier.fillMaxWidth())
+                } else {
+                    // No fixed tile height here: each tile sizes to its own content (label +
+                    // value, or label + arc + value for boost). Combined with the scroll below,
+                    // this is what guarantees portrait never clips regardless of font scale or
+                    // screen height.
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(TILE_SPACING_DP.dp),
+                        verticalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
+                    ) {
+                        tiles.forEach { tile ->
+                            GaugeTile(tile, modifier = Modifier.fillMaxWidth())
+                        }
+                        BoostTile(uiState.boost, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
         }
