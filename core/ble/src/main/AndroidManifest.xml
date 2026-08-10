@@ -1,7 +1,39 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  BLUETOOTH_SCAN / BLUETOOTH_CONNECT runtime permissions and the connectedDevice
-  foreground service arrive with the real ObdLink implementation in Sprint 2b (OBD-17/18).
-  Intentionally empty at scaffold time: no components, no permissions yet.
+  BLE permissions for the OBD dongle link (OBD-17).
+
+  Android 12+ (API 31) uses the split Bluetooth runtime permissions. BLUETOOTH_SCAN carries
+  `neverForLocation` because this app derives nothing about the user's location from scan
+  results — that assertion is what lets the scan run without ACCESS_FINE_LOCATION on 31+.
+  The legacy BLUETOOTH/BLUETOOTH_ADMIN pair (install-time) plus ACCESS_FINE_LOCATION (runtime,
+  and genuinely required for a BLE scan on API 23..30) are capped at maxSdkVersion=30.
+
+  `bluetooth_le` is declared required="false" deliberately: a library module should not
+  unilaterally decide Play Store device filtering for :app. BleObdLink checks BLE support at
+  runtime and surfaces LinkState.Error instead. :app may tighten this to required="true".
+
+  The connectedDevice foreground service arrives with OBD-24, not here.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+</manifest>
