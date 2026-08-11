@@ -16,3 +16,4 @@ README.md            orchestrator
 OWNERSHIP            orchestrator
 issues/              orchestrator
 reviews/             reviewer merge-agent
+NOTICE               orchestrator protocol-agent
