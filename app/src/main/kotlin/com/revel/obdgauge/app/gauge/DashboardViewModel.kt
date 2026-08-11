@@ -2,11 +2,19 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.revel.obdgauge.app.settings.AppSettings
+import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
+import com.revel.obdgauge.app.settings.GaugeOrderEntry
+import com.revel.obdgauge.app.settings.SettingsRepository
+import com.revel.obdgauge.app.settings.effectiveThresholds
+import com.revel.obdgauge.app.sparkline.SparklineHistoryHolder
+import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.model.VehicleDataSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -20,6 +28,9 @@ import javax.inject.Inject
  *
  * @param clock used only to compute "last seen Xs ago" for stale readings; injected (rather
  *   than `Instant.now()`) so tests can supply a fixed instant for deterministic assertions.
+ * @param settingsRepository OBD-21 settings (thresholds/units/gauge order/keep-screen-on):
+ *   combined into [uiState] so a settings edit recolors/reformats the dashboard live, without
+ *   restarting anything.
  */
 @HiltViewModel
 class DashboardViewModel
@@ -27,15 +38,33 @@ class DashboardViewModel
     constructor(
         private val dataSource: VehicleDataSource,
         private val clock: Clock,
+        private val settingsRepository: SettingsRepository,
     ) : ViewModel() {
+        // Per-gauge rolling history for OBD-20's sparklines, fed a step inside the same
+        // combine() below. Deliberately NOT part of `uiState`'s DashboardUiState — see
+        // SparklineHistoryHolder's KDoc for why folding it in would defeat the whole point of
+        // keeping 4 Hz updates from recomposing the entire dashboard.
+        private val sparklineHistory = SparklineHistoryHolder(DASHBOARD_PIDS.map { it.id })
+
         // start()/stop() are driven by [uiState]'s own subscription (onStart/onCompletion,
         // upstream of stateIn) rather than the ViewModel's own init/onCleared lifetime — that
         // way SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS) actually gates polling: the
         // data source starts only once uiState gains its first collector, and stops once the
         // last collector has been gone for STOP_TIMEOUT_MILLIS.
         val uiState: StateFlow<DashboardUiState> =
-            combine(dataSource.readings, dataSource.connection) { readings, connection ->
-                toDashboardUiState(readings, connection, clock.instant())
+            combine(
+                dataSource.readings,
+                dataSource.connection,
+                settingsRepository.settings,
+            ) { readings, connection, settings ->
+                sparklineHistory.onReadings(readings, clock.instant())
+                toDashboardUiState(
+                    readings,
+                    connection,
+                    clock.instant(),
+                    settings.effectiveThresholds(),
+                    settings.units,
+                )
             }.onStart { dataSource.start(DASHBOARD_PIDS) }
                 .onCompletion { dataSource.stop() }
                 .stateIn(
@@ -43,6 +72,25 @@ class DashboardViewModel
                     started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                     initialValue = DashboardUiState.Loading,
                 )
+
+        /** Which gauges show, and in what order — OBD-21's settings screen writes this. */
+        val gaugeOrder: StateFlow<List<GaugeOrderEntry>> =
+            settingsRepository.settings
+                .map { it.gaugeOrder }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), DEFAULT_GAUGE_ORDER)
+
+        /** OBD-21's keep-screen-on toggle; `MainActivity` applies it to the window. */
+        val keepScreenOn: StateFlow<Boolean> =
+            settingsRepository.settings
+                .map { it.keepScreenOn }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    AppSettings().keepScreenOn,
+                )
+
+        /** OBD-20's per-gauge sparkline strip — see [SparklineHistoryHolder]. */
+        fun sparklineFlow(id: String): StateFlow<List<SparklinePoint>> = sparklineHistory.flowFor(id)
 
         override fun onCleared() {
             // Belt-and-suspenders: makes teardown deterministic on ViewModel clear rather than

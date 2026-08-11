@@ -1,8 +1,8 @@
 package com.revel.obdgauge.app.gauge
 
 import androidx.compose.runtime.Immutable
+import com.revel.obdgauge.app.settings.UnitPreferences
 import com.revel.obdgauge.model.LinkState
-import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.Reading
 import java.time.Instant
@@ -74,33 +74,62 @@ data class DashboardUiState(
  * [DashboardUiState]. Shared by [DashboardViewModel] and UI tests so tests exercise the exact
  * same formatting/threshold-classification code path the app renders with — never a
  * hand-duplicated copy of it.
+ *
+ * @param thresholds threshold table to classify against — [ThresholdConfig.seed] by default;
+ *   OBD-21's `DashboardViewModel` passes `AppSettings.effectiveThresholds()` instead so a user
+ *   override recolors the dashboard the instant it's saved.
+ * @param units display-unit preference (OBD-21); defaults to [UnitPreferences]'s own defaults,
+ *   which match what [DASHBOARD_PIDS_BY_ID] declares today — so an unconfigured app (or a test
+ *   that doesn't care about units) renders identically to pre-OBD-21 output.
  */
 fun toDashboardUiState(
     readings: Map<String, Reading>,
     connection: LinkState,
     now: Instant,
+    thresholds: Map<String, GaugeThresholds> = ThresholdConfig.seed,
+    units: UnitPreferences = UnitPreferences(),
 ): DashboardUiState =
     DashboardUiState(
-        coolant = tileState(PidIds.COOLANT, "Coolant", MeasurementUnit.FAHRENHEIT, readings, now),
-        transTemp = tileState(PidIds.TRANS_TEMP, "Trans", MeasurementUnit.FAHRENHEIT, readings, now),
-        oilTemp = tileState(PidIds.OIL_TEMP, "Oil", MeasurementUnit.FAHRENHEIT, readings, now),
-        boost = tileState(PidIds.BOOST, "Boost", MeasurementUnit.PSI, readings, now),
+        coolant = tileState(PidIds.COOLANT, "Coolant", readings, now, thresholds, units),
+        transTemp = tileState(PidIds.TRANS_TEMP, "Trans", readings, now, thresholds, units),
+        oilTemp = tileState(PidIds.OIL_TEMP, "Oil", readings, now, thresholds, units),
+        boost = tileState(PidIds.BOOST, "Boost", readings, now, thresholds, units),
         connection = connection,
     )
 
+/** Looks up the [GaugeTileUiState] for [id] out of the four fixed dashboard slots. */
+fun DashboardUiState.tileFor(id: String): GaugeTileUiState? =
+    when (id) {
+        PidIds.COOLANT -> coolant
+        PidIds.TRANS_TEMP -> transTemp
+        PidIds.OIL_TEMP -> oilTemp
+        PidIds.BOOST -> boost
+        else -> null
+    }
+
+@Suppress("LongParameterList") // pure mapper: one param per input the tile's formatting/classification actually needs.
 private fun tileState(
     id: String,
     label: String,
-    unit: MeasurementUnit,
     readings: Map<String, Reading>,
     now: Instant,
+    thresholds: Map<String, GaugeThresholds>,
+    units: UnitPreferences,
 ): GaugeTileUiState {
     val reading = readings[id] ?: return GaugeTileUiState.placeholder(id, label)
+    // wireUnit is read from the PidDefinition, never hardcoded — see UnitConversion.kt's KDoc
+    // on why this must not assume FAHRENHEIT/PSI once :core:protocol wiring lands (OBD-25).
+    val wireUnit = checkNotNull(DASHBOARD_PIDS_BY_ID[id]?.unit) { "no PidDefinition for id=$id" }
+    val displayUnit = units.displayUnitFor(wireUnit)
+    val displayValue = UnitConversion.convert(reading.value, wireUnit, displayUnit)
     return GaugeTileUiState(
         id = id,
         label = label,
-        valueText = formatGaugeValue(reading.value, unit),
-        zone = ThresholdConfig.classify(id, reading.value),
+        valueText = formatGaugeValue(displayValue, displayUnit),
+        // Classification stays against the raw wire-unit reading and wire-unit-scaled
+        // thresholds (never the display-converted value) — see AppSettings' KDoc on why
+        // thresholds are stored in wire units.
+        zone = ThresholdConfig.classify(id, reading.value, thresholds),
         isStale = reading.stale,
         staleText = if (reading.stale) formatStaleText(reading, now) else null,
         rawValue = reading.value,

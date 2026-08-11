@@ -69,9 +69,15 @@ object ThresholdConfig {
             PidIds.BOOST to GaugeThresholds(),
         )
 
-    /** Classifies [value] for gauge [id], defaulting to [ThresholdZone.NEUTRAL] for unknown ids. */
+    /**
+     * Classifies [value] for gauge [id] against [thresholds] (defaulting to [seed]), returning
+     * [ThresholdZone.NEUTRAL] for an id absent from [thresholds]. [thresholds] lets OBD-21's
+     * user overrides (layered on top of [seed] — see `AppSettings.effectiveThresholds`) drive
+     * classification without this function needing to know anything about settings/DataStore.
+     */
     fun classify(
         id: String,
         value: Double,
-    ): ThresholdZone = seed[id]?.classify(value) ?: ThresholdZone.NEUTRAL
+        thresholds: Map<String, GaugeThresholds> = seed,
+    ): ThresholdZone = thresholds[id]?.classify(value) ?: ThresholdZone.NEUTRAL
 }

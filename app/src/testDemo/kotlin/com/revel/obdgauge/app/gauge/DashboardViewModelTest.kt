@@ -1,5 +1,7 @@
 package com.revel.obdgauge.app.gauge
 
+import com.revel.obdgauge.app.settings.AppSettings
+import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.VehicleDataSource
@@ -7,6 +9,7 @@ import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
@@ -87,7 +90,7 @@ class DashboardViewModelTest {
         runTest(testDispatcher) {
             val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
             val recording = RecordingVehicleDataSource(fake)
-            val viewModel = DashboardViewModel(recording, fixedClock)
+            val viewModel = DashboardViewModel(recording, fixedClock, InMemorySettingsRepository())
 
             // No collector yet: the init-block-eager `start()` this review flagged (M7) must
             // be gone.
@@ -118,7 +121,7 @@ class DashboardViewModelTest {
         // `advanceUntilIdle()` in this coroutines-test version. The replay script is finite, so
         // waiting on `this` never hangs the test.
         val dataSource = FakeVehicleDataSource(scenario = scenario, scope = this)
-        val viewModel = DashboardViewModel(dataSource, fixedClock)
+        val viewModel = DashboardViewModel(dataSource, fixedClock, InMemorySettingsRepository())
         // The collector itself never completes (StateFlow.collect runs forever), so it must be
         // on `backgroundScope` to avoid runTest failing with "test finished but a coroutine is
         // still active." Its suspension is a direct Flow emission handoff, not a scheduled
@@ -154,5 +157,19 @@ private class RecordingVehicleDataSource(
     override fun stop() {
         stopCallCount++
         delegate.stop()
+    }
+}
+
+/**
+ * Trivial [SettingsRepository] double: no DataStore/disk, just the defaults, since these tests
+ * exercise reading/formatting scenario data, not OBD-21's settings persistence itself (see
+ * `SettingsRepositoryTest` and the live-recolor test for that).
+ */
+private class InMemorySettingsRepository : SettingsRepository {
+    private val state = MutableStateFlow(AppSettings())
+    override val settings = state
+
+    override suspend fun update(transform: (AppSettings) -> AppSettings) {
+        state.value = transform(state.value)
     }
 }

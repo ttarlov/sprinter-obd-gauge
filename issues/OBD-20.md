@@ -4,7 +4,7 @@ title: Sparkline strip charts
 module: app
 owner: ui-agent
 sprint: 2
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

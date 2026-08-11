@@ -26,6 +26,13 @@ class GaugeFormattingTest {
     }
 
     @Test
+    fun `celsius keeps one decimal place (review round-1 NIT)`() {
+        // 235 F -> ~112.78 C: whole-degree rounding would lose most of the resolution a
+        // Fahrenheit-wire reading actually has.
+        assertEquals("112.8°C", formatGaugeValue(112.78, MeasurementUnit.CELSIUS))
+    }
+
+    @Test
     fun `stale text reports whole elapsed seconds`() {
         val reading = Reading(id = "coolant", value = 190.0, timestamp = Instant.EPOCH, stale = true)
         val now = Instant.EPOCH.plusSeconds(12)

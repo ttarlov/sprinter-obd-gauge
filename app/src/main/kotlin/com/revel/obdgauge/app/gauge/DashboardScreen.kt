@@ -16,7 +16,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -27,6 +30,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
+import com.revel.obdgauge.app.settings.GaugeOrderEntry
+import com.revel.obdgauge.app.sparkline.SparklineChart
+import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.GaugeAmber
 import com.revel.obdgauge.app.ui.theme.GaugeGreen
 import com.revel.obdgauge.app.ui.theme.GaugeNeutral
@@ -35,37 +43,60 @@ import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
 import com.revel.obdgauge.app.ui.theme.GaugeValueTextStyle
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkState
+import com.revel.obdgauge.model.PidIds
+import kotlinx.coroutines.flow.StateFlow
 
 private const val TILE_CORNER_RADIUS_DP = 16
 private const val TILE_SPACING_DP = 12
 private const val TILE_PADDING_DP = 16
+private const val SPARKLINE_TOP_PADDING_DP = 4
+
+// Gear glyph for the settings entry point — plain text/emoji, matching this codebase's
+// icon-free style (no material-icons dependency).
+private const val SETTINGS_GLYPH = "⚙"
 
 /**
  * The full gauge dashboard. Landscape (a phone on a dash mount, the primary target) lays the
- * four tiles out in a single row; portrait stacks them in a scrollable column so content
+ * visible tiles out in a single row; portrait stacks them in a scrollable column so content
  * never clips regardless of screen height (OBD-10 AC: "portrait doesn't crash or clip").
  * [ConnectionBanner] (OBD-11) sits above the tiles in both orientations, driven by
- * [DashboardUiState.connection].
+ * [DashboardUiState.connection]; a settings entry point (OBD-21) sits alongside it.
  *
  * Orientation is read from this composable's own measured [BoxWithConstraints] bounds, not
  * [androidx.compose.ui.platform.LocalConfiguration]'s device screen size — this dashboard can
  * be hosted in a container narrower than the full device screen (e.g. multi-window, or a
  * future embedded placement), and layout should follow the space it's actually given.
  *
- * `safeDrawingPadding()` is applied once here, at the outer column, rather than separately in
- * each orientation branch below (as it was pre-OBD-11) — now that the banner is a sibling of
- * the tile layout rather than nested inside it, a single top-level application covers both.
+ * @param gaugeOrder which gauges show and in what order (OBD-21); defaults to the dashboard's
+ *   original hardcoded order/visibility so a caller that doesn't pass settings renders exactly
+ *   as before OBD-21.
+ * @param sparklines per-gauge-id rolling history (OBD-20), each a [StateFlow] rather than a
+ *   plain `List` — collected only by the leaf [GaugeSparklineStrip], never read here or by
+ *   [GaugeTile]/[BoostTile] themselves, so a 4 Hz sparkline tick recomposes only that one leaf
+ *   instead of this whole composable. See `SparklineHistoryHolder`'s KDoc and
+ *   `SparklineRecompositionTest`. A missing/absent id renders no sparkline for that tile.
+ * @param onSettingsClick invoked by the gear button; the caller (here, `MainActivity`) owns
+ *   navigation — this composable has no nav-library dependency, per the codebase's minimal
+ *   style.
  */
 @Composable
 fun GaugeDashboard(
     uiState: DashboardUiState,
     modifier: Modifier = Modifier,
+    gaugeOrder: List<GaugeOrderEntry> = DEFAULT_GAUGE_ORDER,
+    sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
+    onSettingsClick: () -> Unit = {},
 ) {
-    val tiles = listOf(uiState.coolant, uiState.transTemp, uiState.oilTemp)
+    val visibleIds = gaugeOrder.filter { it.visible }.map { it.id }
 
     Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-            ConnectionBanner(uiState.connection, modifier = Modifier.fillMaxWidth())
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                ConnectionBanner(uiState.connection, modifier = Modifier.weight(1f))
+                TextButton(onClick = onSettingsClick, modifier = Modifier.testTag("settings-button")) {
+                    Text(text = SETTINGS_GLYPH, style = MaterialTheme.typography.titleLarge)
+                }
+            }
             BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 val isLandscape = maxWidth >= maxHeight
                 if (isLandscape) {
@@ -73,8 +104,11 @@ fun GaugeDashboard(
                         modifier = Modifier.fillMaxSize().padding(TILE_SPACING_DP.dp),
                         horizontalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
                     ) {
-                        tiles.forEach { tile -> GaugeTile(tile, modifier = Modifier.weight(1f).fillMaxSize()) }
-                        BoostTile(uiState.boost, modifier = Modifier.weight(1f).fillMaxSize())
+                        visibleIds.forEach { id ->
+                            key(id) {
+                                GaugeSlot(id, uiState, sparklines[id], modifier = Modifier.weight(1f).fillMaxSize())
+                            }
+                        }
                     }
                 } else {
                     // No fixed tile height here: each tile sizes to its own content (label +
@@ -89,10 +123,11 @@ fun GaugeDashboard(
                                 .padding(TILE_SPACING_DP.dp),
                         verticalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
                     ) {
-                        tiles.forEach { tile ->
-                            GaugeTile(tile, modifier = Modifier.fillMaxWidth())
+                        visibleIds.forEach { id ->
+                            key(id) {
+                                GaugeSlot(id, uiState, sparklines[id], modifier = Modifier.fillMaxWidth())
+                            }
                         }
-                        BoostTile(uiState.boost, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -100,10 +135,27 @@ fun GaugeDashboard(
     }
 }
 
-/** One temp/numeric tile: label, large value, threshold-colored background, stale treatment. */
+/** Dispatches to [BoostTile] for the boost id (arc + neutral color), [GaugeTile] otherwise. */
+@Composable
+private fun GaugeSlot(
+    id: String,
+    uiState: DashboardUiState,
+    sparkline: StateFlow<List<SparklinePoint>>?,
+    modifier: Modifier = Modifier,
+) {
+    val tile = uiState.tileFor(id) ?: return
+    if (id == PidIds.BOOST) {
+        BoostTile(tile, sparkline, modifier)
+    } else {
+        GaugeTile(tile, sparkline, modifier)
+    }
+}
+
+/** One temp/numeric tile: label, large value, threshold-colored background, stale treatment, optional sparkline. */
 @Composable
 fun GaugeTile(
     state: GaugeTileUiState,
+    sparkline: StateFlow<List<SparklinePoint>>? = null,
     modifier: Modifier = Modifier,
 ) {
     val zoneColor = zoneColor(state.zone)
@@ -136,6 +188,14 @@ fun GaugeTile(
                     modifier = Modifier.testTag("gauge-${state.id}-stale"),
                 )
             }
+            sparkline?.let { flow ->
+                GaugeSparklineStrip(
+                    id = state.id,
+                    flow = flow,
+                    color = zoneColor,
+                    modifier = Modifier.fillMaxWidth().padding(top = SPARKLINE_TOP_PADDING_DP.dp),
+                )
+            }
         }
     }
 }
@@ -144,6 +204,7 @@ fun GaugeTile(
 @Composable
 private fun BoostTile(
     state: GaugeTileUiState,
+    sparkline: StateFlow<List<SparklinePoint>>?,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -170,8 +231,34 @@ private fun BoostTile(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("gauge-${state.id}-value"),
             )
+            sparkline?.let { flow ->
+                GaugeSparklineStrip(
+                    id = state.id,
+                    flow = flow,
+                    color = GaugeNeutral,
+                    modifier = Modifier.fillMaxWidth().padding(top = SPARKLINE_TOP_PADDING_DP.dp),
+                )
+            }
         }
     }
+}
+
+/**
+ * Leaf composable that collects [flow] itself (via [collectAsStateWithLifecycle]) — the only
+ * place in this file that reads a sparkline flow's *value*. [GaugeTile]/[BoostTile]/
+ * [GaugeDashboard] all pass the `StateFlow` reference through untouched, so a new point never
+ * triggers their recomposition, only this leaf's — see `SparklineHistoryHolder`'s KDoc and
+ * `SparklineRecompositionTest` (OBD-20 AC).
+ */
+@Composable
+private fun GaugeSparklineStrip(
+    id: String,
+    flow: StateFlow<List<SparklinePoint>>,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val points by flow.collectAsStateWithLifecycle()
+    SparklineChart(points = points, color = color, modifier = modifier.testTag("gauge-$id-sparkline"))
 }
 
 private const val TILE_BACKGROUND_ALPHA = 0.18f

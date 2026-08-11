@@ -26,14 +26,25 @@ fun unitSuffix(unit: MeasurementUnit): String =
 
 /**
  * Formats [value] rounded to the nearest whole number for [unit], with its suffix. Whole
- * numbers read faster at arm's length off a dash mount than decimals do; boost keeps one
- * decimal since a half-PSI matters at this gauge's small numeric range.
+ * numbers read faster at arm's length off a dash mount than decimals do for Fahrenheit, where
+ * the underlying data is already whole-degree-scale. [PSI][MeasurementUnit.PSI] keeps one
+ * decimal since a half-PSI matters at this gauge's small numeric range;
+ * [CELSIUS][MeasurementUnit.CELSIUS] keeps one decimal for the opposite reason — 1 Fahrenheit
+ * degree is ~0.56 Celsius, so a Fahrenheit-wire reading (OBD-21's display-unit conversion,
+ * `gauge/UnitConversion.kt`) rounded to whole Celsius degrees would lose most of its resolution.
  */
 fun formatGaugeValue(
     value: Double,
     unit: MeasurementUnit,
 ): String {
-    val number = if (unit == MeasurementUnit.PSI) formatOneDecimal(value) else value.roundToInt().toString()
+    val number =
+        if (unit == MeasurementUnit.PSI ||
+            unit == MeasurementUnit.CELSIUS
+        ) {
+            formatOneDecimal(value)
+        } else {
+            value.roundToInt().toString()
+        }
     return number + unitSuffix(unit)
 }
 

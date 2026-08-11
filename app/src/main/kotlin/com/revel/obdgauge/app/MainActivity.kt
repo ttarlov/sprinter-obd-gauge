@@ -2,17 +2,26 @@ package com.revel.obdgauge.app
 
 import android.graphics.Color.TRANSPARENT
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS
 import com.revel.obdgauge.app.gauge.DashboardViewModel
 import com.revel.obdgauge.app.gauge.GaugeDashboard
+import com.revel.obdgauge.app.settings.SettingsRoute
+import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Single-activity host. No `screenOrientation` lock in the manifest: a dash mount holds the
@@ -22,7 +31,8 @@ import dagger.hilt.android.AndroidEntryPoint
  * [DashboardViewModel] is `@HiltViewModel`-annotated; `@AndroidEntryPoint` below patches this
  * Activity's default `ViewModelProvider.Factory` so the plain Compose `viewModel()` call
  * resolves it with its Hilt-injected constructor — no `hilt-navigation-compose` dependency
- * needed for a single-Activity app with no nav graph.
+ * needed for a single-Activity app with no nav graph. OBD-21's settings screen is reached the
+ * same way: a `mutableStateOf<Screen>` swap below, not a nav library.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -42,7 +52,32 @@ class MainActivity : ComponentActivity() {
                 // WhileSubscribed producer, the underlying data source) when this Activity
                 // isn't STARTED, rather than collecting for as long as the Activity exists.
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                GaugeDashboard(uiState = uiState)
+                val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
+                val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+
+                // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
+                // and it's cleared automatically the moment the setting flips back off.
+                LaunchedEffect(keepScreenOn) {
+                    if (keepScreenOn) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+
+                var showSettings by remember { mutableStateOf(false) }
+                if (showSettings) {
+                    SettingsRoute(onBack = { showSettings = false })
+                } else {
+                    val sparklines: Map<String, StateFlow<List<SparklinePoint>>> =
+                        remember(viewModel) { DASHBOARD_PIDS.associate { it.id to viewModel.sparklineFlow(it.id) } }
+                    GaugeDashboard(
+                        uiState = uiState,
+                        gaugeOrder = gaugeOrder,
+                        sparklines = sparklines,
+                        onSettingsClick = { showSettings = true },
+                    )
+                }
             }
         }
     }

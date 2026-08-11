@@ -3,10 +3,13 @@ package com.revel.obdgauge.app.gauge
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -38,16 +41,45 @@ class DashboardScreenshotTest {
     @Config(qualifiers = "w800dp-h360dp-land")
     @Test
     fun `dashboard renders in landscape`() {
-        composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(sampleUiState()) } }
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(
+                    sampleUiState(),
+                    sparklines = sampleSparklines(),
+                )
+            }
+        }
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "dashboard_landscape.png")
     }
 
     @Config(qualifiers = "w360dp-h640dp-port")
     @Test
     fun `dashboard renders in portrait`() {
-        composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(sampleUiState()) } }
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(
+                    sampleUiState(),
+                    sparklines = sampleSparklines(),
+                )
+            }
+        }
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "dashboard_portrait.png")
     }
+
+    // OBD-20 AC: the references should show sparklines, not just bare tiles — a small synthetic
+    // rising trend per gauge, distinct enough from a flat line to be visibly a chart.
+    private fun sampleSparklines(): Map<String, StateFlow<List<SparklinePoint>>> =
+        DASHBOARD_PIDS.associate { pid ->
+            val base = sampleUiState().tileFor(pid.id)?.rawValue ?: 0.0
+            val points =
+                (0 until SPARKLINE_SAMPLE_COUNT).map { i ->
+                    SparklinePoint(
+                        Instant.EPOCH.plusMillis(i * SPARKLINE_SAMPLE_INTERVAL_MILLIS),
+                        base - SPARKLINE_SAMPLE_COUNT + i,
+                    )
+                }
+            pid.id to MutableStateFlow<List<SparklinePoint>>(points)
+        }
 
     // Runs the fake on `this` (the runTest TestScope), not `backgroundScope` — see
     // DashboardScreenTest's dashboardUiStateFor for why.
@@ -69,5 +101,10 @@ class DashboardScreenshotTest {
         // Lives under src/testDemo/ (OBD-12) alongside this test, which only runs for the
         // `demo` flavor.
         const val SCREENSHOT_DIR = "src/testDemo/screenshots/"
+        const val SPARKLINE_SAMPLE_COUNT = 20
+
+        // 250 ms = a nominal 4 Hz cadence, well under SparklineChart's 2 s gap threshold, so the
+        // reference image shows a continuous line rather than 20 disconnected points.
+        const val SPARKLINE_SAMPLE_INTERVAL_MILLIS = 250L
     }
 }

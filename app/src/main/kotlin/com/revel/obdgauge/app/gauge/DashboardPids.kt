@@ -52,6 +52,13 @@ val DASHBOARD_PIDS: List<PidDefinition> =
         ),
     )
 
+/**
+ * [DASHBOARD_PIDS] keyed by [PidDefinition.id] — the lookup `DashboardUiState.kt`'s unit
+ * conversion (OBD-21) and `settings/SettingsScreen.kt`'s threshold editors use to find each
+ * gauge's current wire unit, rather than hardcoding it a second time at each call site.
+ */
+val DASHBOARD_PIDS_BY_ID: Map<String, PidDefinition> = DASHBOARD_PIDS.associateBy { it.id }
+
 private const val UNUSED_PARSE_RESULT = 0.0
 private const val STANDARD_MODE = 1
 private const val COOLANT_PID = 0x05
