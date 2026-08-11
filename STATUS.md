@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **SPRINT 2 COMPLETE** — protocol + BLE + console all merged. Everything left needs the van |
+| Current phase | **Sprint 2c running** — sparklines + settings in build |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |

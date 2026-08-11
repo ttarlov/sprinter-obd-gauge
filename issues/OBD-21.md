@@ -4,11 +4,11 @@ title: Settings screen
 module: app
 owner: ui-agent
 sprint: 2
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ui/21-settings-screen
+branch: ui/20-21-sparklines-settings
 ---
 
 ## Feature
