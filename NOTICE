@@ -1,0 +1,33 @@
+Sprinter OBD Gauge
+Copyright (c) 2026 Taras Tarlov
+
+This product includes software developed by third parties, as listed below.
+
+-------------------------------------------------------------------------------
+kotlin-obd-api
+-------------------------------------------------------------------------------
+
+Project:    kotlin-obd-api
+Homepage:   https://github.com/eltonvs/kotlin-obd-api
+Version:    v1.4.1 (master @ 30014eb6e8cd35334ba8f7ea627500f6b1942ff5)
+Copyright:  Copyright (c) Elton Viana and the kotlin-obd-api contributors
+License:    Apache License, Version 2.0
+            http://www.apache.org/licenses/LICENSE-2.0
+
+Used by:    core/protocol/src/main/kotlin/com/revel/obdgauge/protocol/VendoredSaeScaling.kt
+
+kotlin-obd-api is NOT a runtime dependency of this project. Per DECISIONS.md D1, the
+SAE J1979 mode-01 scaling constants and formulas for six standard PIDs (0105 coolant,
+010B manifold absolute pressure, 010C engine speed, 010D vehicle speed, 010F intake air
+temperature, 0133 barometric pressure) were transcribed from the source files listed in
+the header of VendoredSaeScaling.kt, cross-checked against the public SAE J1979
+definitions, and reimplemented in this repository. kotlin-obd-api's error-response
+patterns (NO DATA / STOPPED / UNABLE TO CONNECT / "?" / BUS INIT / 7F negative response)
+also informed the error typing in ResponseParser.kt.
+
+One deliberate divergence from the vendored source is documented in VendoredSaeScaling.kt:
+engine RPM is divided in floating point (SAE-exact quarter-rpm resolution) rather than by
+kotlin-obd-api's truncating integer division.
+
+Apache License, Version 2.0, in full:
+http://www.apache.org/licenses/LICENSE-2.0
