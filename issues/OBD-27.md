@@ -28,3 +28,6 @@ Compose UI test asserting badge presence/absence by the `unverified` flag and ra
 
 ## Out of scope
 Actually verifying PIDs (that's OBD-26, a hardware/human activity — this issue only builds the UX for whatever verification state exists).
+
+## Note from OBD-15 (2026-08-11)
+The unverified flag is surfaced via `PidCatalog.isVerified(id)` in :core:protocol (the frozen `Reading` contract carries no such field — documented AC deviation, reviewer-accepted). Build the badge against that.
