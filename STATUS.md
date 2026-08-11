@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 2b wave 1 done** — BLE link merged; OBD-19 console next |
+| Current phase | **Sprint 2b-2 running** — debug console in build |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
