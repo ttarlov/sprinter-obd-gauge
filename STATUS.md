@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-11 — Sprints 0-2 ALL COMPLETE: 21/36 merged, ~750 tests. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
+**Last updated:** 2026-08-11 — Sprints 0-2 complete + OBD-42 gauge-swap carousel merged (71ab896): 22/37 merged. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
 
 ---
 
@@ -136,3 +136,4 @@ Hardware gates — **🖐 TARAS**:
 | Sprint 2b-2 | +300k | ~410k | 0 | Console: clean build, approved round 1, tier boundary held (zero existing-file edits). Overrun driver: flavor×buildType source-set plumbing (~2x est. build cost — recalibration input: ANY new source-set/variant work costs ~300k, not 150k). |
 | Sprint 2a | +900k | ~1.1M | 0 | Both waves: majors fixed pre-merge (truncated-frame framing; intra-cycle header restore). MTH decode solved + independently re-derived. First mutation-tested-then-rewritten test (M1 v1 didn't bite — process caught its own weak fix). ~22% over. |
 | Sprint 2c | +400k | ~1.0M | 2 arb | 2.5x over: Sonnet UI build ran 422k (pattern: UI builds are the persistent hot spot — 352/252/313/422k across sprints) and the threshold-field editing UX took 4 review rounds, with the reviewer twice catching regressions introduced by fixes (round-2 clear-retype, round-3 mid-edit unit toggle). Each was a silent wrong-number path in a dash gauge — the rounds were worth it. Recalibrate: Tier-B UI waves need ~2x their row. |
+| OBD-42 wave (feature request) | ~600k est | ~915k | 2 arb-assisted rounds | Long-press swap carousel. Swap correctness held from round 1 (4/4 mutations); reviews caught stale-picker-state (eaten back press), catalog-drift resurrection via forward-simulation, and a zero-tile unrecoverable state. UI-wave 2x pattern holds. |
