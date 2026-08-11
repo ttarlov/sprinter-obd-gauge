@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-10 — Sprint 2b COMPLETE: OBD-17/18/19 all merged. Debug console ready for the Veepeak. Sprint 2a (protocol) is the last software block before real-van work.
+**Last updated:** 2026-08-11 — SPRINT 2 COMPLETE (2a+2b+2c-pending): protocol layer merged both waves. 19/36 issues done, 663 tests repo-wide. The trans-temp decode is a solved hypothesis awaiting the van.
 
 ---
 
@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 2a running** — protocol wave 1 (init + standard PIDs) in build |
+| Current phase | **SPRINT 2 COMPLETE** — protocol + BLE + console all merged. Everything left needs the van |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
@@ -24,7 +24,7 @@
 | Sprint 0 — Skeleton & Contracts | +200k | ✅ done 2026-08-09 | ~230k (est.) | 5 merged / 0 rolled |
 | Sprint 1 — Decision & Demo Dashboard | +400k | 🔄 partial 2026-08-09 (wound down over budget) | ~1.0M | 4 merged + 1 🖐 / OBD-11+12 rolled |
 | Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ✅ done 2026-08-09 | ~390k | 2 merged / 0 rolled |
-| Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ⬜ not started | — | — |
+| Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ✅ done 2026-08-11 | ~1.1M | 4 merged / 0 rolled |
 | Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | 🔄 17+18 merged 2026-08-10; OBD-19 rolled to 2b-2 | ~1.15M | 2 merged / OBD-19 rolled |
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ⬜ not started | — | — |
 | Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ blocked: needs 2a+2b | — | — |
@@ -66,11 +66,11 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 
 ## Sprint 2a — Protocol (Opus)
 
-- [ ] OBD-13: ELM327 init state machine, typed failures, every failure mode tested
-- [ ] OBD-14: standard PID registry + parser (0105/010C/010B/0133/010F/010D); property test: never throws; SAE scaling verified
-- [ ] OBD-15: mode-22 Mercedes PIDs (ATSH/ATCRA framing; trans-temp from X-Gauge codes); `unverified` flag plumbing
-- [ ] OBD-16: computed boost (MAP − baro) + FAST/SLOW scheduler; 3 baro fixtures
-- [ ] Parser+scheduler coverage >90%
+- [x] OBD-13: init state machine w/ cold-dongle ATZ retry policy, every failure typed+tested — merged d0c05e0
+- [x] OBD-14: 6 standard PIDs; SAE scalings independently re-derived; vendoring caught kotlin-obd-api quarter-rpm truncation bug; per-line-first framing (review MAJOR fixed pre-merge); 4500-case property test — merged d0c05e0
+- [x] OBD-15: X-Gauge MTH decode SOLVED algebraically (raw = °C−50, Mercedes convention; coolant code as control case; confirmed by exact-arithmetic re-derivation, 0/256 mismatches); header set/restore discipline w/ intra-cycle retry; unverified via PidCatalog — merged fcf9e5e. 🖐 Residual: display-unit assumption + RXF ambiguity + 21 30 vs 22 05 43 hypothesis — OBD-22 settles all three on hardware
+- [x] OBD-16: RealVehicleDataSource — FAST/SLOW scheduler, altitude-true boost (101/81/69 kPa + vacuum), pinned-contract lifecycle incl. multi-threaded join probe — merged fcf9e5e
+- [x] Parser+scheduler coverage >90% (ad-hoc JaCoCo: parser 100%, scheduler 97.6%, mode-22 98.9%)
 
 ## Sprint 2b — BLE (Opus)
 
@@ -134,3 +134,4 @@ Hardware gates — **🖐 TARAS**:
 | Sprint 1b | +350k | ~390k | 0 | Tier-B validated: combined-lens review found 2 real majors (incl. a mutation-proven coverage hole) at ~60% of flat-matrix cost. Build still the big line item (252k). ~11% over — trend right. |
 | Sprint 2b w1 | +900k | ~1.15M | 1 arb | Tier A earned it: 2 blockers + 9 majors round 1; round 2 caught a relocated leak + unbounded debt. 17 mutations run across 3 rounds. Overrun drivers: 2 agent stalls (stream watchdog on long Gradle runs — mitigate with -q), and a redesign-grade fix round. |
 | Sprint 2b-2 | +300k | ~410k | 0 | Console: clean build, approved round 1, tier boundary held (zero existing-file edits). Overrun driver: flavor×buildType source-set plumbing (~2x est. build cost — recalibration input: ANY new source-set/variant work costs ~300k, not 150k). |
+| Sprint 2a | +900k | ~1.1M | 0 | Both waves: majors fixed pre-merge (truncated-frame framing; intra-cycle header restore). MTH decode solved + independently re-derived. First mutation-tested-then-rewritten test (M1 v1 didn't bite — process caught its own weak fix). ~22% over. |
