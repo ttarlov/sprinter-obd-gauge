@@ -3,9 +3,13 @@ package com.revel.obdgauge.app.settings
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS_BY_ID
+import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
 import com.revel.obdgauge.app.gauge.GaugeThresholds
 import com.revel.obdgauge.model.MeasurementUnit
+import com.revel.obdgauge.model.ObdRequest
+import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
+import com.revel.obdgauge.model.PollPriority
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -83,12 +87,18 @@ class SettingsCodecTest {
 
         val decoded = decodeAppSettings(preferences.toPreferences()).gaugeOrder
 
-        assertFalse(decoded.any { it.id == "retiredGauge" })
-        assertEquals(DASHBOARD_PIDS_BY_ID.keys, decoded.map { it.id }.toSet())
+        // OBD-42 review round-1 M2: no auto-backfill anymore (see reconcileGaugeOrder's KDoc) —
+        // dropping the unknown id is now the *only* thing this does, so only coolant survives.
+        assertEquals(listOf(GaugeOrderEntry(PidIds.COOLANT)), decoded)
     }
 
     @Test
-    fun `decoding a gauge order missing a known id appends it as visible, at the end`() {
+    fun `decoding a gauge order missing a known id no longer backfills it`() {
+        // Pre-OBD-42 this auto-appended transTemp/oilTemp, visible, at the end. Review round-1
+        // M2 removed that entirely: a swap can legitimately leave a core id "missing" from the
+        // persisted order, and there is no way to tell that apart from genuine catalog drift
+        // from the order's shape alone — see reconcileGaugeOrder's KDoc for the full story and
+        // why a new catalog gauge is discoverable via the picker instead.
         val preferences = mutablePreferencesOf()
         encodeAppSettings(
             AppSettings(
@@ -99,13 +109,115 @@ class SettingsCodecTest {
 
         val decoded = decodeAppSettings(preferences.toPreferences()).gaugeOrder
 
-        assertEquals(DASHBOARD_PIDS_BY_ID.keys, decoded.map { it.id }.toSet())
-        // The two persisted entries keep their relative order/visibility, up front...
-        assertEquals(listOf(PidIds.BOOST, PidIds.COOLANT), decoded.take(2).map { it.id })
+        assertEquals(listOf(PidIds.BOOST, PidIds.COOLANT), decoded.map { it.id })
+        assertTrue(decoded[0].visible)
         assertFalse(decoded[1].visible)
-        // ...and the two the catalog knows about but the saved order didn't are appended visible.
-        val appended = decoded.drop(2)
-        assertEquals(setOf(PidIds.TRANS_TEMP, PidIds.OIL_TEMP), appended.map { it.id }.toSet())
-        assertTrue(appended.all { it.visible })
+    }
+
+    @Test
+    fun `OBD-42 a persisted swap to a non-core id like rpm survives decode`() {
+        // "rpm" isn't in DASHBOARD_PIDS_BY_ID (deliberately — see GaugeCatalog.kt), but it IS a
+        // legal GAUGE_CATALOG id, so a swap that persisted it must not be reconciled away as
+        // "unknown" the way a truly retired id would be.
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(
+            AppSettings(
+                gaugeOrder =
+                    listOf(
+                        GaugeOrderEntry(PidIds.RPM),
+                        GaugeOrderEntry(PidIds.TRANS_TEMP),
+                        GaugeOrderEntry(PidIds.OIL_TEMP),
+                        GaugeOrderEntry(PidIds.BOOST),
+                    ),
+            ),
+            preferences,
+        )
+
+        val decoded = decodeAppSettings(preferences.toPreferences()).gaugeOrder
+
+        assertTrue(decoded.any { it.id == PidIds.RPM })
+        assertEquals(4, decoded.size)
+    }
+
+    @Test
+    fun `OBD-42 rpm is never auto-backfilled into a gauge order that never named it`() {
+        // Auto-backfill is gone entirely now (review round-1 M2) — a swap candidate must only
+        // ever appear because a user explicitly chose it (see SettingsCodec.kt's
+        // reconcileGaugeOrder KDoc), never as a side effect of decoding.
+        val decoded = decodeAppSettings(emptyPreferences()).gaugeOrder
+
+        assertFalse(decoded.any { it.id == PidIds.RPM })
+        assertEquals(DASHBOARD_PIDS_BY_ID.keys, decoded.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `OBD-42 M2 regression - a catalog that grew a 5th gauge does not resurrect a swapped-away core id`() {
+        // Simulates a future DASHBOARD_PIDS growing a 5th entry (OBD-43's shape) WITHOUT
+        // actually touching DASHBOARD_PIDS — reconcileGaugeOrder's catalog param exists exactly
+        // so this drift scenario is directly testable. Probe that caught the original bug: the
+        // slot-count heuristic this replaced saw a 4-slot swapped order against a 5-id catalog
+        // as "short a slot" and backfilled coolant back in as a duplicate.
+        // The production call site always passes GAUGE_CATALOG_BY_ID (core + swap-only extras
+        // like rpm), so a faithful "catalog grew" simulation must too, or a legitimately-
+        // persisted rpm swap would itself look like drift here rather than the case under test.
+        val fiveGaugeCatalog: Map<String, PidDefinition> = GAUGE_CATALOG_BY_ID + (ENGINE_LOAD.id to ENGINE_LOAD)
+        // A 4-slot persisted order where coolant was swapped away (e.g. to rpm) — same shape a
+        // real OBD-42 swap produces.
+        val swappedOrder =
+            listOf(
+                GaugeOrderEntry(PidIds.RPM),
+                GaugeOrderEntry(PidIds.TRANS_TEMP),
+                GaugeOrderEntry(PidIds.OIL_TEMP),
+                GaugeOrderEntry(PidIds.BOOST),
+            )
+
+        val reconciled = reconcileGaugeOrder(swappedOrder, fiveGaugeCatalog)
+
+        assertEquals(4, reconciled.size)
+        assertFalse(reconciled.any { it.id == PidIds.COOLANT })
+        assertFalse(reconciled.any { it.id == ENGINE_LOAD.id })
+
+        // Round-2 hardening: a SHORT order (fewer entries than the global DASHBOARD_PIDS size)
+        // must also reconcile to exactly its filtered input. The retired slot-count heuristic
+        // gated on the GLOBAL catalog size, so the 4-slot case above short-circuited it and
+        // could not detect the bug this test is named for — this one reaches the branch.
+        val shortOrder =
+            listOf(
+                GaugeOrderEntry(PidIds.RPM),
+                GaugeOrderEntry(PidIds.TRANS_TEMP),
+                GaugeOrderEntry(PidIds.BOOST),
+            )
+        val shortReconciled = reconcileGaugeOrder(shortOrder, fiveGaugeCatalog)
+        assertEquals(shortOrder, shortReconciled)
+    }
+
+    @Test
+    fun `an all-unknown persisted order falls back to defaults instead of a zero-tile dashboard`() {
+        // Round-2 MINOR: with backfill gone, total id turnover used to reconcile to an EMPTY
+        // order — zero tiles, nothing to long-press, unrecoverable short of clearing app data.
+        val preferences =
+            androidx.datastore.preferences.core
+                .mutablePreferencesOf()
+        encodeAppSettings(
+            AppSettings(gaugeOrder = listOf(GaugeOrderEntry("ghost"), GaugeOrderEntry("phantom"))),
+            preferences,
+        )
+        val decoded = decodeAppSettings(preferences.toPreferences())
+        assertEquals(AppSettings().gaugeOrder, decoded.gaugeOrder)
+    }
+
+    private companion object {
+        // A synthetic "5th DASHBOARD_PIDS entry" for the M2 regression test above — not a real
+        // catalog addition, just enough of a PidDefinition to populate a Map<String,
+        // PidDefinition> the way `reconcileGaugeOrder`'s catalog param expects.
+        val ENGINE_LOAD =
+            PidDefinition(
+                id = "engineLoad",
+                label = "Load",
+                unit = MeasurementUnit.PERCENT,
+                request = ObdRequest.StandardPid(mode = 1, pid = 0x04),
+                parse = { 0.0 },
+                pollPriority = PollPriority.SLOW,
+            )
     }
 }

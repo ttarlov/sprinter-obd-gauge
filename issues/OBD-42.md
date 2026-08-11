@@ -4,7 +4,7 @@ title: In-place gauge swap — long-press carousel picker
 module: app
 owner: ui-agent
 sprint: backlog
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

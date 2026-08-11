@@ -79,3 +79,23 @@ data class AppSettings(
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */
 fun AppSettings.effectiveThresholds(): Map<String, GaugeThresholds> = ThresholdConfig.seed + thresholdOverrides
+
+/**
+ * OBD-42: replaces the [gaugeOrder] entry currently named [oldId] with [newId], keeping that
+ * entry's [GaugeOrderEntry.visible] and position — "swap" is exactly this, never a remove-then-
+ * insert (which would also change position/visibility). A no-op if [oldId] isn't present.
+ * Pure/testable in isolation; [com.revel.obdgauge.app.gauge.DashboardViewModel.swapGauge] is the
+ * only production caller, round-tripping it through the same [SettingsRepository.update] path
+ * every other OBD-21 setting mutator uses (see `SettingsViewModel`) — so a swap persists and
+ * live-updates the dashboard exactly like a threshold edit does.
+ */
+fun AppSettings.withGaugeSwapped(
+    oldId: String,
+    newId: String,
+): AppSettings =
+    copy(
+        gaugeOrder =
+            gaugeOrder.map { entry ->
+                if (entry.id == oldId) entry.copy(id = newId) else entry
+            },
+    )

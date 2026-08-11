@@ -3,6 +3,7 @@ package com.revel.obdgauge.app.gauge
 import androidx.compose.runtime.Immutable
 import com.revel.obdgauge.app.settings.UnitPreferences
 import com.revel.obdgauge.model.LinkState
+import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.Reading
 import java.time.Instant
@@ -56,6 +57,15 @@ data class DashboardUiState(
     val oilTemp: GaugeTileUiState,
     val boost: GaugeTileUiState,
     val connection: LinkState,
+    /**
+     * OBD-42: tile state for every [GAUGE_CATALOG] id that ISN'T one of the four fixed fields
+     * above (today, just [PidIds.RPM]) — computed the same way, off the same [Reading]/
+     * threshold/unit inputs, so a swap-picker mini-card and a swapped-in dashboard tile show
+     * identical value/label/threshold-coloring for a given id. Empty by default so every
+     * pre-OBD-42 direct constructor call (previews, hand-built test fixtures) keeps compiling
+     * unchanged; see [tileFor].
+     */
+    val extraTiles: Map<String, GaugeTileUiState> = emptyMap(),
 ) {
     companion object {
         val Loading =
@@ -88,43 +98,56 @@ fun toDashboardUiState(
     now: Instant,
     thresholds: Map<String, GaugeThresholds> = ThresholdConfig.seed,
     units: UnitPreferences = UnitPreferences(),
-): DashboardUiState =
-    DashboardUiState(
-        coolant = tileState(PidIds.COOLANT, "Coolant", readings, now, thresholds, units),
-        transTemp = tileState(PidIds.TRANS_TEMP, "Trans", readings, now, thresholds, units),
-        oilTemp = tileState(PidIds.OIL_TEMP, "Oil", readings, now, thresholds, units),
-        boost = tileState(PidIds.BOOST, "Boost", readings, now, thresholds, units),
+): DashboardUiState {
+    // One tile computed per GAUGE_CATALOG entry (OBD-42's superset of DASHBOARD_PIDS — see
+    // GaugeCatalog.kt) rather than four hand-duplicated call sites: this is what guarantees a
+    // swap-picker mini-card and the tile it swaps into read value/label/threshold-coloring off
+    // the exact same code path, never a hand-copied "candidate" formatter that could drift.
+    val tiles = GAUGE_CATALOG.associate { pid -> pid.id to tileState(pid, readings, now, thresholds, units) }
+    return DashboardUiState(
+        coolant = tiles.getValue(PidIds.COOLANT),
+        transTemp = tiles.getValue(PidIds.TRANS_TEMP),
+        oilTemp = tiles.getValue(PidIds.OIL_TEMP),
+        boost = tiles.getValue(PidIds.BOOST),
         connection = connection,
+        extraTiles = tiles - CORE_TILE_IDS,
     )
+}
 
-/** Looks up the [GaugeTileUiState] for [id] out of the four fixed dashboard slots. */
+private val CORE_TILE_IDS = setOf(PidIds.COOLANT, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
+
+/**
+ * Looks up the [GaugeTileUiState] for [id]: one of the four fixed dashboard slots, or (OBD-42)
+ * [DashboardUiState.extraTiles] for any other [GAUGE_CATALOG] id — the swap picker's candidate
+ * mini-cards and a tile that's just been swapped both resolve through this same lookup, so
+ * there's exactly one place that decides "what does gauge id X look like right now."
+ */
 fun DashboardUiState.tileFor(id: String): GaugeTileUiState? =
     when (id) {
         PidIds.COOLANT -> coolant
         PidIds.TRANS_TEMP -> transTemp
         PidIds.OIL_TEMP -> oilTemp
         PidIds.BOOST -> boost
-        else -> null
+        else -> extraTiles[id]
     }
 
-@Suppress("LongParameterList") // pure mapper: one param per input the tile's formatting/classification actually needs.
 private fun tileState(
-    id: String,
-    label: String,
+    pid: PidDefinition,
     readings: Map<String, Reading>,
     now: Instant,
     thresholds: Map<String, GaugeThresholds>,
     units: UnitPreferences,
 ): GaugeTileUiState {
-    val reading = readings[id] ?: return GaugeTileUiState.placeholder(id, label)
+    val id = pid.id
+    val reading = readings[id] ?: return GaugeTileUiState.placeholder(id, pid.label)
     // wireUnit is read from the PidDefinition, never hardcoded — see UnitConversion.kt's KDoc
     // on why this must not assume FAHRENHEIT/PSI once :core:protocol wiring lands (OBD-25).
-    val wireUnit = checkNotNull(DASHBOARD_PIDS_BY_ID[id]?.unit) { "no PidDefinition for id=$id" }
+    val wireUnit = pid.unit
     val displayUnit = units.displayUnitFor(wireUnit)
     val displayValue = UnitConversion.convert(reading.value, wireUnit, displayUnit)
     return GaugeTileUiState(
         id = id,
-        label = label,
+        label = pid.label,
         valueText = formatGaugeValue(displayValue, displayUnit),
         // Classification stays against the raw wire-unit reading and wire-unit-scaled
         // thresholds (never the display-converted value) — see AppSettings' KDoc on why

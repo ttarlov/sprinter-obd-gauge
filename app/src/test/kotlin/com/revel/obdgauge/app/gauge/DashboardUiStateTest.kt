@@ -33,7 +33,33 @@ class DashboardUiStateTest {
         assertEquals(ThresholdZone.RED, state.coolant.zone)
     }
 
+    @Test
+    fun `extraTiles carries rpm, formatted and classified off the same code path as the core four`() {
+        val readings =
+            mapOf(
+                PidIds.RPM to Reading(PidIds.RPM, RPM_VALUE, Instant.EPOCH, stale = false),
+            )
+
+        val state = toDashboardUiState(readings, LinkState.Ready, Instant.EPOCH)
+        val rpmTile = state.tileFor(PidIds.RPM)
+
+        assertEquals("RPM", rpmTile?.label)
+        assertEquals("$RPM_WHOLE RPM", rpmTile?.valueText)
+        // No seed threshold entry for rpm (see ThresholdConfig.seed) — same reason boost is
+        // NEUTRAL: a swapped-in rpm tile must never appear falsely green/amber/red.
+        assertEquals(ThresholdZone.NEUTRAL, rpmTile?.zone)
+    }
+
+    @Test
+    fun `tileFor returns null for an id that's neither a core field nor in extraTiles`() {
+        val state = toDashboardUiState(emptyMap(), LinkState.Ready, Instant.EPOCH)
+
+        assertEquals(null, state.tileFor("notAGauge"))
+    }
+
     private companion object {
         const val WIRE_VALUE_FAHRENHEIT = 235.0
+        const val RPM_VALUE = 3000.0
+        const val RPM_WHOLE = "3000"
     }
 }

@@ -92,18 +92,38 @@ the gate; `src/test*/` intentionally stays out of scope, matching prior behavior
     mapper shared by the ViewModel and tests (the last two params are OBD-21 additions with
     defaults matching pre-OBD-21 behavior exactly). `DashboardUiState.tileFor(id)` (OBD-20/21) is
     a new lookup helper `GaugeDashboard`'s gauge-order rendering and the sparkline wiring use.
+    **OBD-42**: `toDashboardUiState` computes one `GaugeTileUiState` per `GAUGE_CATALOG` entry
+    (not just the four fixed fields) — `coolant`/`transTemp`/`oilTemp`/`boost` are still named
+    fields (every pre-OBD-42 call site is unaffected), and every *other* catalog id (today, just
+    `rpm`) lands in the new `extraTiles: Map<String, GaugeTileUiState>` field, defaulted to
+    `emptyMap()`. `tileFor(id)` falls back to `extraTiles[id]` for anything not one of the four —
+    this is what lets a swap-picker mini-card and a tile that's just been swapped both resolve
+    through the exact same lookup/formatting/classification code path (see "Gauge swap picker"
+    below on why that single-code-path property is the whole point).
   - `DashboardPids.kt` — `DASHBOARD_PIDS`, the four `PidDefinition`s (`coolant`, `oilTemp`,
     `transTemp`, `boost`) this dashboard requests, plus `DASHBOARD_PIDS_BY_ID` (OBD-21, a
     `associateBy { it.id }` lookup other code uses instead of re-hardcoding a unit/label).
     `request`/`parse` are placeholder values unused by `FakeVehicleDataSource` (it replays by id,
     not by asking a dongle); the real mode-22 registry lives in `:core:protocol` and replaces
-    this list at Phase-4 integration.
+    this list at Phase-4 integration. **Deliberately NOT touched by OBD-42** — see `GaugeCatalog.kt`
+    below for why the swap-picker's candidate list is a separate, broader file instead of an
+    addition here.
+  - `GaugeCatalog.kt` (OBD-42) — `GAUGE_CATALOG` (`DASHBOARD_PIDS` + `RPM_PID_DEFINITION`) and
+    `GAUGE_CATALOG_BY_ID`, plus `candidateGaugesFor(currentId, gaugeOrder, catalog = GAUGE_CATALOG,
+    isEligible = { true })`: the swap picker's candidate provider — `currentId` first, then every
+    other `catalog` entry not already visible on a *different* tile and passing `isEligible`. See
+    the "Gauge swap picker" section below for the full design (why `rpm` lives here and not in
+    `DASHBOARD_PIDS`, and the `isEligible` verified-filter seam).
   - `DashboardViewModel` — `@HiltViewModel`; `StateFlow<DashboardUiState>` out, formatting
     only. Takes an injected `VehicleDataSource`, `java.time.Clock` (stale-text "seconds ago"
     math), and (OBD-21) `SettingsRepository` — combined three-way so a settings edit recolors/
     reformats `uiState` live. Also exposes `gaugeOrder`/`keepScreenOn` `StateFlow`s (derived from
     the same repository) and `sparklineFlow(id)` (OBD-20, backed by `SparklineHistoryHolder`) —
-    see the "Sparklines"/"Settings screen" sections below.
+    see the "Sparklines"/"Settings screen" sections below. **OBD-42**: requests `GAUGE_CATALOG`
+    (not `DASHBOARD_PIDS`) from `dataSource.start()`, and seeds `SparklineHistoryHolder` off
+    `GAUGE_CATALOG` too — otherwise a swap candidate's channel (e.g. `rpm`) would never have
+    readings/history to show at all, since `FakeVehicleDataSource` only emits ids it was asked
+    for. Also exposes `swapGauge(oldId, newId)` — see "Gauge swap picker" below.
   - `DashboardScreen.kt` — `GaugeDashboard`: a settings-gear `Row` (OBD-21) alongside
     `ConnectionBanner` (OBD-11) at the top, then the tile layout (landscape: single `Row`;
     portrait: scrollable `Column`, tiles sized to content so nothing clips) in a
@@ -111,11 +131,14 @@ the gate; `src/test*/` intentionally stays out of scope, matching prior behavior
     `Column`. Tiles are now rendered by iterating `gaugeOrder` (OBD-21, defaults to the original
     hardcoded coolant/trans/oil/boost order/visibility) through a `GaugeSlot` dispatcher that
     picks `GaugeTile` or `BoostTile` (arc, −2..+18 PSI, always neutral-colored — see
-    `BoostArc.kt`) per id. Each tile exposes a `testTag("gauge-<id>")` root with a
-    `stateDescription` semantics property carrying the threshold zone name, plus
-    `testTag("gauge-<id>-value")` on the value text, and (OBD-20, when a `sparklines` entry
-    exists for that id) a `testTag("gauge-<id>-sparkline")` leaf — this is how tests assert
-    color/sparkline-presence without pixel-diffing.
+    `BoostArc.kt`), or (OBD-42) `GaugePickerTile`, per id. Each tile exposes a
+    `testTag("gauge-<id>")` root with a `stateDescription` semantics property carrying the
+    threshold zone name, plus `testTag("gauge-<id>-label")`/`testTag("gauge-<id>-value")` on the
+    label/value text, and (OBD-20, when a `sparklines` entry exists for that id) a
+    `testTag("gauge-<id>-sparkline")` leaf — this is how tests assert color/label/value/sparkline-
+    presence without pixel-diffing. See "Gauge swap picker" below for the OBD-42 additions
+    (`GaugeTileGrid`, `GaugeSlot`'s picker dispatch, `onLongPress`/`onTap` on `GaugeTile`/
+    `BoostTile`, the `gauge-picker-scrim`).
   - `ConnectionBanner.kt` (OBD-11) — `ConnectionBanner(connection: LinkState)`, presentation
     only (no reconnect logic — that's OBD-23). `LinkState.Ready` renders nothing at all (no
     node); every other state renders a full-width bar: `Scanning`/`Connecting` get a spinner +
@@ -284,9 +307,172 @@ point: reset `thresholdOverrides` (or migrate them by converting each stored val
 wire unit to the new one) as part of the OBD-25 changeset.
 
 This gap does **not** extend to `gaugeOrder`: unlike thresholds, gauge order is reconciled
-against `DASHBOARD_PIDS_BY_ID` on every decode (see "Settings screen" above), so an id the
-catalog drops is silently pruned and a new one the catalog gains shows up (visible, appended)
-automatically — no OBD-25 migration action needed for that field specifically.
+against `DASHBOARD_PIDS_BY_ID`/`GAUGE_CATALOG_BY_ID` on every decode (see "Settings screen"
+above and "Gauge swap picker" below for the OBD-42 refinement), so an id the catalog drops is
+silently pruned and a new one the catalog gains shows up (visible, appended) automatically — no
+OBD-25 migration action needed for that field specifically.
+
+## Gauge swap picker (OBD-42)
+
+Long-press a gauge tile → it enters an in-place picker mode: the tile's own frame stays put, but
+its content sinks into a horizontal, snapping carousel of smaller "sunken" gauge cards — the
+current gauge first, then swap-in candidates. Tap a candidate to swap it into that slot,
+persisted the same way OBD-21's settings screen persists everything else. `app/src/main/.../gauge/`:
+
+- `GaugeCatalog.kt` — see the "Public surface" section above for `GAUGE_CATALOG`/
+  `GAUGE_CATALOG_BY_ID`/`candidateGaugesFor`. `RPM_PID_DEFINITION` (`PidIds.RPM`, unit `RPM`,
+  `PollPriority.FAST`) is the demo flavor's swap-in candidate — `FakeVehicleDataSource`'s
+  scripts already emit an `rpm` channel unused by the pre-OBD-42 dashboard (`Scenario.kt`'s
+  `ScenarioChannel.RPM`). It renders NEUTRAL-colored automatically: `ThresholdConfig.seed` has
+  no entry for `rpm`, and `ThresholdConfig.classify` returns `NEUTRAL` for any id absent from
+  its threshold table (the same mechanism `boost` already relies on) — no threshold-table change
+  needed for "neutral thresholds" (an OBD-42 AC).
+  **The verified-filter seam**: `candidateGaugesFor`'s `isEligible` parameter defaults to `{ true }`
+  (permissive — "demo: all fake channels count", `issues/OBD-42.md`'s Contract surface). Prod
+  wiring (OBD-25+) should pass a predicate reading each candidate's verified status — today that's
+  `PidDefinition.verified` (already a field on the frozen contract type); if/when a dedicated
+  `PidCatalog.isVerified` hook exists, wire that instead. **Not implemented here** — documented
+  as the seam, per the issue's explicit scope. **Review round-1 NIT, flagged for whoever wires
+  OBD-25**: `DASHBOARD_PIDS`' `oilTemp`/`transTemp` both have `verified = false` (mode-22
+  hypotheses, per `DashboardPids.kt`) despite being two of the four gauges visible by default. A
+  naive `isEligible = { pid -> pid.verified }` would exclude them from every OTHER tile's
+  candidate list — not "unswappable," since they're already visible and `candidateGaugesFor`
+  never offers an already-visible id elsewhere anyway, but they'd become **unrecoverable** if a
+  user ever swapped one away (nothing would let it back in). Whoever wires this predicate needs
+  to either special-case already-core ids or hold off wiring it until `oilTemp`/`transTemp` are
+  hardware-verified.
+- `DashboardScreen.kt` — `GaugeTileGrid` (the landscape `Row`/portrait `Column` loop extracted
+  out of `GaugeDashboard`'s own body) still `key`s each `visibleIds` entry by its own id
+  (unchanged, OBD-21's reorder-in-settings needs that stable identity), and `GaugeSlot` now
+  dispatches through an `AnimatedContent(targetState = isPicking)` between the normal tile and
+  `GaugePickerTile` — a fade+scale toward 0.85 (`gaugePickerContentTransition` in
+  `GaugePicker.kt`) that reads as the gauge sinking into, and rising back out of, its own frame.
+  **A swap-select is not animated across that same boundary** — see `GaugeTileGrid`'s KDoc:
+  swapping changes *which id* occupies a position, and `key(id)` tears the picking composable's
+  instance down the moment the persisted `gaugeOrder` reflects that, so there's no single
+  composable instance alive spanning "before" and "after" to cross-fade. `GaugePickerTile`
+  approximates the owner's "rising card" ideal locally instead (see `GaugePicker.kt` below).
+  `GaugeSlot` falls back to `GaugeTileUiState.placeholder(id, GAUGE_CATALOG_BY_ID[id]?.label ?:
+  id)` instead of skipping the render entirely when `uiState.tileFor(id)` is null (review round-1
+  MINOR M3): `DashboardUiState.Loading` only carries the four core placeholders, so a tile freshly
+  swapped to a non-core id (e.g. `rpm`) would otherwise render as a gap in the layout for every
+  frame before the first real reading arrives.
+  `GaugeTile`/`BoostTile` gained `onLongPress`/`onTap` params, wired through
+  `GaugeTileInteraction.kt`'s `Modifier.gaugeTileInteraction` — its own file (not just its own
+  function) so neither tile composable trips detekt's `LongMethod`/`TooManyFunctions`, and so the
+  originally-duplicated block lives in exactly one place. It's a plain
+  `Modifier.pointerInput { detectTapGestures(...) }` — **not** `clickable`/`combinedClickable`:
+  those force a semantics merge boundary (`mergeDescendants = true`) that would fold each tile's
+  own child testTags (`-label`/`-value`/`-stale`/`-sparkline`) into one merged node and break
+  every existing `onNodeWithTag` lookup on them (this broke, and was caught by, the existing
+  `DashboardScreenTest`/`ConnectionBannerTest`/`SparklineRecompositionTest` suite the first time
+  this file tried `combinedClickable` — no dedicated regression test needed since the whole
+  existing suite already guards it). Trade-off: no automatic ripple, acceptable for a dash-mount
+  app — but review round-1's NIT pass added `onClick`/`onLongClick` **semantics actions** (inside
+  the same `semantics {}` block that already carries `stateDescription`, so no new merge
+  boundary — semantics actions and the `clickable` modifier family are independent concerns) so
+  the long-press-to-swap interaction is at least discoverable to TalkBack; before that NIT, the
+  feature was entirely invisible to accessibility services even though touch already worked.
+  `onTap` fires unconditionally (a no-op when no tile is picking) — this is how tapping a
+  *different* live tile also dismisses an open picker, one of the "tap outside the tile"
+  affordances (a fifth exists too — see "Known limitations" below). `GaugeDashboard` itself owns
+  `pickerTileId` (which tile, if any, is picking — at most one), a
+  `BackHandler(enabled = pickerTileId != null)` for the back-gesture dismiss path, and a
+  full-size invisible `testTag("gauge-picker-scrim")` `Box` (drawn *behind* the tile `Column` in
+  z-order, so every tile's own pointer input still wins within its own bounds — the scrim is only
+  reachable through the gaps) for the tap-outside dismiss path.
+  **Review round-1 M1**: a completed swap replaces `pickerTileId`'s own gaugeOrder entry, which
+  tears that id's `key(id)`-scoped subtree down (`GaugePickerTile`'s own `LaunchedEffect`
+  included) *before* its 220 ms-delayed `onDismiss()` ever runs — left unhandled, `pickerTileId`
+  stays pinned to an id no longer on screen forever, so the invisible scrim + armed `BackHandler`
+  silently eat the next back press/outside-tap, and if that id ever returns to `gaugeOrder`
+  (any slot, not just its original one — a stale `pickerTileId` matches by id, not by position)
+  its tile mounts already in picker mode. Fixed with a `LaunchedEffect(visibleIds)` in
+  `GaugeDashboard` that clears `pickerTileId` the instant it's no longer in the visible id set,
+  independent of the picker's own (now purely cosmetic) local dismiss timing — pinned by
+  `GaugeSwapPickerTest`'s two `M1 -` cases.
+- `GaugePicker.kt` — `GaugePickerTile` (the carousel: a `LazyRow` with `rememberSnapFlingBehavior`
+  for snap-to-card scrolling and `contentPadding` for edge peek, so it's visually obvious there's
+  more to scroll) and `GaugeMiniCard` (one sunken candidate card: label + live value, zone-tinted
+  like a full `GaugeTile` — "feels alive, not like a menu", `issues/OBD-42.md`; review round-1
+  NIT: honors `isStale` the same way `GaugeTile` does — dimmed value text plus a small
+  `staleText` line when stale, so a mini-card never asserts a number more confidently than the
+  real dashboard tile would for the same reading). Three dismiss paths live partly here, partly
+  in `GaugeDashboard`: tapping the *current* gauge's own mini-card calls `onDismiss` directly;
+  the back gesture and tap-outside are `GaugeDashboard`'s (see above). Tapping any *other*
+  mini-card fires `onSelectCandidate` (persistence) **immediately**, then locally animates that
+  card scaling up to `SELECTED_RISE_SCALE` for `SWAP_RISE_ANIMATION_MS` (220 ms) before calling
+  `onDismiss` — see this section's "Known limitations" below for the honest caveat on what this
+  local animation can and can't guarantee.
+- `AppSettings.kt` — `AppSettings.withGaugeSwapped(oldId, newId)`: pure, replaces the `gaugeOrder`
+  entry named `oldId` with `newId`, keeping its `visible`/position, no-op if `oldId` isn't
+  present. `DashboardViewModel.swapGauge(oldId, newId)` is the only production caller, round-
+  tripping it through `SettingsRepository.update` — the *exact* path `SettingsViewModel`'s own
+  mutators use (`setGaugeVisible`, `moveGauge`, etc.), per the issue's "swap should reuse this
+  persistence path" instruction. A no-op when `oldId == newId`.
+- `SettingsCodec.kt` — `reconcileGaugeOrder` went through two shapes before landing (review
+  round-1 M2). The first OBD-42 version widened *which* ids survive a decode (the broader
+  `GAUGE_CATALOG_BY_ID`, so a persisted `"rpm"` isn't dropped as "unknown" the way a truly retired
+  id is) but kept OBD-21's original auto-backfill behavior gated on slot *count* — an attempt to
+  tell "genuine catalog drift" (a new `DASHBOARD_PIDS` entry added after an order was last saved)
+  apart from "a swap deliberately removed a core id from its slot" by whether the persisted order
+  had fewer slots than the core catalog expected. Review round-1 probed that with a **larger**
+  catalog (a hypothetical 5th `DASHBOARD_PIDS` entry, OBD-43's actual shape) and broke it: a
+  4-slot swapped order against a 5-id catalog looks "short a slot" too, so it decoded to 6
+  entries with the swapped-away gauge resurrected as a duplicate. There is no shape-of-the-list
+  signal that reliably tells those two cases apart, so the fix drops auto-backfill **entirely**:
+  `reconcileGaugeOrder(order, catalog: Map<String, PidDefinition> = DASHBOARD_PIDS_BY_ID)` now
+  only drops ids not in `catalog` (the production call site always passes `GAUGE_CATALOG_BY_ID`;
+  the parameter — defaulting to the narrower `DASHBOARD_PIDS_BY_ID` — exists so catalog drift is
+  directly testable with a synthetic bigger-than-today catalog, without touching the real
+  `DASHBOARD_PIDS`). `DEFAULT_GAUGE_ORDER` already covers fresh installs (built straight from the
+  current `DASHBOARD_PIDS` at file-load time, never reconciled against a stale persisted order),
+  and a catalog gauge that's new to an *existing* install is discoverable through the swap picker
+  instead (`candidateGaugesFor` reads the live catalog directly) — the coherent OBD-42 story:
+  gauge visibility only ever changes via an explicit user action (Settings' visibility toggle, or
+  the picker), never via decode-time inference. Pinned by `SettingsCodecTest`'s "M2 regression"
+  case (a synthetic 5-id catalog + a persisted 4-slot swapped order decodes to exactly 4 entries,
+  no resurrected core id) — verified to fail against the slot-count heuristic and pass against
+  this fix.
+- `SettingsScreen.kt` — `GaugesSection`'s label lookup switched from `DASHBOARD_PIDS_BY_ID` to
+  `GAUGE_CATALOG_BY_ID`, so a swapped-in id (e.g. `"rpm"`) shows its real label instead of the
+  raw id string if a user opens Settings after swapping. `ThresholdsSection` is unaffected — it
+  only ever iterates the three fixed temperature ids, none of which OBD-42 can swap away from
+  each other's thresholds (thresholds are per-id, not per-slot).
+
+### Known limitations (OBD-42)
+
+- The swap-select "confirm, rise, dismiss" local animation in `GaugePickerTile` fires
+  `onSelectCandidate` (persistence) immediately but only calls `onDismiss` after a fixed 220 ms —
+  giving the real `gaugeOrder` write a head start to round-trip through `SettingsRepository`
+  before the picker actually closes and `key(id)` swaps the tile's composable instance to the new
+  id. This is a **timing heuristic, not a guarantee**: correctness never depends on it (the
+  persisted value is what's authoritative either way, and review round-1 M1's `LaunchedEffect`
+  self-heal keeps `pickerTileId` itself always eventually correct regardless of this timing), but
+  an unusually slow DataStore write (heavy disk contention, a very old device) could still show a
+  brief flash of the *old* gauge's data between the picker closing and the swapped tile catching
+  up. No test pins this specific timing window — see `GaugeSwapPickerTest`'s correctness/
+  persistence tests for what *is* pinned.
+- A swapped-in gauge (e.g. `rpm` after a swap) gets a working sparkline (`SparklineHistoryHolder`
+  is seeded off `GAUGE_CATALOG`, not just `DASHBOARD_PIDS` — see the "Public surface" section
+  above), but `MainActivity`'s own `sparklines` map is likewise keyed off `GAUGE_CATALOG` now, a
+  small but real behavior change from pre-OBD-42 (previously only the core four had sparkline
+  flows wired at all, even though the underlying holder capacity was unaffected).
+- **A fifth, incidental dismiss path**: device rotation. `pickerTileId` lives in `remember {}`
+  state scoped to `GaugeDashboard`'s own composition, not `rememberSaveable`; Android's default
+  rotation handling (no `android:configChanges` override in the manifest) recreates `MainActivity`
+  on an orientation change, tearing down and rebuilding the whole composition — `pickerTileId`
+  resets to `null` along with it. Not deliberately engineered (the four AC-specified dismiss
+  paths are what's tested), but real: a user mid-picker who rotates the device loses picker mode
+  as a side effect, same as if they'd tapped outside.
+- **Coolant (or any core gauge) is recoverable only through the picker once swapped away.**
+  Unlike thresholds (which have a dedicated "reset to defaults" button, `SettingsScreen.kt`),
+  there is no settings-screen affordance to restore `gaugeOrder` to `DEFAULT_GAUGE_ORDER` — a
+  swapped-away core gauge comes back only if a user explicitly swaps *something* back to it via
+  some tile's picker (as `GaugeSwapPickerTest`'s M1 cases do). This is consistent with the
+  "gauge visibility only changes via explicit user action" story above, but worth flagging as a
+  real UX gap: a user who doesn't understand the picker (or forgets which tile to long-press) has
+  no other way back.
 
 ## Debug console (OBD-19, `src/debug/`)
 
@@ -330,14 +516,16 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
 ## Tests
 
 - `ThresholdConfigTest`, `DashboardViewModelTest`, `DashboardScreenTest`,
-  `DashboardScreenshotTest`, `ConnectionBannerTest`, `DataSourceModuleClockTest` —
+  `DashboardScreenshotTest`, `ConnectionBannerTest`, `DataSourceModuleClockTest`,
+  `GaugeSwapDemoTest` (OBD-42), `GaugePickerScreenshotTest` (OBD-42) —
   `src/testDemo/` (need `FakeVehicleDataSource`/`Scenario`, so `testDemoDebugUnitTest`-only;
   see "Build flavors").
   `GaugeFormattingTest`, `BoostArcTest`, `UnitConversionTest`, `SparklineBufferTest`,
   `SparklineGapTest`, `SparklineHistoryHolderTest`, `SparklineRecompositionTest`,
   `DashboardUiStateTest`, `SettingsCodecTest`, `SettingsRepositoryTest`, `SettingsScreenTest`,
-  `LiveRecolorTest` — plain JVM or Robolectric, no `:core:testing` dependency, `src/test/`
-  (flavor-common — run under both `testDemoDebugUnitTest` and `testProdDebugUnitTest`).
+  `LiveRecolorTest`, `GaugeCatalogTest` (OBD-42), `AppSettingsSwapTest` (OBD-42),
+  `GaugeSwapPickerTest` (OBD-42) — plain JVM or Robolectric, no `:core:testing` dependency,
+  `src/test/` (flavor-common — run under both `testDemoDebugUnitTest` and `testProdDebugUnitTest`).
   `ConsoleScreenTest` (OBD-19) — Robolectric + compose-ui-test, `src/testDebug/` (a build-type
   source set — like `src/debug/` itself, it's shared by both flavors' debug variants, so it
   runs under both `testDemoDebugUnitTest` and `testProdDebugUnitTest` without needing
@@ -438,6 +626,71 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   + `SettingsScreen` together, edits the coolant green-max field high enough to flip the *same*
   reading's zone, and asserts the dashboard tile's `stateDescription` recolors to GREEN without
   any restart — the OBD-21 AC verbatim.
+- `GaugeCatalogTest` (OBD-42) — plain JVM: `GAUGE_CATALOG` is exactly `DASHBOARD_PIDS` plus
+  `rpm`; `rpm` is absent from `DASHBOARD_PIDS`/`DASHBOARD_PIDS_BY_ID` but present in
+  `GAUGE_CATALOG_BY_ID`; `rpm`'s unit/absent-threshold-entry NEUTRAL classification;
+  `candidateGaugesFor` puts the current id first, excludes ids visible on another tile, offers a
+  *hidden* (not just absent) id elsewhere, never excludes the current id itself, and both the
+  default-permissive and a rejecting `isEligible` predicate (the verified-filter seam).
+- `AppSettingsSwapTest` (OBD-42) — plain JVM: `AppSettings.withGaugeSwapped` replaces the right
+  entry keeping visibility/position, no-ops when `oldId` isn't present, and leaves every other
+  entry's instance untouched.
+- `SettingsCodecTest` gained OBD-42 cases: a persisted swap to a non-core id (`rpm`) survives
+  decode instead of being dropped as "unknown"; `rpm` is never auto-backfilled into an order that
+  never named it; the pre-existing "drops a retired id"/"missing id" cases were rewritten for
+  review round-1 M2's no-auto-backfill behavior (a missing known id now just stays missing,
+  never gets appended); and the "M2 regression" case (a synthetic 5-id catalog + a persisted
+  4-slot swapped order decodes to exactly 4 entries, no resurrected core id) — see "Gauge swap
+  picker" above for the full story `reconcileGaugeOrder`'s design went through.
+- `DashboardViewModelTest` gained two OBD-42 cases: `swapGauge` replaces the id at the right
+  gaugeOrder position, keeps visibility, and the dashboard's `uiState` shows a real (non-
+  placeholder) value for the swapped-in id — pinning that `GAUGE_CATALOG` (not `DASHBOARD_PIDS`)
+  actually reaches `dataSource.start()`; and `swapGauge` is a no-op when `oldId == newId`.
+- `DashboardUiStateTest` gained two OBD-42 cases: `extraTiles` carries a correctly labeled/
+  formatted/NEUTRAL-classified `rpm` tile off the same `toDashboardUiState` code path as the
+  core four, and `tileFor` returns `null` (not a placeholder, not a crash) for an id that's
+  neither a core field nor in `extraTiles`.
+- `GaugeSwapPickerTest` (OBD-42) — Robolectric + compose-ui-test (`createAndroidComposeRule`, not
+  the plain `createComposeRule()` most other tests here use, specifically so the back-gesture
+  test can reach the hosting Activity's `OnBackPressedDispatcher` via `activityRule`), against a
+  hand-rolled `VehicleDataSource` double emitting coolant/trans/oil/boost **and rpm** readings (so
+  the picker's live-value AC is actually exercised) and — for the persistence test only — a real
+  temp-file `DataStoreSettingsRepository`. Covers, per `issues/OBD-42.md`'s self-test plan: long-
+  press opens picker mode on that tile only (rest of the dashboard stays live); the carousel's
+  candidate list (current first, core ids visible elsewhere excluded); tap-to-swap persisting and
+  **surviving a recreated repository** (mirrors `SettingsRepositoryTest`'s "cancel the first
+  DataStore scope, open a second over the same file" restart simulation); all three dismiss paths
+  (current mini-card, back gesture, tap-outside-via-the-scrim) plus a fourth (tapping a different
+  live tile); the four-surface swap-correctness pin (value/label/unit-suffix/threshold-coloring
+  all come from the new pid, asserted against a coolant reading that's RED pre-swap so a "still
+  red, still coolant" bug would be caught); and both orientations. Two `M1 -` cases pin the
+  `pickerTileId` self-heal (review round-1 M1): the scrim is gone after a completed swap, and an
+  id restored into gaugeOrder *via the ViewModel directly* (not a second long-press, which would
+  itself overwrite `pickerTileId` as a side effect and mask the bug) doesn't reopen its picker.
+  One `M3 -` case pins the Loading-state placeholder fallback (review round-1 MINOR M3): a
+  `gaugeOrder` naming a swapped-in id renders that tile (as a placeholder) even before any real
+  `DashboardUiState` has arrived. `DEFAULT_GAUGE_ORDER` (all four
+  core gauges visible) is used throughout so every picker has exactly two candidates — current
+  plus rpm — deliberately small enough to stay within `LazyRow`'s initial composition window;
+  `.performScrollTo()` is still used before touching the (peeking, second) rpm card regardless,
+  per this module's known off-screen-node pitfall (see `SettingsScreenTest`'s note above).
+- `GaugeSwapDemoTest` (OBD-42, `src/testDemo/`) — the AC's "demo flavor demonstrates it" made
+  concrete: a *real* `FakeVehicleDataSource(Scenario.GRADE_CLIMB)` wired through the real
+  `DashboardViewModel`, proving `GAUGE_CATALOG` actually reaches `dataSource.start()` end to end
+  (regressing that back to `DASHBOARD_PIDS` would make this fail with the placeholder text, not
+  just a unit-level assertion). Drives the fake's replay to completion via a `TestCoroutineScheduler`
+  + `StandardTestDispatcher` and a plain (non-suspend) `advanceUntilIdle()` call — real wall-clock
+  `waitUntil` polling was tried first and doesn't reliably work here, since `FakeVehicleDataSource`'s
+  default scope ticks via real `delay()` on `Dispatchers.Default` while the ViewModel's own
+  `combine()`/Compose recomposition pipeline runs on Robolectric's paused main looper; a shared
+  virtual-time scheduler sidesteps that entirely.
+- `GaugePickerScreenshotTest` (OBD-42, `src/testDemo/`) — Roborazzi, one new reference
+  (`gauge_picker_mode.png`, landscape, TOWN_HEAT_SOAK tail, deliberately requesting
+  `GAUGE_CATALOG` so rpm's mini-card shows a real value): a coolant tile long-pressed into picker
+  mode, the rest of the dashboard still visibly live. Regenerate with the same
+  `./gradlew :app:recordRoborazziDemoDebug` / verify with `:app:verifyRoborazziDemoDebug` as
+  `DashboardScreenshotTest`; this file's addition left `dashboard_landscape.png`/
+  `dashboard_portrait.png` byte-identical (verified via `git status` after recording).
 - `app/src/test/resources/robolectric.properties` pins `sdk=34` for all Robolectric tests in
   this module (independent of `compileSdk`/`targetSdk` 36).
 

@@ -4,6 +4,7 @@ import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidDefinition
+import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.VehicleDataSource
 import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
@@ -110,6 +111,53 @@ class DashboardViewModelTest {
             advanceTimeBy(SUBSCRIPTION_TIMEOUT_MILLIS + 1_000)
             advanceUntilIdle()
             assertEquals(1, recording.stopCallCount)
+        }
+
+    @Test
+    fun `swapGauge replaces the id at oldId's position, keeps visibility, and the dashboard shows real rpm data`() =
+        runTest(testDispatcher) {
+            val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+            val viewModel = DashboardViewModel(fake, fixedClock, InMemorySettingsRepository())
+            backgroundScope.launch { viewModel.uiState.collect {} }
+            backgroundScope.launch { viewModel.gaugeOrder.collect {} }
+            advanceUntilIdle()
+
+            viewModel.swapGauge(PidIds.COOLANT, PidIds.RPM)
+            advanceUntilIdle()
+
+            assertEquals(
+                PidIds.RPM,
+                viewModel.gaugeOrder.value
+                    .first()
+                    .id,
+            )
+            assertEquals(
+                true,
+                viewModel.gaugeOrder.value
+                    .first()
+                    .visible,
+            )
+            // GAUGE_CATALOG (not just DASHBOARD_PIDS) must reach dataSource.start() — otherwise
+            // FakeVehicleDataSource would never emit an rpm reading at all and this would still
+            // read the NO_READING_TEXT placeholder.
+            val rpmTile = viewModel.uiState.value.tileFor(PidIds.RPM)
+            assertEquals(false, rpmTile?.valueText == NO_READING_TEXT)
+        }
+
+    @Test
+    fun `swapGauge is a no-op when oldId equals newId`() =
+        runTest(testDispatcher) {
+            val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+            val viewModel = DashboardViewModel(fake, fixedClock, InMemorySettingsRepository())
+            backgroundScope.launch { viewModel.uiState.collect {} }
+            backgroundScope.launch { viewModel.gaugeOrder.collect {} }
+            advanceUntilIdle()
+            val before = viewModel.gaugeOrder.value
+
+            viewModel.swapGauge(PidIds.COOLANT, PidIds.COOLANT)
+            advanceUntilIdle()
+
+            assertEquals(before, viewModel.gaugeOrder.value)
         }
 
     private fun withDashboard(

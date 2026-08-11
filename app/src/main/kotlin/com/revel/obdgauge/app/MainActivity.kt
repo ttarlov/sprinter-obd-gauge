@@ -14,8 +14,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS
 import com.revel.obdgauge.app.gauge.DashboardViewModel
+import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
 import com.revel.obdgauge.app.gauge.GaugeDashboard
 import com.revel.obdgauge.app.settings.SettingsRoute
 import com.revel.obdgauge.app.sparkline.SparklinePoint
@@ -69,13 +69,16 @@ class MainActivity : ComponentActivity() {
                 if (showSettings) {
                     SettingsRoute(onBack = { showSettings = false })
                 } else {
+                    // GAUGE_CATALOG (OBD-42), not just DASHBOARD_PIDS: a tile swapped to a
+                    // non-core id (e.g. rpm) still needs a sparkline flow to pass down.
                     val sparklines: Map<String, StateFlow<List<SparklinePoint>>> =
-                        remember(viewModel) { DASHBOARD_PIDS.associate { it.id to viewModel.sparklineFlow(it.id) } }
+                        remember(viewModel) { GAUGE_CATALOG.associate { it.id to viewModel.sparklineFlow(it.id) } }
                     GaugeDashboard(
                         uiState = uiState,
                         gaugeOrder = gaugeOrder,
                         sparklines = sparklines,
                         onSettingsClick = { showSettings = true },
+                        onSwapGauge = viewModel::swapGauge,
                     )
                 }
             }

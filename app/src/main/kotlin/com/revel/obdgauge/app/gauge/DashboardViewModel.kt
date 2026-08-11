@@ -7,6 +7,7 @@ import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
 import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.app.settings.effectiveThresholds
+import com.revel.obdgauge.app.settings.withGaugeSwapped
 import com.revel.obdgauge.app.sparkline.SparklineHistoryHolder
 import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.model.VehicleDataSource
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import java.time.Clock
 import javax.inject.Inject
 
@@ -44,7 +46,9 @@ class DashboardViewModel
         // combine() below. Deliberately NOT part of `uiState`'s DashboardUiState — see
         // SparklineHistoryHolder's KDoc for why folding it in would defeat the whole point of
         // keeping 4 Hz updates from recomposing the entire dashboard.
-        private val sparklineHistory = SparklineHistoryHolder(DASHBOARD_PIDS.map { it.id })
+        // GAUGE_CATALOG (OBD-42's swap-picker superset), not DASHBOARD_PIDS: a gauge swapped
+        // into a slot (e.g. rpm) needs its own rolling history too, not just the core four.
+        private val sparklineHistory = SparklineHistoryHolder(GAUGE_CATALOG.map { it.id })
 
         // start()/stop() are driven by [uiState]'s own subscription (onStart/onCompletion,
         // upstream of stateIn) rather than the ViewModel's own init/onCleared lifetime — that
@@ -65,7 +69,7 @@ class DashboardViewModel
                     settings.effectiveThresholds(),
                     settings.units,
                 )
-            }.onStart { dataSource.start(DASHBOARD_PIDS) }
+            }.onStart { dataSource.start(GAUGE_CATALOG) }
                 .onCompletion { dataSource.stop() }
                 .stateIn(
                     scope = viewModelScope,
@@ -91,6 +95,22 @@ class DashboardViewModel
 
         /** OBD-20's per-gauge sparkline strip — see [SparklineHistoryHolder]. */
         fun sparklineFlow(id: String): StateFlow<List<SparklinePoint>> = sparklineHistory.flowFor(id)
+
+        /**
+         * OBD-42: the long-press picker's "tap a candidate" action. Replaces [oldId] with
+         * [newId] at that gaugeOrder position (keeping visibility — [AppSettings.withGaugeSwapped])
+         * via the exact same [SettingsRepository.update] path [SettingsViewModel]'s mutators use,
+         * so the swap persists and the dashboard/settings screen converge on it live, no restart.
+         * A no-op when [oldId] equals [newId] (the picker's own "tap the current gauge to dismiss"
+         * affordance calls back into UI-only state, never this).
+         */
+        fun swapGauge(
+            oldId: String,
+            newId: String,
+        ) {
+            if (oldId == newId) return
+            viewModelScope.launch { settingsRepository.update { it.withGaugeSwapped(oldId, newId) } }
+        }
 
         override fun onCleared() {
             // Belt-and-suspenders: makes teardown deterministic on ViewModel clear rather than

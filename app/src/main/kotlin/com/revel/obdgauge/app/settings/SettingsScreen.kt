@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS_BY_ID
+import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
 import com.revel.obdgauge.app.gauge.GaugeThresholds
 import com.revel.obdgauge.app.gauge.UnitConversion
 import com.revel.obdgauge.app.gauge.displayUnitFor
@@ -101,7 +102,10 @@ private fun GaugesSection(
         gaugeOrder.forEach { entry ->
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = DASHBOARD_PIDS_BY_ID[entry.id]?.label ?: entry.id,
+                    // GAUGE_CATALOG_BY_ID, not DASHBOARD_PIDS_BY_ID: an OBD-42 swap can leave a
+                    // non-core id (e.g. "rpm") in gaugeOrder, and this list should still show
+                    // its real label rather than the raw id.
+                    text = GAUGE_CATALOG_BY_ID[entry.id]?.label ?: entry.id,
                     modifier = Modifier.weight(1f),
                 )
                 Switch(
