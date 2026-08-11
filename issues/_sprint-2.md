@@ -37,3 +37,4 @@ Sprint 2 velocity: 30 pts (three agents in parallel).
 | Planned target | Actual spend | Merged vs rolled | Escalations |
 |---|---|---|---|
 | +900k | ~1.15M (build 248k + fix 351k + reviews ~440k + orchestrator ~110k incl. arbitration) | 2 merged (batch d838cc7) / OBD-19 rolled | 1 orchestrator arbitration (round-2 blocker); 2 agent stalls recovered |
+| 2b-2: +300k | ~410k (build 313k + Tier-B review 70k + orchestrator ~25k) | 1 merged (6dcc740) / 0 rolled | 0; orchestrator-authored 3 small post-approval fixes |

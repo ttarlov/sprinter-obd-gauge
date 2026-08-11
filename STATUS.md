@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-10 — Sprint 2b wave 1 done: OBD-17+18 merged (d838cc7, 135 tests, 3 review rounds incl. one arbitration). OBD-19 rolled to a 2b-2 wave.
+**Last updated:** 2026-08-10 — Sprint 2b COMPLETE: OBD-17/18/19 all merged. Debug console ready for the Veepeak. Sprint 2a (protocol) is the last software block before real-van work.
 
 ---
 
@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 2b-2 running** — debug console in build |
+| Current phase | **Sprint 2b COMPLETE** — full BLE stack + console merged |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
@@ -76,7 +76,7 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 
 - [x] OBD-17: permission flow (12+ split, location-services gate), 2-pass filtered scanner + throttle budget, remembered-device fast path w/ corruption-proof store — merged d838cc7
 - [x] OBD-18: GATT serial bridge — 6-candidate UUID probe + fallback, CCCD, MTU 512, exhaustive-split reassembly, single-flight, generation-gated session lifecycle, debt bookkeeping w/ quiet-window expiry — merged d838cc7, 135 tests
-- [ ] OBD-19: debug console screen (raw AT REPL) — buildable without hardware; **verification is the Sprint-2 hardware demo**
+- [x] OBD-19: debug console merged (6dcc740) — "OBD Console" launcher entry in debug builds only, ConsoleSession tested against FakeObdLink, release classpath/manifest/dex verified clean. 🖐 Hardware verification = the Sprint-2 demo: type ATZ at the real Veepeak
 - [x] Reassembly/scan/session logic extracted pure & tested against GATT doubles (reconnect state machine itself is OBD-23)
 
 ## Sprint 2c — UI round 2 (Sonnet)
@@ -133,3 +133,4 @@ Hardware gates — **🖐 TARAS**:
 | Sprint 1 | +400k | ~1.0M | 0 tier / 1 arb | 2.5× over — wind-down invoked after ui-agent alone burned 352k (measured). Measured: ui 352k, fix-round 176k, reviews 68.5k+72.5k+104.5k = 774k; panel+rebuttals+rev-arch+orchestrator est. ~230k. Lessons for recalibration: (a) a Compose module with screenshot-test infra setup is a 350k task, not 60k — budget UI-bootstrap waves accordingly or split infra-setup from feature work; (b) a rigorous 2-round Opus review cycle costs ~250k per branch — the +400k table row cannot fund 3 UI branches + a panel; (c) review quality was worth it: 1 blocker + 9 majors were real. Table needs recalibration before Sprint 2. |
 | Sprint 1b | +350k | ~390k | 0 | Tier-B validated: combined-lens review found 2 real majors (incl. a mutation-proven coverage hole) at ~60% of flat-matrix cost. Build still the big line item (252k). ~11% over — trend right. |
 | Sprint 2b w1 | +900k | ~1.15M | 1 arb | Tier A earned it: 2 blockers + 9 majors round 1; round 2 caught a relocated leak + unbounded debt. 17 mutations run across 3 rounds. Overrun drivers: 2 agent stalls (stream watchdog on long Gradle runs — mitigate with -q), and a redesign-grade fix round. |
+| Sprint 2b-2 | +300k | ~410k | 0 | Console: clean build, approved round 1, tier boundary held (zero existing-file edits). Overrun driver: flavor×buildType source-set plumbing (~2x est. build cost — recalibration input: ANY new source-set/variant work costs ~300k, not 150k). |
