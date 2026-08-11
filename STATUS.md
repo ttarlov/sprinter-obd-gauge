@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-11 — Sprints 0-2 ALL COMPLETE: 23/36 merged, ~750 tests. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
+**Last updated:** 2026-08-11 — Sprints 0-2 ALL COMPLETE: 21/36 merged, ~750 tests. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
 
 ---
 
@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **ALL OF SPRINT 2 COMPLETE** — 23/36 merged. Remaining: Sprint 3 (van + software) and Sprint 4 |
+| Current phase | **ALL OF SPRINT 2 COMPLETE** — 21/36 merged. Remaining: Sprint 3 (van + software) and Sprint 4 |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
