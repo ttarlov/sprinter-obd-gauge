@@ -115,6 +115,8 @@ Sprint 4 velocity: 23 pts.
 | OBD-39 | Android Auto / dashboard-mode display | Investigate app-category eligibility first |
 | OBD-40 | User-defined PID gauges (add gauges in-app: X-Gauge-style code entry → live tile, unverified-by-default) | Requested 2026-08-10; issue filed. Depends on OBD-15/21/27 |
 | OBD-41 | Live PID discovery session → committed OM642 code database (Claude drives the link, Taras supplies ground truth; read-only probing) | Requested 2026-08-10; issue filed. Depends on OBD-18/19; feeds OBD-40's picker and the protocol registry |
+| OBD-42 | In-place gauge swap: long-press → gauge sinks into its frame, carousel of verified mini gauge-cards inside the tile, tap to swap | Requested 2026-08-11; ui-agent wave started same day |
+| OBD-43 | Standard PIDs 0104 engine load + 0111 TPS for the swap catalog | Companion to OBD-42; tiny protocol-agent task |
 
 ---
 
