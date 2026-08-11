@@ -4,7 +4,7 @@ title: Standard PID registry and parser
 module: core/protocol
 owner: protocol-agent
 sprint: 2
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
