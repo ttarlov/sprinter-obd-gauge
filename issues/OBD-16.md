@@ -4,11 +4,11 @@ title: Computed boost channel
 module: core/protocol
 owner: protocol-agent
 sprint: 2
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: protocol/16-computed-boost
+branch: protocol/15-16-mode22-boost
 ---
 
 ## Feature

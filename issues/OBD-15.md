@@ -4,11 +4,11 @@ title: Mode-22 Mercedes PID support
 module: core/protocol
 owner: protocol-agent
 sprint: 2
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: [OBD-9]
-branch: protocol/15-mode22-mercedes-pids
+branch: protocol/15-16-mode22-boost
 ---
 
 ## Feature
