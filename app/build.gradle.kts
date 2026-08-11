@@ -83,6 +83,11 @@ dependencies {
     // OBD-25; see app/MODULE.md.
     implementation(project(":core:model"))
     "demoImplementation"(project(":core:testing"))
+    // OBD-19: the debug-only "OBD Console" raw AT-command REPL needs the real BleObdLink.
+    // `debugImplementation` keeps :core:ble (and its BLE permissions/manifest entries) off
+    // both demoRelease and prodRelease classpaths entirely — verify with
+    // `:app:dependencies --configuration prodReleaseRuntimeClasspath | grep -i "core:ble"`.
+    debugImplementation(project(":core:ble"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

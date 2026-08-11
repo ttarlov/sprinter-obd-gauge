@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OBD-19: debug-build-only launcher entry for the raw AT-command REPL. `src/debug/` is a
+  build-type source set (applies to BOTH the `demo` and `prod` flavors' debug variants, per
+  app/MODULE.md's "Build flavors" — orthogonal to the environment dimension), and the manifest
+  merger folds this into `src/main/AndroidManifest.xml` for `demoDebug`/`prodDebug` only. It is
+  absent from every release build, so `ConsoleActivity` (and its `debugImplementation(project(
+  ":core:ble"))` dependency) never reaches a release APK or its Play Store listing.
+
+  A distinct `<activity>` + LAUNCHER intent-filter (rather than a nav destination inside
+  MainActivity) is deliberate: it gives this tool its own "OBD Console" home-screen icon,
+  reachable without any of the main app's own setup/nav, per OBD-19's AC.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+
+        <activity
+            android:name=".console.ConsoleActivity"
+            android:exported="true"
+            android:label="OBD Console"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>

@@ -1,8 +1,10 @@
 # :app
 
 Android application. Compose + Material 3, Hilt-wired end to end. Depends on `:core:model`
-unconditionally; `:core:testing` only on the `demo` flavor (see "Build flavors" below). No
-`:core:protocol`/`:core:ble` at this stage.
+unconditionally; `:core:testing` only on the `demo` flavor (see "Build flavors" below).
+`:core:ble` is a `debugImplementation`-only dependency (OBD-19's debug console, below) — the
+main dashboard flow's real `ObdLink`/`:core:protocol` wiring is still OBD-25. No
+`:core:protocol` at this stage.
 
 ## Build flavors (OBD-12)
 
@@ -108,6 +110,45 @@ the gate; `src/test*/` intentionally stays out of scope, matching prior behavior
 - `di/DataSourceModule.kt` — now flavor-specific; see "Build flavors" above. Was a single
   `src/main/` file through OBD-10; split for OBD-12.
 
+## Debug console (OBD-19, `src/debug/`)
+
+A debug-build-only "OBD Console" raw AT-command REPL, the Sprint 2 hardware-bring-up tool —
+its own launcher icon (a separate `<activity>` + `LAUNCHER` intent-filter in
+`src/debug/AndroidManifest.xml`, labeled "OBD Console"), reachable without any of the main
+app's own nav/setup. `src/debug/` is a **build-type** source set (orthogonal to the
+`environment` flavor dimension — see "Build flavors" above), so it's part of both
+`demoDebug` and `prodDebug`, and absent from every release build; `debugImplementation(project(
+":core:ble"))` in `build.gradle.kts` keeps `:core:ble` off both release classpaths entirely
+(verify with `:app:dependencies --configuration demoReleaseRuntimeClasspath|prodReleaseRuntimeClasspath
+| grep -i "core:ble"`, expect empty, mirroring the `:core:testing` HARD CONSTRAINT check above).
+
+Owned by `ble-agent` per `issues/OBD-19.md`'s flagged cross-boundary exception (this is
+debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as co-owned by
+`ble-agent ui-agent` for exactly this reason.
+
+- `console.ConsoleActivity` — `@AndroidEntryPoint`. Owns the runtime-permission flow
+  `:core:ble` deliberately never does itself (see core/ble/MODULE.md's "Permissions"): a
+  connect tap checks `BleObdLink.missingPermissions` and only prompts
+  (`ActivityResultContracts.RequestMultiplePermissions`) for what's actually missing; a denial
+  is logged to the console (`ConsoleViewModel.recordPermissionDenied`), never a crash.
+- `console.ConsoleViewModel` — `@HiltViewModel`; thin edge around `:core:ble`'s
+  `ConsoleSession` (all real logic lives there, see core/ble/MODULE.md's `console` package
+  section). Injects the concrete `BleObdLink` (not the `ObdLink` interface) because it also
+  needs `missingPermissions` and `forgetRememberedDevice`, neither part of the frozen `ObdLink`
+  contract.
+- `console.ConsoleScreen` — the whole UI as one stateless composable (scrollback, quick-command
+  chips for `ATZ`/`ATE0`/`ATI`/`0100`/`010C`, input + send, connect/disconnect/forget buttons,
+  a link-state banner) so it's testable without a `ViewModel`/Hilt/Activity in the loop.
+  Deliberately self-contained — its own dark `MaterialTheme`, its own banner — rather than
+  reusing anything from `gauge/`'s `ConnectionBanner`: this tool must keep working independent
+  of the main dashboard UI.
+- `console.di.DebugObdLinkModule` — `src/debug/`-scoped `@Binds ObdLink -> BleObdLink`. The
+  first place in `:app` that binds `ObdLink` at all (OBD-25 will do the same for the release
+  dashboard flow, per flavor).
+- `console.ConsoleEntryFormatting` — pure display formatting (`formatConsoleTimestamp`,
+  `formatConsoleEntryBody`, `formatLinkStateName`) for `:core:ble`'s `ConsoleEntry`, mirroring
+  `gauge/GaugeFormatting.kt`'s split between pure formatting and Compose.
+
 ## Tests
 
 - `ThresholdConfigTest`, `DashboardViewModelTest`, `DashboardScreenTest`,
@@ -115,6 +156,17 @@ the gate; `src/test*/` intentionally stays out of scope, matching prior behavior
   `src/testDemo/` (need `FakeVehicleDataSource`/`Scenario`, so `testDemoDebugUnitTest`-only;
   see "Build flavors").
   `GaugeFormattingTest`, `BoostArcTest` — plain JVM, no Robolectric, `src/test/` (flavor-common).
+  `ConsoleScreenTest` (OBD-19) — Robolectric + compose-ui-test, `src/testDebug/` (a build-type
+  source set — like `src/debug/` itself, it's shared by both flavors' debug variants, so it
+  runs under both `testDemoDebugUnitTest` and `testProdDebugUnitTest` without needing
+  `:core:testing`). Drives `ConsoleScreen` directly (no `ViewModel`/Hilt/Activity), asserting
+  scrollback rendering/order, the link-state banner, send-button enablement (blank input, and
+  while a command is in flight — quick-command chips too), and that a chip tap calls `onSend`
+  with its command. `ConsoleActivity`/`ConsoleViewModel` themselves have no dedicated test —
+  Hilt-in-Robolectric scaffolding doesn't exist elsewhere in this module yet (see
+  `docs/05-local-workflow.md` if that changes); the composable is where the substance is, per
+  the same "test the screen, not the Activity" split `DashboardScreenTest`/`ConnectionBannerTest`
+  already use above.
 - `DataSourceModuleClockTest` (OBD-11 round-1 M2) — exercises the real demo DI providers:
   injected clock reads ≈ `EPOCH` at provisioning and re-anchors ≈ `EPOCH` after a delayed
   `start()`; fails loudly if wall-clock wiring (`systemDefaultZone`) ever returns.

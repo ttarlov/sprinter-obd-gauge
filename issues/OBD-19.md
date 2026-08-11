@@ -4,7 +4,7 @@ title: Debug console screen
 module: core/ble
 owner: ble-agent
 sprint: 2
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

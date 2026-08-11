@@ -25,9 +25,50 @@ sequence over `sendRaw` once the link reports `Ready`.
 | `permission.BleEnvironment` | BLE support / adapter state / missing permissions. |
 | `store.RememberedDeviceStore`, `BluetoothAddress` | Fast-path persistence and address validation. |
 | `di.BleModule`, `di.LinkDispatcher` | Internal bindings. **`ObdLink` is deliberately not bound here** — `:app` does that per flavor in OBD-25. |
+| `console.ConsoleSession`, `console.ConsoleEntry`, `console.RememberedDeviceForgetter` | OBD-19's debug-console REPL controller. Pure logic over `ObdLink` (no Android imports); `app/src/debug/` is the only consumer. |
 
 `BleObdLink` is constructor-injected; `:app` only needs
 `@Binds fun bind(impl: BleObdLink): ObdLink`.
+
+## `console` package (OBD-19)
+
+`ConsoleSession` is the controller behind the debug-build-only "OBD Console" raw AT-command
+REPL (`app/src/debug/`, see app/MODULE.md) — the Sprint 2 hardware-bring-up tool, not a
+production feature. It is typed against `ObdLink` (not `BleObdLink`), so it is exercised
+against `FakeObdLink` on the JVM exactly like everything else in this module; the debug-only
+Activity is the only place it meets Android.
+
+- `ConsoleEntry` — a sealed scrollback line: `CommandSent`, `ResponseReceived`,
+  `LinkStateChanged`, `ErrorOccurred`. Every variant is timestamped from an injected
+  `java.time.Clock`.
+- `ConsoleSession(link, scope, forgetter, historyLimit = 500, clock)` — `sendCommand` appends a
+  `CommandSent` then exactly one of `ResponseReceived`/`ErrorOccurred`; `connect`/`disconnect`
+  passthrough to `link`; a background collector on `scope` logs every `link.state` value
+  (including the link's ambient state at construction — deliberately not filtered, see the
+  class's KDoc for why a "skip the first value" filter is a race, not a rule) as a
+  `LinkStateChanged` entry. `entries`/`linkState`/`commandInFlight` are `StateFlow`s; the
+  scrollback is trimmed to `historyLimit`, oldest dropped first.
+- **In-flight policy: refuse, don't queue.** `FakeObdLink` enforces half-duplex strictly (throws
+  on an overlapping `sendRaw` — see its own KDoc), so a second `sendCommand` call while one is
+  outstanding is refused immediately with an `ErrorOccurred` entry rather than queued — a human
+  typing raw commands at a dongle benefits more from instant, visible feedback than from a
+  silent queue. The `:app` UI additionally disables its send affordance while `commandInFlight`
+  is true; the refusal is a safety net (chip-taps, test races), not the primary defense.
+- **Timeout handling is `ObdLink`-implementation-agnostic.** `ObdLink.sendRaw`'s KDoc leaves the
+  timeout exception implementation-defined: `FakeObdLink` lets `TimeoutCancellationException`
+  escape, `BleObdLink` translates its own timeout into `BleLinkException(LinkError.Timeout)`
+  first. `sendCommand` catches `TimeoutCancellationException` specifically (logs it, does not
+  rethrow — a `TimeoutCancellationException` is also a `CancellationException`, and rethrowing
+  it would incorrectly cancel the caller) ahead of a plain `CancellationException` catch (which
+  *does* rethrow, to keep structured concurrency intact for a genuine scope teardown) ahead of a
+  generic `Exception` catch for everything else (`BleLinkException` included).
+- `forgetRememberedDevice()` delegates to an optional `RememberedDeviceForgetter` — a
+  one-method seam, not a dependency on `BleObdLink`, since `ObdLink` itself has no such concept.
+  `:app`'s DI wiring supplies `RememberedDeviceForgetter { bleObdLink.forgetRememberedDevice() }`
+  alongside the same `BleObdLink` instance bound to `ObdLink`.
+- `recordError(message, command = null)` is public and non-suspending: it exists for the
+  `:app` edge to log outcomes `:core:ble` cannot see itself — e.g. a denied runtime permission,
+  reported by `ConsoleActivity`'s `ActivityResultContracts` callback.
 
 ## Architecture
 
@@ -147,15 +188,20 @@ missing (`BleObdLink.missingPermissions`) and parks a connect attempt in
 
 ## Tests
 
-131 JVM tests, no device, no Robolectric — the `GattTransport`/`BleScanner`/`BleEnvironment`
+146 JVM tests, no device, no Robolectric — the `GattTransport`/`BleScanner`/`BleEnvironment`
 seams mean nothing under test needs an Android runtime.
 
-- `GattBridgeTest` (36) — handshake, probe, CCCD/MTU, single-flight, timeout and the response
+- `GattBridgeTest` (38) — handshake, probe, CCCD/MTU, single-flight, timeout and the response
   debt, cancellation, refused requests, drops mid-handshake and mid-response.
-- `ResponseAssemblerTest` (15) — fragmentation, including a property test asserting that *any*
-  chunking of a transcript reassembles identically, and an exhaustive every-split-point test.
+- `BleObdLinkTest` (15), `ResponseAssemblerTest` (15) — preconditions/discovery/remembered-device
+  fast path; fragmentation, including a property test asserting that *any* chunking of a
+  transcript reassembles identically, and an exhaustive every-split-point test.
 - `SerialProfileProbeTest` (13) — every candidate family, the fallback, write-type selection.
-- `BleObdLinkTest` (13) — preconditions, discovery, the remembered-device fast path.
+- `ConsoleSessionTest` (11, OBD-19) — against `FakeObdLink`: command/response round trips in
+  order, the ambient link state logged at construction, a timeout logged as an error entry
+  (session usable after), state transitions (including a mid-response disconnect), the
+  historyLimit bound, the refuse-don't-queue in-flight policy, `forgetRememberedDevice` with and
+  without a forgetter wired, `recordError`.
 - `ScanStateMachineTest` (11), `ScanPassPolicyTest` (11), `ConnectPlannerTest` (10),
   `RememberedDeviceStoreTest` (10), `BlePermissionPolicyTest` (6), `DongleFilterTest` (6).
 
@@ -168,7 +214,6 @@ seams mean nothing under test needs an Android runtime.
 - **No auto-reconnect.** A dropped link closes its GATT client, parks in `LinkState.Error` and
   waits to be asked again. Exponential backoff and resume-on-device-found are OBD-23.
 - **No foreground service** — OBD-24.
-- **No debug console** — OBD-19.
 - `AndroidGattTransport`, `AndroidBleScanner` and `AndroidBleEnvironment` have no unit tests by
   design: they contain no decisions, only translation. Bugs there are translation bugs and are
   the target of the OBD-22 hardware session.
@@ -183,3 +228,12 @@ seams mean nothing under test needs an Android runtime.
   is true of a half-duplex ELM327 and is the only assumption available without a request tag on
   the wire. A dongle that silently drops a command it received would leave the debt unpaid until
   the next reconnect; OBD-22 is where that gets observed on real hardware.
+- **Test gotcha for anything that collects a `StateFlow` on `TestScope.backgroundScope`**
+  (`ConsoleSessionTest` is the first case of this in the module): in this project's
+  `kotlinx-coroutines-test` version, a `backgroundScope` job's *first* dispatch — and, it
+  appears, any dispatch not preceded by an actual suspension in the calling coroutine — is not
+  reached by a bare `advanceUntilIdle()`/`runCurrent()` called synchronously from the test body;
+  an explicit `yield()` immediately before the drain is what actually lets it run (confirmed by
+  isolated repro, not just observed in this suite). `ConsoleSessionTest`'s `settle()` helper is
+  that `yield()` + `advanceUntilIdle()` pair — reuse the pattern rather than plain
+  `advanceUntilIdle()` for any future `backgroundScope`-based collector test.
