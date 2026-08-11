@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-11 — SPRINT 2 COMPLETE (2a+2b+2c-pending): protocol layer merged both waves. 19/36 issues done, 663 tests repo-wide. The trans-temp decode is a solved hypothesis awaiting the van.
+**Last updated:** 2026-08-11 — Sprints 0-2 ALL COMPLETE: 23/36 merged, ~750 tests. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
 
 ---
 
@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 2c running** — sparklines + settings in build |
+| Current phase | **ALL OF SPRINT 2 COMPLETE** — 23/36 merged. Remaining: Sprint 3 (van + software) and Sprint 4 |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
@@ -26,7 +26,7 @@
 | Sprint 1b — OBD-11+12 (batched, Tier B) | +350k | ✅ done 2026-08-09 | ~390k | 2 merged / 0 rolled |
 | Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ✅ done 2026-08-11 | ~1.1M | 4 merged / 0 rolled |
 | Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | 🔄 17+18 merged 2026-08-10; OBD-19 rolled to 2b-2 | ~1.15M | 2 merged / OBD-19 rolled |
-| Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ⬜ not started | — | — |
+| Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ✅ done 2026-08-11 | ~1.0M | 2 merged / 0 rolled |
 | Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ blocked: needs 2a+2b | — | — |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 
@@ -81,8 +81,8 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 
 ## Sprint 2c — UI round 2 (Sonnet)
 
-- [ ] OBD-20: 5-min sparkline strips, no jank at 4 Hz (frame timing test)
-- [ ] OBD-21: settings screen (gauges, thresholds, units, keep-screen-on, poll rate; DataStore; live recolor test)
+- [x] OBD-20: 5-min sparklines — pure ring buffer + downsampler, per-gauge StateFlows (recomposition-isolation mutation-tested), gap breaks — merged cc35306; true frame timing deferred to OBD-34 device macrobenchmark (documented)
+- [x] OBD-21: settings — gauge order/visibility, thresholds (natural-unit storage, drift-proof toggles through 4 review rounds), units, keep-screen-on, poll rate; DataStore w/ corruption handler; live recolor end-to-end — merged cc35306
 
 ## Sprint 3 — Real Van
 
@@ -135,3 +135,4 @@ Hardware gates — **🖐 TARAS**:
 | Sprint 2b w1 | +900k | ~1.15M | 1 arb | Tier A earned it: 2 blockers + 9 majors round 1; round 2 caught a relocated leak + unbounded debt. 17 mutations run across 3 rounds. Overrun drivers: 2 agent stalls (stream watchdog on long Gradle runs — mitigate with -q), and a redesign-grade fix round. |
 | Sprint 2b-2 | +300k | ~410k | 0 | Console: clean build, approved round 1, tier boundary held (zero existing-file edits). Overrun driver: flavor×buildType source-set plumbing (~2x est. build cost — recalibration input: ANY new source-set/variant work costs ~300k, not 150k). |
 | Sprint 2a | +900k | ~1.1M | 0 | Both waves: majors fixed pre-merge (truncated-frame framing; intra-cycle header restore). MTH decode solved + independently re-derived. First mutation-tested-then-rewritten test (M1 v1 didn't bite — process caught its own weak fix). ~22% over. |
+| Sprint 2c | +400k | ~1.0M | 2 arb | 2.5x over: Sonnet UI build ran 422k (pattern: UI builds are the persistent hot spot — 352/252/313/422k across sprints) and the threshold-field editing UX took 4 review rounds, with the reviewer twice catching regressions introduced by fixes (round-2 clear-retype, round-3 mid-edit unit toggle). Each was a silent wrong-number path in a dash gauge — the rounds were worth it. Recalibrate: Tier-B UI waves need ~2x their row. |
