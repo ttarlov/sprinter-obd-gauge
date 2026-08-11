@@ -4,7 +4,7 @@ title: Mode-22 Mercedes PID support
 module: core/protocol
 owner: protocol-agent
 sprint: 2
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: [OBD-9]

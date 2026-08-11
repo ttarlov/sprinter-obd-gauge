@@ -1,5 +1,7 @@
 package com.revel.obdgauge.protocol
 
+import com.revel.obdgauge.model.PidDefinition
+
 /**
  * Turns the raw text an ELM327 emits into typed data bytes and scaled values.
  *
@@ -23,7 +25,8 @@ package com.revel.obdgauge.protocol
  *
  * Known limitation: CAN-ID headers are assumed **off** (`ATH0`, the ELM327 default that
  * [Elm327InitStateMachine] never changes). With headers on, a `7E8` frame id would be
- * concatenated into the payload and break byte alignment. Mode-22 work (OBD-15) owns that case.
+ * concatenated into the payload and break byte alignment. See [Mode22ResponseParser] for how
+ * the manufacturer-PID path (OBD-15) handles that case — it does not enable headers either.
  */
 object ResponseParser {
     /**
@@ -38,7 +41,7 @@ object ResponseParser {
     ): ParseOutcome<Double> =
         when (val bytes = dataBytes(raw, spec.responseMode, spec.pid, spec.dataByteCount)) {
             is ParseOutcome.Failure -> bytes
-            is ParseOutcome.Success -> scale(spec, bytes.value)
+            is ParseOutcome.Success -> scaleReading(spec.definition, bytes.value)
         }
 
     /**
@@ -57,13 +60,43 @@ object ResponseParser {
         responseMode: Int,
         pid: Int,
         expectedCount: Int,
+    ): ParseOutcome<List<Int>> =
+        dataBytesForHeader(
+            raw = raw,
+            responseHeader = hexByte(responseMode) + hexByte(pid),
+            requestMode = responseMode - POSITIVE_RESPONSE_OFFSET,
+            expectedCount = expectedCount,
+        )
+
+    /**
+     * The general form of [dataBytes]: extracts the data bytes following an arbitrary-length
+     * [responseHeader] in [raw].
+     *
+     * Mode 01 answers with a 2-byte header (`41 05`), but manufacturer modes do not: KWP's
+     * `21 30` answers `61 30` (2 bytes) and UDS' `22 0F 0C` answers `62 0F 0C` (3 bytes). Taking
+     * the header as a hex *string* rather than a mode/pid pair is what lets [Mode22ResponseParser]
+     * reuse this — every tolerance and refusal rule below then applies identically to both paths,
+     * which is the point: there is exactly one implementation of "find this PID's frame".
+     *
+     * @param raw the response text as [com.revel.obdgauge.model.ObdLink.sendRaw] returned it.
+     * @param responseHeader the positive-response header as uppercase hex, e.g. `"4105"`, `"6130"`.
+     * @param requestMode the mode that was requested, used only to recognize its `7F` negative
+     *   response (`0x01` for mode 01, `0x21` for the KWP reads the Mercedes codes use).
+     * @param expectedCount how many data bytes the caller requires; extras are ignored, a
+     *   shortfall is a [ParseFailure.UnexpectedDataLength].
+     */
+    fun dataBytesForHeader(
+        raw: String,
+        responseHeader: String,
+        requestMode: Int,
+        expectedCount: Int,
     ): ParseOutcome<List<Int>> {
         val lines = splitLines(raw)
         val protocolError = protocolError(lines, raw)
         return when {
             protocolError != null -> ParseOutcome.Failure(protocolError)
             lines.isEmpty() -> ParseOutcome.Failure(ParseFailure.Empty)
-            else -> extractFrame(lines, raw, responseMode, pid, expectedCount)
+            else -> extractFrame(lines, raw, responseHeader.uppercase(), requestMode, expectedCount)
         }
     }
 
@@ -92,11 +125,10 @@ object ResponseParser {
     private fun extractFrame(
         lines: List<String>,
         raw: String,
-        responseMode: Int,
-        pid: Int,
+        header: String,
+        requestMode: Int,
         expectedCount: Int,
     ): ParseOutcome<List<Int>> {
-        val header = hexByte(responseMode) + hexByte(pid)
         // Frame per line FIRST: joining lines lets a truncated frame steal the next frame's
         // mode byte as data — "41 05\r41 05 5A" would read 0x41 as coolant and report a
         // plausible wrong temperature (review round-1 MAJOR). A complete frame on any single
@@ -116,7 +148,7 @@ object ResponseParser {
         return if (start >= 0) {
             readData(hex, start + header.length, expectedCount)
         } else {
-            missingFrame(hex, raw, responseMode, header)
+            missingFrame(hex, raw, requestMode, header)
         }
     }
 
@@ -142,10 +174,9 @@ object ResponseParser {
     private fun missingFrame(
         hex: String,
         raw: String,
-        responseMode: Int,
+        requestMode: Int,
         header: String,
     ): ParseOutcome.Failure {
-        val requestMode = responseMode - POSITIVE_RESPONSE_OFFSET
         val negativeHeader = NEGATIVE_RESPONSE_PREFIX + hexByte(requestMode)
         val negativeStart = indexOfAligned(hex, negativeHeader)
         return when {
@@ -161,34 +192,37 @@ object ResponseParser {
             else -> ParseOutcome.Failure(ParseFailure.NoMatchingFrame(header, raw.trim()))
         }
     }
-
-    /**
-     * Applies [spec]'s scaling lambda, converting any throw or non-finite result into a typed
-     * [ParseFailure.ScalingError].
-     *
-     * `RuntimeException` is caught deliberately and broadly: `PidDefinition.parse` is an
-     * arbitrary caller-supplied lambda, and this is the boundary that owns the never-throws and
-     * never-poisoned-value guarantees. Nothing here suspends, so no `CancellationException` can
-     * be swallowed.
-     */
-    @Suppress("TooGenericExceptionCaught")
-    private fun scale(
-        spec: StandardPidSpec,
-        data: List<Int>,
-    ): ParseOutcome<Double> =
-        try {
-            val value = spec.definition.parse(ByteArray(data.size) { data[it].toByte() })
-            if (value.isFinite()) {
-                ParseOutcome.Success(value)
-            } else {
-                ParseOutcome.Failure(ParseFailure.ScalingError("non-finite value $value for ${spec.definition.id}"))
-            }
-        } catch (e: RuntimeException) {
-            ParseOutcome.Failure(
-                ParseFailure.ScalingError("${spec.definition.id}: ${e.message ?: e::class.simpleName.orEmpty()}"),
-            )
-        }
 }
+
+/**
+ * Applies [definition]'s scaling lambda to [data], converting any throw or non-finite result into
+ * a typed [ParseFailure.ScalingError].
+ *
+ * Shared by [ResponseParser] and [Mode22ResponseParser] deliberately: this is the single boundary
+ * that owns the never-throws and never-poisoned-value guarantees, and a manufacturer PID whose
+ * scaling is a *hypothesis* (`verified = false`) is exactly the one that must not be allowed to
+ * leak a `NaN` onto a gauge.
+ *
+ * `RuntimeException` is caught broadly on purpose: [PidDefinition.parse] is an arbitrary
+ * caller-supplied lambda. Nothing here suspends, so no `CancellationException` can be swallowed.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun scaleReading(
+    definition: PidDefinition,
+    data: List<Int>,
+): ParseOutcome<Double> =
+    try {
+        val value = definition.parse(ByteArray(data.size) { data[it].toByte() })
+        if (value.isFinite()) {
+            ParseOutcome.Success(value)
+        } else {
+            ParseOutcome.Failure(ParseFailure.ScalingError("non-finite value $value for ${definition.id}"))
+        }
+    } catch (e: RuntimeException) {
+        ParseOutcome.Failure(
+            ParseFailure.ScalingError("${definition.id}: ${e.message ?: e::class.simpleName.orEmpty()}"),
+        )
+    }
 
 /**
  * Splits [raw] into trimmed, uppercased, non-empty lines with prompt characters removed.
@@ -274,5 +308,3 @@ private const val BUFFER_FULL_TOKEN = "BUFFERFULL"
 private const val ERROR_TOKEN = "ERROR"
 private const val NEGATIVE_RESPONSE_PREFIX = "7F"
 private const val ISO_TP_LENGTH_DIGITS = 3
-private const val HEX_DIGITS_PER_BYTE = 2
-private const val HEX_RADIX = 16

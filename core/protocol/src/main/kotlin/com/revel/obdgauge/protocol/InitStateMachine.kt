@@ -307,8 +307,12 @@ private fun classifyBanner(raw: String): ResetOutcome {
  * `ATE0` may echo itself once before echo actually goes off, so the check is "contains OK" on the
  * whole response rather than "equals OK" — but an error token anywhere disqualifies it, so an
  * `OK` buried in a failing response cannot pass.
+ *
+ * `internal` rather than private because [Mode22Requester] applies the identical rule to its
+ * `ATSH`/`ATCRA` commands: an unacknowledged header command must abort the request, since a
+ * header that did not take would silently address the wrong ECU.
  */
-private fun acknowledges(raw: String): Boolean {
+internal fun acknowledges(raw: String): Boolean {
     val compact = meaningfulLines(raw).joinToString(separator = "") { it.uppercase().filterNot(Char::isWhitespace) }
     return compact.contains(OK_TOKEN) && !compact.contains(ERROR_TOKEN) && !compact.contains(UNKNOWN_COMMAND)
 }
