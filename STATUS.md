@@ -12,7 +12,7 @@
 
 | | |
 |---|---|
-| Current phase | **Sprint 2b COMPLETE** — full BLE stack + console merged |
+| Current phase | **Sprint 2a running** — protocol wave 1 (init + standard PIDs) in build |
 | Repo | Gate green on main; no open branches |
 | Blockers | None |
 | Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |

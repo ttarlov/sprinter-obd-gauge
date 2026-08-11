@@ -4,11 +4,11 @@ title: ELM327 init state machine
 module: core/protocol
 owner: protocol-agent
 sprint: 2
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: protocol/13-elm327-init
+branch: protocol/13-14-init-registry
 ---
 
 ## Feature
