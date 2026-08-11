@@ -4,7 +4,7 @@ title: Settings screen
 module: app
 owner: ui-agent
 sprint: 2
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
