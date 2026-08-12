@@ -28,3 +28,8 @@ Manual verification is the acceptance test — human types ATZ and sees the dong
 
 ## Out of scope
 Init state machine wiring (already covered by OBD-13 — this screen bypasses it for raw REPL access); production debug tooling polish.
+
+## Hardware verification — observed 2026-08-12 (Taras at the van, orchestrator driving)
+- ATZ → `ELM327 v2.2` (Veepeak OBDCheck BLE+, MAC 66:1E:87:06:1F:A3, adv name VEEPEAK)
+- Link: FFF0/FFF1/FFF2 profile as predicted, MTU 247, stable 40+ min incl. 15-min drive
+- Full session record: docs/hardware/session-2026-08-12.md
