@@ -5,11 +5,11 @@ module: core/ble
 owner: ble-agent
 sprint: 3
 track: small
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ble/48-traffic-logging
+branch: ble/23-48-reconnect-traffic
 ---
 
 ## Feature

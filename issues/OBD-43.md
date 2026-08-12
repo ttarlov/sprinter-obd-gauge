@@ -4,11 +4,11 @@ title: Standard PIDs — engine load (0104) and throttle position (0111)
 module: core/protocol
 owner: protocol-agent
 sprint: backlog
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: protocol/43-load-tps-pids
+branch: protocol/43-49-pids-kwp
 ---
 
 ## Feature

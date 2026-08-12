@@ -4,11 +4,11 @@ title: Foreground service for connection and poll loop
 module: app
 owner: ble-agent
 sprint: 3
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ble/24-foreground-service
+branch: ui/24-27-service-badge
 ---
 
 ## Feature

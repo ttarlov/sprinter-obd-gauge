@@ -4,11 +4,11 @@ title: Unverified-PID UX
 module: app
 owner: ui-agent
 sprint: 3
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ui/27-unverified-pid-ux
+branch: ui/24-27-service-badge
 ---
 
 ## Feature

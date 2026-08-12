@@ -4,11 +4,11 @@ title: Reconnect state machine
 module: core/ble
 owner: ble-agent
 sprint: 3
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
-branch: ble/23-reconnect-state-machine
+branch: ble/23-48-reconnect-traffic
 ---
 
 ## Feature
