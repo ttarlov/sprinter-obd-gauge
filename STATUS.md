@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (OBD-47 small-track) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **26 merged / 42 issues** (OBD-44+46+47 on `develop`, NOT yet promoted to main). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (PROMOTION: develop→main) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **26 merged / 42 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| Current phase | **ALL OF SPRINT 2 COMPLETE** — 24/40 merged (OBD-44 on `develop` awaiting promotion). Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
-| Repo | Gate green on `main` @ `0723e58` (merge.sh step 7 verified @ `ecbafa9`) and on `develop` @ `be735ac` (merge.sh step 7). **No open branches.** Channel APKs staged: `builds/main/` @ ecbafa9, `builds/dev/` @ 2234744 (installed on Pixel 2026-08-12) |
-| Blockers | None. 🖐 Taras: OBD-44 feel verdict on the dev build (shrink animation) → promotion develop→main; side-by-side install ✅ confirmed on the Pixel 2026-08-12 (both packages coexist) |
-| Next action | Taras: sideload `builds/dev/app-dev-debug.apk`, feel-test the shrink, say "promote" (or send it back for a feel round) — or start Sprint 3 software half: "run Sprint 3, +900k". Sprint 3's hardware gates (🖐 OBD-22a/22b/26) still need the van/dongle |
+| Current phase | **ALL OF SPRINT 2 COMPLETE + picker feel stack promoted** — 26/42 merged, channels aligned @ ca896b5. Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
+| Repo | Gate green on `main` @ `ca896b5` (full gate post-promotion); `develop` fast-forwarded to same. **No open branches.** Master APK @ ca896b5 installed on Pixel (replaces old master); dev APK @ 2234744 also on device |
+| Blockers | None. Feel verdict ✅ accepted + promoted 2026-08-12; side-by-side install ✅ confirmed |
+| Next action | Taras's call: 🖐 hardware session at the van (OBD-19 console verify, OBD-22a captures, OBD-41 discovery) — or "run Sprint 3, +900k" (software half, van-independent) |
 
 ## Wave board
 
