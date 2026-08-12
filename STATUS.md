@@ -13,7 +13,7 @@
 | | |
 |---|---|
 | Current phase | **ALL OF SPRINT 2 COMPLETE** — 24/40 merged (OBD-44 on `develop` awaiting promotion). Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
-| Repo | Gate green on `main` @ `0723e58` (merge.sh step 7 verified @ `ecbafa9`) and on `develop` @ `be735ac` (merge.sh step 7). **No open branches.** Channel APKs staged: `builds/main/` @ ecbafa9, `builds/dev/` @ 2234744 (install pending — phone disconnected) |
+| Repo | Gate green on `main` @ `0723e58` (merge.sh step 7 verified @ `ecbafa9`) and on `develop` @ `be735ac` (merge.sh step 7). **No open branches.** Channel APKs staged: `builds/main/` @ ecbafa9, `builds/dev/` @ 2234744 (installed on Pixel 2026-08-12) |
 | Blockers | None. 🖐 Taras: OBD-44 feel verdict on the dev build (shrink animation) → promotion develop→main; side-by-side install ✅ confirmed on the Pixel 2026-08-12 (both packages coexist) |
 | Next action | Taras: sideload `builds/dev/app-dev-debug.apk`, feel-test the shrink, say "promote" (or send it back for a feel round) — or start Sprint 3 software half: "run Sprint 3, +900k". Sprint 3's hardware gates (🖐 OBD-22a/22b/26) still need the van/dongle |
 
