@@ -9,6 +9,10 @@ captures/
 *.apk
 *.aab
 
+# OBD-45: dual-channel build outputs (tools/channel-build.sh) — local sideload artifacts,
+# not repo content.
+/builds/
+
 # IDE
 .idea/
 *.iml

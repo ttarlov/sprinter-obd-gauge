@@ -208,6 +208,64 @@ Only the **merge-agent** role merges. `tools/merge.sh OBD-13` does, in order, an
 - **Agent briefs** quote the relevant STATUS slice, so agents see what's done and don't rebuild it.
 - 🖐 items are never auto-closed.
 
+## 6b. Ad-hoc feature channel (D5)
+
+(OBD-45, proposed by Taras 2026-08-11.) Not every piece of work fits the sprint board —
+sometimes Taras wants something built ad hoc, outside the current wave. D5 gives that a home
+without touching the sprint-track process on `main`.
+
+**Nothing about issues or review changes.** An ad-hoc feature request gets an `issues/OBD-N.md`
+file with the same frontmatter, the same risk tier (§5.5), the same reviewer lenses, the same
+`reviews/OBD-N-round<K>.md` records as anything on the sprint board. The only field that
+differs in practice is `branch:` (still `<role>/<issue>-<slug>`) and where `tools/merge.sh`
+squash-merges it to.
+
+**Two channels, two branches:**
+
+| Channel | Branch | Merge target | Produces |
+|---|---|---|---|
+| **dev** | ad-hoc feature branches | `develop` | dev APK — `applicationIdSuffix ".dev"`, "OBD Gauge Dev" label, installs alongside the master build |
+| **main** | sprint-track feature branches (unchanged) | `main` | master APK — the build on Taras's phone |
+
+- **Every `develop` merge produces the dev APK.** Run `tools/merge.sh <OBD-N>` with
+  `MERGE_TARGET_BRANCH=develop` (default is `main` — sprint-track merges are untouched); the
+  script rebases/gates/squash-merges onto `develop` instead of `main` and prints the mandatory
+  next step (below).
+- **Promotion `develop` → `main` happens only on Taras's explicit acceptance.** There is no
+  automatic promotion path — it's a human call, not a merge-count or time threshold. When
+  Taras accepts a dev-channel build, the promotion itself is a normal `tools/merge.sh` run
+  targeting `main` (or a fast-forward if `develop` is already clean ahead of `main`), which
+  produces the master APK the same way any other `main` merge does.
+- **The Gradle switch is a property, not a flavor:** `-Pchannel=dev` (see
+  `app/build.gradle.kts`) — deliberately not a new `flavorDimension`, so the existing
+  demo/prod × debug/release matrix is untouched and absent the property, output is unaffected.
+  `tools/channel-build.sh <dev|main>` assembles demo-debug for the given channel, refuses a
+  dirty tree, asserts the current branch matches the channel (`dev` ↔ `develop`, `main` ↔
+  `main`) unless `--any-branch`, and copies the APK + a metadata sidecar (commit, branch,
+  timestamp, versionName, applicationId) to `builds/<channel>/` (gitignored — local sideload
+  artifacts, not repo content).
+
+**Why `tools/merge.sh` prints the channel-build instruction instead of running it:**
+`merge.sh` runs under `set -euo pipefail` with a single contract — "abort loudly, no partial
+merges, no exceptions" — and its two gate runs (steps 5 and 7) already prove the build is
+sound before anything lands. Folding a *third*, channel-flavored Gradle invocation into that
+same atomic script raises the failure surface of a script whose entire design point is a
+narrow, well-understood failure surface: a `channel-build.sh` failure for reasons that have
+nothing to do with merge correctness (stale `local.properties`, `ANDROID_HOME` unset in a
+fresh shell, a full disk, a `find`-for-`aapt2` miss) would abort a script that has *already
+squash-merged and verified* — muddying "did the merge fail" with "did the convenience artifact
+fail." It also roughly triples the wall-clock/token cost of every merge for something that
+gates nothing (the APK is a sideload convenience, not a merge precondition). Printing a
+mandatory, un-skippable instruction — enforced by the orchestrator actually running it, the
+same way §6a's STATUS reconciliation is enforced by process discipline rather than a script —
+keeps `merge.sh`'s blast radius exactly at "merge correctness" while still making "every
+`develop`/`main` merge produces a fresh APK" a real, checked-off step in the transcript, not
+best-effort. This is the "documented post-merge instruction" option from OBD-45's two
+alternatives, not "`merge.sh` invokes `channel-build.sh` automatically."
+
+**`develop` branch:** already created from `main` (OBD-45). No further scaffolding — it's an
+ordinary long-lived branch, gated by the same `tools/gate.sh` as `main`.
+
 ## 7. Agent execution model (how this actually runs)
 
 - One orchestrating Claude session. Feature roles are **named subagents in isolated git worktrees** — parallel branches never collide in the working tree. Reviewer roles are fresh subagents per round (context isolation, §5.4).

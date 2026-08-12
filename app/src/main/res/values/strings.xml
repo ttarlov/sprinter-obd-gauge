@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Sprinter OBD Gauge</string>
+    <!-- OBD-45: dev-channel launcher label (`-Pchannel=dev`), see app/build.gradle.kts and
+         AndroidManifest.xml's `${appLabel}` placeholder. Visibly distinct so a dev-channel
+         sideload never gets mistaken for the main-channel build on the home screen. -->
+    <string name="app_name_dev">OBD Gauge Dev</string>
 </resources>

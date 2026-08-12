@@ -9,6 +9,16 @@ plugins {
     alias(libs.plugins.roborazzi)
 }
 
+// OBD-45: dual-channel builds. `-Pchannel=dev` is a lightweight property switch (NOT a new
+// flavorDimension — the demo/prod x debug/release matrix stays exactly as-is) that applies
+// `applicationIdSuffix ".dev"` and swaps the launcher label to "OBD Gauge Dev", so a
+// dev-channel sideload installs ALONGSIDE the main-channel build instead of overwriting it
+// (docs/05-local-workflow.md §D5). When the property is absent — every build today, and every
+// build that doesn't opt in — `channel` is null, the `if` blocks below don't execute, and
+// defaultConfig is byte-identical to pre-OBD-45. That's the acceptance criterion, not
+// incidental: see tools/channel-build.sh for the two invocations this feeds.
+val channel: String? = providers.gradleProperty("channel").orNull
+
 android {
     namespace = "com.revel.obdgauge.app"
     compileSdk = 36
@@ -21,6 +31,17 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Default placeholder resolves to the literal manifest text the app used before
+        // OBD-45 (`android:label="${appLabel}"` in AndroidManifest.xml substitutes this in
+        // verbatim, then AAPT resolves the resulting `@string/app_name` reference as always)
+        // — so a build without `-Pchannel=dev` is unaffected.
+        manifestPlaceholders["appLabel"] = "@string/app_name"
+
+        if (channel == "dev") {
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appLabel"] = "@string/app_name_dev"
+        }
     }
 
     buildTypes {

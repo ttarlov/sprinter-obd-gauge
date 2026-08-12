@@ -85,3 +85,31 @@ table in doc 05 §10.3).
 ## D3 — Publish to GitHub
 
 ⬜ Deferred. Per-action OK from Taras; see docs/05-local-workflow.md §9.
+
+## D5 — Dual-channel builds: `develop` + side-by-side dev/main APKs (proposed by Taras 2026-08-11)
+
+**Status:** proposed by Taras 2026-08-11; side-by-side install decision made by orchestrator
+same day.
+
+**Decision:** two long-lived build channels. Ad-hoc feature branches merge to `develop`
+(same issue frontmatter + risk-tiered review as everything else, doc 05 §5.5) — every
+`develop` merge produces a dev APK. `main` stays the promoted, phone-install branch — every
+`main` merge produces the master APK. Promotion `develop`→`main` happens only on Taras's
+explicit acceptance, never automatically.
+
+**Side-by-side install (orchestrator decision, 2026-08-11):** the dev APK must install
+ALONGSIDE the master build, not replace it, so a sideloaded test build can never clobber
+what's on Taras's phone by accident. Implemented as a Gradle property switch —
+`-Pchannel=dev` applies `applicationIdSuffix ".dev"` + a visibly distinct launcher label
+("OBD Gauge Dev") — deliberately NOT a new `flavorDimension`, to keep the existing
+demo/prod × debug/release matrix untouched. When the property is absent, `defaultConfig` is
+unaffected: this is enforced by `tools/gate.sh` staying green with zero variant drift
+(OBD-45 AC).
+
+**Merge-integration choice:** `tools/merge.sh` prints a mandatory post-merge instruction
+(`tools/channel-build.sh <dev|main>`) rather than invoking it automatically. Rationale in
+docs/05-local-workflow.md §D5.
+
+**Implementation:** OBD-45 (`tools/channel-build.sh`, `app/build.gradle.kts` channel
+switch, `tools/merge.sh` `MERGE_TARGET_BRANCH` + post-merge instruction, `builds/`
+gitignored). Full spec: docs/05-local-workflow.md §D5.

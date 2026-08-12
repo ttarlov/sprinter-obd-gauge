@@ -4,6 +4,11 @@
 # Only the merge-agent role runs this. Aborts loudly at the first failed step — no partial
 # merges, no silent skips. Steps map 1:1 onto §6.1-8.
 #
+# MERGE_TARGET_BRANCH (default: main) — OBD-45/§D5: ad-hoc feature issues target `develop`
+# instead of `main`. After a successful merge this script PRINTS (does not run) the matching
+# `tools/channel-build.sh <dev|main>` command as a mandatory next step — see §D5 for why this
+# is a printed instruction rather than an auto-invoked step.
+#
 # Bash 3.2 compatible (macOS ships no newer bash on PATH by default).
 set -euo pipefail
 
@@ -12,6 +17,12 @@ set -euo pipefail
 # it is undefined behavior. Copy to a temp path, set the env var, run the copy.
 repo_root="${MERGE_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$repo_root"
+
+# OBD-45/D5: MERGE_TARGET_BRANCH lets an ad-hoc-feature merge target `develop` instead of
+# `main`, per docs/05-local-workflow.md §D5. Defaults to `main` — every call site before
+# OBD-45 is unaffected. This is the ONLY behavior change OBD-45 makes to the merge procedure
+# itself; everything else (gate, review checks, squash semantics) is untouched.
+target_branch="${MERGE_TARGET_BRANCH:-main}"
 
 die() {
     echo "" >&2
@@ -155,17 +166,17 @@ else
     echo "  n/a — type: ${issue_type:-feature}"
 fi
 
-# --- Step 4: rebase branch on main; conflicts go back to the author ---
-step "4/8  Rebase '$issue_branch' on main"
+# --- Step 4: rebase branch on target; conflicts go back to the author ---
+step "4/8  Rebase '$issue_branch' on $target_branch"
 
 git checkout "$issue_branch"
-if ! git rebase main; then
+if ! git rebase "$target_branch"; then
     git rebase --abort || true
     git checkout "$current_branch" || true
-    die "rebase of '$issue_branch' onto main hit conflicts — mechanical, conflict-free rebases only; back to the author"
+    die "rebase of '$issue_branch' onto '$target_branch' hit conflicts — mechanical, conflict-free rebases only; back to the author"
 fi
 
-echo "  OK — '$issue_branch' rebased cleanly on main"
+echo "  OK — '$issue_branch' rebased cleanly on $target_branch"
 
 # --- Step 5: gate on the rebased branch ---
 step "5/8  Gate on rebased branch"
@@ -178,13 +189,13 @@ fi
 echo "  OK — gate green on '$issue_branch'"
 
 # --- Step 6: squash merge; flip issue to status: merged in the same commit ---
-step "6/8  Squash merge to main"
+step "6/8  Squash merge to $target_branch"
 
-git checkout main
+git checkout "$target_branch"
 if ! git merge --squash "$issue_branch"; then
     git reset --hard HEAD || true
     git checkout "$current_branch" || true
-    die "squash merge of '$issue_branch' into main failed"
+    die "squash merge of '$issue_branch' into '$target_branch' failed"
 fi
 
 sed -i.bak "s/^status: .*/status: merged/" "$issue_file"
@@ -204,24 +215,45 @@ merge_commit="$(git rev-parse --short HEAD)"
 echo "  OK — squash-merged as $merge_commit; $issue_id flipped to status: merged"
 
 # --- Step 7: post-merge verify; revert first, diagnose second ---
-step "7/8  Post-merge gate on main"
+step "7/8  Post-merge gate on $target_branch"
 
 if ! "$repo_root/tools/gate.sh"; then
-    echo "  RED on main — reverting $merge_commit immediately" >&2
+    echo "  RED on $target_branch — reverting $merge_commit immediately" >&2
     git revert --no-edit "$merge_commit"
-    die "post-merge gate failed on main — reverted $merge_commit. Reopen $issue_id (status: open) with the failure pasted in, then diagnose."
+    die "post-merge gate failed on '$target_branch' — reverted $merge_commit. Reopen $issue_id (status: open) with the failure pasted in, then diagnose."
 fi
 
-echo "  OK — gate green on main"
+echo "  OK — gate green on $target_branch"
 
 # --- Step 8: delete branch ---
 step "8/8  Delete branch"
 
 # -D (not -d): a squash merge never creates the ancestry link git's safe-delete checks for.
-# Everything up to here already validated the branch's content is safely on main.
+# Everything up to here already validated the branch's content is safely on $target_branch.
 git branch -D "$issue_branch"
 
 echo "  OK — '$issue_branch' deleted"
 
 echo ""
 echo "merge.sh: $issue_id merged successfully as $merge_commit"
+
+# --- OBD-45/D5: mandatory post-merge instruction (not auto-run — see docs/05 §D5 for why) ---
+step "POST-MERGE ACTION REQUIRED"
+
+case "$target_branch" in
+    main) build_channel="main" ;;
+    develop) build_channel="dev" ;;
+    *) build_channel="" ;;
+esac
+
+if [[ -n "$build_channel" ]]; then
+    echo "  Run this now, from '$target_branch' (already checked out):"
+    echo ""
+    echo "      tools/channel-build.sh $build_channel"
+    echo ""
+    echo "  This regenerates the $build_channel-channel APK in builds/$build_channel/ from the"
+    echo "  new $target_branch HEAD ($merge_commit). Not optional — every $target_branch merge"
+    echo "  produces a fresh sideloadable APK (docs/05-local-workflow.md §D5)."
+else
+    echo "  target_branch '$target_branch' has no channel mapping — no channel-build.sh run needed."
+fi
