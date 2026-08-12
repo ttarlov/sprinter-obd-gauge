@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-11 — Sprints 0-2 complete + OBD-42 gauge-swap carousel merged (71ab896): 22/37 merged. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. Everything remaining is Sprint 3/4.
+**Last updated:** 2026-08-11 (cold-start reconcile) — Sprints 0-2 complete + ad-hoc OBD-42 carousel and OBD-45 dual-channel builds merged: **23 merged / 40 issues**. Full stack: contracts, fakes, dashboard+banner+sparklines+settings, BLE link+console, protocol layer w/ solved trans-temp decode. One branch open (OBD-44, awaiting review round 1). Everything else remaining is Sprint 3/4 + backlog.
 
 ---
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| Current phase | **ALL OF SPRINT 2 COMPLETE** — 21/36 merged. Remaining: Sprint 3 (van + software) and Sprint 4 |
-| Repo | Gate green on main; no open branches |
-| Blockers | None |
-| Next action | Taras: "run Sprint 2a, +900k" (protocol) and/or "run Sprint 2b, +900k" (BLE) — independent waves |
+| Current phase | **ALL OF SPRINT 2 COMPLETE** — 23/40 merged. In flight: ad-hoc OBD-44. Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
+| Repo | Gate last verified green on `main` by merge.sh step 7 @ `ecbafa9`. **One open branch:** `ui/44-picker-shrink-animation` @ `91bc471`, `status: in-review`, **no review record written yet** |
+| Blockers | None. OBD-44 needs a fresh reviewer round 1 (Tier B, UI); no other work is gated on it |
+| Next action | Taras: "review OBD-44, +250k" (land the open branch) — or start Sprint 3 software half: "run Sprint 3, +900k". Sprint 3's hardware gates (🖐 OBD-22a/22b/26) still need the van/dongle |
 
 ## Wave board
 
@@ -27,7 +27,9 @@
 | Sprint 2a — Protocol (Tier A, 2 batched branches) | +900k | ✅ done 2026-08-11 | ~1.1M | 4 merged / 0 rolled |
 | Sprint 2b — BLE (Tier A, 17+18 batched; 19 solo) | +900k | 🔄 17+18 merged 2026-08-10; OBD-19 rolled to 2b-2 | ~1.15M | 2 merged / OBD-19 rolled |
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ✅ done 2026-08-11 | ~1.0M | 2 merged / 0 rolled |
-| Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ blocked: needs 2a+2b | — | — |
+| Ad-hoc — OBD-42 swap carousel | ~600k est | ✅ done 2026-08-11 | ~915k | 1 merged / 0 rolled |
+| Ad-hoc — OBD-44 shrink animation + OBD-45 dual-channel builds | (unbudgeted) | 🔄 OBD-45 merged 2026-08-11; **OBD-44 in-review, unreviewed** | — | 1 merged / 1 in flight |
+| Sprint 3 — Real Van (software half, mostly Tier A) | +900k | ⬜ unblocked (2a+2b done); not started | — | — |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
@@ -83,6 +85,15 @@ Status legend: ⬜ not started · 🔄 in progress · ✅ done · ⛔ blocked (n
 
 - [x] OBD-20: 5-min sparklines — pure ring buffer + downsampler, per-gauge StateFlows (recomposition-isolation mutation-tested), gap breaks — merged cc35306; true frame timing deferred to OBD-34 device macrobenchmark (documented)
 - [x] OBD-21: settings — gauge order/visibility, thresholds (natural-unit storage, drift-proof toggles through 4 review rounds), units, keep-screen-on, poll rate; DataStore w/ corruption handler; live recolor end-to-end — merged cc35306
+
+## Ad-hoc / backlog (feature requests filed after Sprint 2)
+
+- [x] OBD-42: in-place gauge swap — long-press carousel picker — merged 71ab896
+- [x] OBD-45: dual-channel builds — develop branch + dev/test APK alongside master — merged ecbafa9
+- [ ] OBD-44: picker-entry shrink animation (`ui/44-picker-shrink-animation` @ 91bc471) — **in-review, round 1 not yet written.** Tier B (app module, established pattern; OBD-42 review found real state bugs, so no tier drop yet)
+- [ ] OBD-43: standard PIDs — engine load (0104) + throttle position (0111) — protocol-agent, backlog
+- [ ] OBD-40: user-defined PID gauges (add gauges from inside the app) — ui-agent, backlog
+- [ ] OBD-41: live PID discovery session → committed OM642 code database — orchestrator, backlog (🖐 needs the van)
 
 ## Sprint 3 — Real Van
 
