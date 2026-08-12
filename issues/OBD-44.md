@@ -4,7 +4,7 @@ title: Picker-entry shrink animation — multitasking-style scale-down on long-p
 module: app
 owner: ui-agent
 sprint: adhoc
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

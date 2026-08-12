@@ -131,7 +131,9 @@ the gate; `src/test*/` intentionally stays out of scope, matching prior behavior
     `Column`. Tiles are now rendered by iterating `gaugeOrder` (OBD-21, defaults to the original
     hardcoded coolant/trans/oil/boost order/visibility) through a `GaugeSlot` dispatcher that
     picks `GaugeTile` or `BoostTile` (arc, −2..+18 PSI, always neutral-colored — see
-    `BoostArc.kt`), or (OBD-42) `GaugePickerTile`, per id. Each tile exposes a
+    `BoostArc.kt`) per id — always, whether or not that tile is picking (OBD-44: see "Gauge
+    swap picker" below for why there is no longer a separate picker-mode composable to dispatch
+    to). Each tile exposes a
     `testTag("gauge-<id>")` root with a `stateDescription` semantics property carrying the
     threshold zone name, plus `testTag("gauge-<id>-label")`/`testTag("gauge-<id>-value")` on the
     label/value text, and (OBD-20, when a `sparklines` entry exists for that id) a
@@ -343,15 +345,10 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   hardware-verified.
 - `DashboardScreen.kt` — `GaugeTileGrid` (the landscape `Row`/portrait `Column` loop extracted
   out of `GaugeDashboard`'s own body) still `key`s each `visibleIds` entry by its own id
-  (unchanged, OBD-21's reorder-in-settings needs that stable identity), and `GaugeSlot` now
-  dispatches through an `AnimatedContent(targetState = isPicking)` between the normal tile and
-  `GaugePickerTile` — a fade+scale toward 0.85 (`gaugePickerContentTransition` in
-  `GaugePicker.kt`) that reads as the gauge sinking into, and rising back out of, its own frame.
-  **A swap-select is not animated across that same boundary** — see `GaugeTileGrid`'s KDoc:
-  swapping changes *which id* occupies a position, and `key(id)` tears the picking composable's
-  instance down the moment the persisted `gaugeOrder` reflects that, so there's no single
-  composable instance alive spanning "before" and "after" to cross-fade. `GaugePickerTile`
-  approximates the owner's "rising card" ideal locally instead (see `GaugePicker.kt` below).
+  (unchanged, OBD-21's reorder-in-settings needs that stable identity). `GaugeSlot`'s picker-mode
+  dispatch was rewritten for OBD-44 (see "OBD-44: picker-entry shrink animation" below) — it no
+  longer swaps between two different composables via `AnimatedContent`; `GaugeTile`/`BoostTile`
+  is now the ONE composable that renders for `id`, always, whether or not that tile is picking.
   `GaugeSlot` falls back to `GaugeTileUiState.placeholder(id, GAUGE_CATALOG_BY_ID[id]?.label ?:
   id)` instead of skipping the render entirely when `uiState.tileFor(id)` is null (review round-1
   MINOR M3): `DashboardUiState.Loading` only carries the four core placeholders, so a tile freshly
@@ -373,16 +370,19 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   boundary — semantics actions and the `clickable` modifier family are independent concerns) so
   the long-press-to-swap interaction is at least discoverable to TalkBack; before that NIT, the
   feature was entirely invisible to accessibility services even though touch already worked.
-  `onTap` fires unconditionally (a no-op when no tile is picking) — this is how tapping a
-  *different* live tile also dismisses an open picker, one of the "tap outside the tile"
-  affordances (a fifth exists too — see "Known limitations" below). `GaugeDashboard` itself owns
-  `pickerTileId` (which tile, if any, is picking — at most one), a
+  OBD-44 replaced the direct `gaugeTileInteraction` call inside `GaugeTile`/`BoostTile` with
+  `GaugePicker.kt`'s `Modifier.pickerAwareInteraction`, which dispatches to
+  `gaugeTileInteraction` while normal and to a plain tap-only-dismiss contract while picking (see
+  below) — `onTap` still fires unconditionally in the normal branch (a no-op when no tile is
+  picking), which is how tapping a *different* live tile also dismisses an open picker, one of
+  the "tap outside the tile" affordances (a fifth exists too — see "Known limitations" below).
+  `GaugeDashboard` itself owns `pickerTileId` (which tile, if any, is picking — at most one), a
   `BackHandler(enabled = pickerTileId != null)` for the back-gesture dismiss path, and a
   full-size invisible `testTag("gauge-picker-scrim")` `Box` (drawn *behind* the tile `Column` in
   z-order, so every tile's own pointer input still wins within its own bounds — the scrim is only
   reachable through the gaps) for the tap-outside dismiss path.
   **Review round-1 M1**: a completed swap replaces `pickerTileId`'s own gaugeOrder entry, which
-  tears that id's `key(id)`-scoped subtree down (`GaugePickerTile`'s own `LaunchedEffect`
+  tears that id's `key(id)`-scoped subtree down (`GaugePickerChrome`'s own `LaunchedEffect`
   included) *before* its 220 ms-delayed `onDismiss()` ever runs — left unhandled, `pickerTileId`
   stays pinned to an id no longer on screen forever, so the invisible scrim + armed `BackHandler`
   silently eat the next back press/outside-tap, and if that id ever returns to `gaugeOrder`
@@ -391,19 +391,23 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   `GaugeDashboard` that clears `pickerTileId` the instant it's no longer in the visible id set,
   independent of the picker's own (now purely cosmetic) local dismiss timing — pinned by
   `GaugeSwapPickerTest`'s two `M1 -` cases.
-- `GaugePicker.kt` — `GaugePickerTile` (the carousel: a `LazyRow` with `rememberSnapFlingBehavior`
-  for snap-to-card scrolling and `contentPadding` for edge peek, so it's visually obvious there's
-  more to scroll) and `GaugeMiniCard` (one sunken candidate card: label + live value, zone-tinted
-  like a full `GaugeTile` — "feels alive, not like a menu", `issues/OBD-42.md`; review round-1
-  NIT: honors `isStale` the same way `GaugeTile` does — dimmed value text plus a small
-  `staleText` line when stale, so a mini-card never asserts a number more confidently than the
-  real dashboard tile would for the same reading). Three dismiss paths live partly here, partly
-  in `GaugeDashboard`: tapping the *current* gauge's own mini-card calls `onDismiss` directly;
-  the back gesture and tap-outside are `GaugeDashboard`'s (see above). Tapping any *other*
-  mini-card fires `onSelectCandidate` (persistence) **immediately**, then locally animates that
-  card scaling up to `SELECTED_RISE_SCALE` for `SWAP_RISE_ANIMATION_MS` (220 ms) before calling
-  `onDismiss` — see this section's "Known limitations" below for the honest caveat on what this
-  local animation can and can't guarantee.
+- `GaugePicker.kt` — `GaugePickerChrome` (OBD-44's rename of the pre-existing `GaugePickerTile`:
+  the frame background, caption, and a `LazyRow` with `rememberSnapFlingBehavior` for snap-to-card
+  scrolling + `contentPadding` for edge peek of the OTHER candidates only — the current gauge's own
+  card is no longer rendered here, see below) and `GaugeMiniCard` (one sunken candidate card:
+  label + live value, zone-tinted like a full `GaugeTile` — "feels alive, not like a menu",
+  `issues/OBD-42.md`; review round-1 NIT: honors `isStale` the same way `GaugeTile` does — dimmed
+  value text plus a small `staleText` line when stale, so a mini-card never asserts a number more
+  confidently than the real dashboard tile would for the same reading). Three dismiss paths live
+  partly here, partly in `GaugeDashboard`: tapping the *current* gauge (now the live, shrunk
+  `GaugeTile`/`BoostTile` itself — see "OBD-44" below) calls `onDismiss` directly; the back
+  gesture and tap-outside are `GaugeDashboard`'s (see above). Tapping any *other* mini-card fires
+  `onSelectCandidate` (persistence) **immediately**, then locally animates that card scaling up to
+  `SELECTED_RISE_SCALE` for `SWAP_RISE_ANIMATION_MS` (220 ms) before calling `onDismiss` — see
+  this section's "Known limitations" below for the honest caveat on what this local animation can
+  and can't guarantee. **Unchanged by OBD-44 on purpose**: `issues/OBD-44.md`'s AC is explicit
+  that selecting a DIFFERENT candidate keeps this exact pre-existing "rise" treatment; only the
+  CURRENT gauge's own entry/exit got the new shrink treatment.
 - `AppSettings.kt` — `AppSettings.withGaugeSwapped(oldId, newId)`: pure, replaces the `gaugeOrder`
   entry named `oldId` with `newId`, keeping its `visible`/position, no-op if `oldId` isn't
   present. `DashboardViewModel.swapGauge(oldId, newId)` is the only production caller, round-
@@ -442,7 +446,7 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
 
 ### Known limitations (OBD-42)
 
-- The swap-select "confirm, rise, dismiss" local animation in `GaugePickerTile` fires
+- The swap-select "confirm, rise, dismiss" local animation in `GaugePickerChrome` fires
   `onSelectCandidate` (persistence) immediately but only calls `onDismiss` after a fixed 220 ms —
   giving the real `gaugeOrder` write a head start to round-trip through `SettingsRepository`
   before the picker actually closes and `key(id)` swaps the tile's composable instance to the new
@@ -473,6 +477,167 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   "gauge visibility only changes via explicit user action" story above, but worth flagging as a
   real UX gap: a user who doesn't understand the picker (or forgets which tile to long-press) has
   no other way back.
+
+### OBD-44: picker-entry shrink animation
+
+Taras's own words: "I want the original gauge to sort of shrink into the frame of the card sort
+of like when you do multi tasking on android or iOS." OBD-42's fade+scale-toward-0.85
+`AnimatedContent` crossfade (`gaugePickerContentTransition`, now deleted) read as a generic sink,
+not a switcher-style shrink into a specific target, and it crossfaded between two DIFFERENT
+composables (`GaugeTile` and `GaugePickerTile`'s current-card) — a content pop the AC explicitly
+rules out ("not a crossfade to a different mini composable").
+
+**Architecture — one composable, never swapped.** `GaugeSlot` no longer branches on `isPicking`
+to choose between two composables. `GaugeTile`/`BoostTile` is the ONE instance rendering `id`
+across the tile's entire picker lifecycle — mounted once, never torn down and remounted when
+picker mode opens or closes. What changes is purely visual, driven by a single
+`rememberPickerShrinkProgress(isPicking, label)` (`GaugePicker.kt`) — an `animateFloatAsState`
+wrapper, 0f (normal tile) → 1f (fully in picker/mini-card state) — applied to that one instance's
+own `Modifier.pickerShrinkLayer(progress, fullSize, targetBounds, shape, elevation)`: a single
+`graphicsLayer` that scales+translates the WHOLE tile (background, border, content, all of it)
+from filling the tile's own bounds down to sitting exactly inside `targetBounds`, with `shape`
+(interpolated corner radius) and `shadowElevation` riding the same layer — the AC's "corner
+radius and elevation/shadow interpolate alongside scale." Because it's one `graphicsLayer` on one
+never-recreated composable, the value `Text` is the same composition node the whole time: a
+reading pushed mid-animation recomposes it immediately, live, mid-shrink — pinned by
+`GaugeSwapPickerTest`'s `gauge shrinks continuously through mid-animation and stays live while it
+does` (see "Round-2 review fixes" below for how this test's timing was made non-vacuous — pauses
+`mainClock`, triggers the long-press, advances a small delta from wherever the gesture itself left
+the clock, pushes a fresh reading into the live data source, and asserts the picker-card-tagged
+value text already reflects it, then confirms that check really did land mid-flight).
+
+**Where "the mini-card position" comes from.** `GaugePickerChrome` reserves the current gauge's
+landing slot as an invisible (`alpha(0f)`), untagged (`GaugeMiniCard(..., tagged = false)`) real
+mini-card — sized exactly like a real one (same label/value/stale-line content) rather than a
+guessed constant — and reports its position via `onGloballyPositioned`. `GaugeSlot` converts that
+into a `Rect` in its OWN `GaugeTile`/`BoostTile` coordinate space (`LayoutCoordinates
+.localPositionOf`, anchored on that same live tile's own pre-transform coordinates, captured via
+a second `onGloballyPositioned` positioned OUTSIDE/before the `pickerShrinkLayer` modifier in the
+chain so it reports the untransformed layout slot) and feeds it in as `targetBounds`. Scaling and
+translating around each rect's own center makes the corners land exactly on `targetBounds` at
+`progress == 1f` — not an approximation.
+
+**Same node, different identity once settled.** `GaugePicker.kt`'s
+`Modifier.pickerAwareInteraction` and `pickerAwareValueTag` switch `GaugeTile`/`BoostTile`'s own
+outer/`value` testTags between the normal (`gauge-$id`/`gauge-$id-value`, long-press-to-enter +
+pass-through tap) and picker-card (`gauge-picker-card-$id`/`-value`, tap-only-to-dismiss,
+matching `GaugeMiniCard`'s pre-existing contract exactly) identities the instant `isPicking`
+flips — so the settled shrink target IS the picker's "current" card as far as
+`onNodeWithTag`/TalkBack are concerned, never a second, separately-tagged node fighting the first
+for a lookup match. Every existing `GaugeSwapPickerTest`/`GaugeSwapDemoTest`/
+`GaugePickerScreenshotTest` assertion on those tags passed unmodified against this rewrite.
+
+**Reduced motion.** `rememberPickerShrinkAnimationSpec` reads
+`Settings.Global.ANIMATOR_DURATION_SCALE` (Compose's own animation clock, unlike the View system,
+does NOT honor this automatically — a real, documented gap) and resolves to `snap()` at scale 0,
+so the shrink/grow becomes an instant jump to the correct end state with no intermediate frames —
+no window in which a composable can be left stuck mid-scale. Pinned by
+`GaugeSwapPickerTest`'s `animator duration scale 0 snaps to the picker-card end state the instant
+the long-press registers` (Robolectric's `Settings.Global` shadow is a real, consistent in-memory
+store, so `putFloat` before composing and `getFloat` from `rememberPickerShrinkAnimationSpec`
+agree) — see "Round-2 review fixes" below for why this test drives the press manually instead of
+using the `longClick()` convenience.
+
+**A Compose `Box` gotcha this rewrite ran into and fixed**: `GaugeSlot`'s outer `Box` now has TWO
+children when picking — `GaugePickerChrome` (`Modifier.matchParentSize()`, must never influence
+this `Box`'s own resolved size) and the live tile (must either fill it, in landscape's
+weight-driven layout, or drive it from its own content height, in portrait's scrollable-column
+layout — exactly `AnimatedContent`'s old behavior). `Box`'s default `propagateMinConstraints =
+false` LOOSENS a plain (non-`matchParentSize`) child's min constraints to 0 regardless of what the
+`Box` itself received — which left the live tile sized to wrap its own content instead of filling
+the weighted landscape slot (caught by `DashboardScreenshotTest`'s landscape reference going
+red across nearly the whole tile in the Roborazzi diff — the fix is `Box(modifier, 
+propagateMinConstraints = true)`). Verified byte-for-byte unaffected: `DashboardScreenshotTest`'s
+two references (which never enter picker mode) are untouched — `pickerShrinkLayer`, the border,
+and every interpolated visual are no-ops whenever `progress == 0f`, so a normal tile renders
+through the exact same code path it always did. Only `gauge_picker_mode.png`
+(`GaugePickerScreenshotTest`) needed re-recording, since the settled picker-mode frame's current
+card genuinely looks different now (a scaled-down full tile, not `GaugeMiniCard`'s own smaller
+font sizing) — by design, per the AC.
+
+**Known limitation**: the first composition frame after a long-press, before
+`GaugePickerChrome`'s ghost has reported its position via `onGloballyPositioned`, briefly renders
+the full tile un-transformed (no guessed position) rather than animating from frame one; the
+transform picks up the next frame, comfortably inside the ~220 ms shrink and not perceptible in
+manual verification. The interpolated corner radius is not optically compensated for the
+concurrent scale (i.e. the on-screen radius mid-animation is not pixel-exact against what it
+would be if drawn at that size natively) — acceptable for a sub-quarter-second transient; only
+the settled end states are test-pinned, per the issue's own self-test plan.
+
+#### Round-2 review fixes
+
+- **BLOCKER B1 (anisotropic squash)**: `pickerShrinkLayer`'s independent per-axis scale is exactly
+  right for the OUTER surface's bounds (a rounded rect legitimately morphing from the tile's own
+  portrait-tall aspect to the mini-card slot's landscape-wide one isn't itself a defect), but
+  applying that SAME scale to the label/value CONTENT read as a vertically-crushed smear once the
+  two aspects diverged enough (measured: 2.87× distortion in the review's landscape config).
+  Fixed with `Modifier.pickerShrinkContentCounterScale` (`GaugePicker.kt`), applied to the content
+  `Column` only: computes the uniform (`min` of the two per-axis targets) scale `pickerShrinkLayer`
+  would need for an UNDISTORTED shrink, then divides it by the outer transform's own per-axis
+  scale — nested `graphicsLayer`s compose multiplicatively, so the content's net scale becomes
+  uniform (letterboxed within the surface) regardless of how anisotropic the outer transform is.
+  Pinned by `GaugeSwapPickerTest`'s new aspect-ratio test (the settled current-card's own bounds,
+  compared against a real `GaugeMiniCard` sitting beside it in the same carousel) and visually by
+  the re-recorded `gauge_picker_mode.png`.
+- **MAJOR M1 (vacuous reduced-motion test)**: the round-1 version called `waitForIdle()`, which
+  auto-advances through a `tween` too, so it never actually exercised the `snap()` branch
+  (mutation-confirmed: deleting that branch didn't fail it). A first fix attempt — pause
+  `mainClock`, `longClick()`, advance one frame — was ALSO vacuous: `longClick()`'s own synthetic
+  gesture advances `mainClock` by roughly its long-press timeout (~630 ms) as part of recognizing
+  the gesture at all, comfortably longer than `PICKER_SHRINK_MS` (220 ms), so a real tween would
+  have settled too. The real fix drives the press manually (`down()` + polled `advanceEventTime`-
+  free `mainClock.advanceTimeBy` steps against `onRoot()`, not the tile's own testTag — which
+  switches identity mid-gesture) and checks bounds the INSTANT the picker-card identity appears —
+  under `snap()` the shrink must already be (near) settled at that instant; under any tween it
+  cannot be.
+- **MAJOR M2 (mid-shrink test landing near settle)**: `longClick()`'s ~630 ms internal clock
+  advance meant a round-1 fixed delta from an assumed `t = 0` landed ~5 ms before the animation
+  actually settled — passing even though it wasn't exercising "mid-flight" at all. Fixed to advance
+  a small delta from `mainClock.currentTime` captured right after the gesture, and to assert
+  mid-flight-ness explicitly: captured bounds before the press, shortly after, and once settled,
+  asserting the "shortly after" bounds are strictly between the other two on both height (canary
+  for a broken/incomplete scale) and vertical center position (canary for a broken/zeroed
+  translation — independent `graphicsLayer` properties, so a height-only check wouldn't catch a
+  translation regression).
+- **MAJOR M3 (single-surface property unpinned)**: added `LocalGaugeTileMountProbe`
+  (`DashboardScreen.kt`) — a test-only `CompositionLocal<() -> Unit>`, no-op by default, that
+  `GaugeTile`/`BoostTile` fire once via `remember { }` (i.e. once per composition MOUNT, never on
+  an in-place recomposition). A new test asserts the fired count stays constant across a
+  long-press + dismiss cycle, directly catching a regression as narrow as wrapping either tile's
+  call site in `key(isPicking) { }` — which value/tag assertions alone would eventually read
+  correctly against too.
+- **Mutation ledger** (`cp`-backup/restore, never `git checkout`, per process): mutation B
+  (delete the `snap()` branch) → killed by the rewritten M1 test. Mutation D (zero out
+  `translationX`/`translationY` in `pickerShrinkLayer`) → killed by the rewritten M2 test's
+  position-delta assertion. Mutation E (`key(isPicking)` around `GaugeSlot`'s
+  `GaugeTile`/`BoostTile` call sites) → killed by the new M3 mount-probe test.
+- **N1** (`GaugeSlot`'s `onCurrentSlotPositioned`): guards `localPositionOf` with
+  `anchor.isAttached && slotCoordinates.isAttached` — a callback can fire after either side has
+  left the layout tree, and `localPositionOf` on a detached `LayoutCoordinates` throws.
+- **N2** (`GaugePickerChrome`): candidate taps now check `isPicking`, not just `progress > 0f` —
+  the chrome stays composed (fading out) for the whole reverse grow-back animation after a
+  dismiss, during which `isPicking` has already flipped false; without the extra check a candidate
+  tapped during that window could fire a swap-select on an already-closing tile.
+- **N5** (`pickerShrinkVisuals`): `contentPadding` is no longer interpolated — it's a real
+  `Modifier.padding`, and animating it toward `MINI_CARD_PADDING_DP` shrank the picking tile's own
+  reported layout height mid-animation (portrait's height is content-driven), visibly jumping
+  every tile below it in the scrollable column before the shrink even reached its target.
+- **N6** (`pickerAwareInteraction`): the picking branch now carries the same `stateDescription`/
+  `onClick` semantics the normal branch does (minus `onLongClick`, meaningless while picking) —
+  matches `GaugeMiniCard`'s own historical gap, but cheap to close here.
+- **N7**: `rememberPickerShrinkVisuals` renamed to `pickerShrinkVisuals` — it never actually
+  `remember`ed anything (every call recomputes fresh, and `progress` changes every animation
+  frame anyway, so memoizing would never hit its cache).
+- **Declined, with rationale**: **N3** (a real `snap()` still leaves a 1-frame window where
+  `progress == 1f` but `targetBounds` hasn't arrived yet, since that's a separate layout-pass
+  dependency, not an animation-timing one) — not fixed; the KDoc on
+  `rememberPickerShrinkAnimationSpec`/`pickerShrinkLayer` was corrected instead to describe this
+  precisely rather than overclaim "no intermediate frames whatsoever." **N4** (label/stale/
+  sparkline testTags stay `gauge-$id-*` always, never switching to a `gauge-picker-card-$id-*`
+  equivalent, unlike the outer/value tags) — left as-is: no test or TalkBack behavior depends on
+  those specific tags switching, and matching `GaugeMiniCard`'s OWN convention exactly would mean
+  DROPPING the label tag entirely while picking (it has none), a larger behavior change than
+  round 2's scope justified.
 
 ## Debug console (OBD-19, `src/debug/`)
 
