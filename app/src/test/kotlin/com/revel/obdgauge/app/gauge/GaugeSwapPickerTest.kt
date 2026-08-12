@@ -509,6 +509,132 @@ class GaugeSwapPickerTest {
         composeTestRule.onNodeWithTag("gauge-picker-card-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
         assertEquals("dismissing must not remount any tile", initialMounts, mountCount)
+
+        // OBD-47: a REAL swap (not just enter/dismiss) must still mount the incoming tile
+        // exactly ONCE — no double-mount from the grow-in entry-state machinery (e.g. a second
+        // composable spun up just to hold the grow Animatable, or a key(isGrowingIn) { } wrapper
+        // around GaugeTile itself, which would defeat the "single surface" guarantee just as
+        // surely as key(isPicking) { } would have for OBD-44).
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
+        settlePickerAnimation()
+
+        composeTestRule.onNodeWithTag("gauge-rpm").assertExists()
+        assertEquals(
+            "swapping coolant -> rpm should mount exactly one new tile (rpm), never more",
+            initialMounts + 1,
+            mountCount,
+        )
+    }
+
+    // --- OBD-47: swap-in grow animation ----------------------------------------------------
+
+    /**
+     * AC: "New gauge is live during grow... mirror the OBD-44 mid-flight test construction."
+     * Same shape as `gauge shrinks continuously through mid-animation and stays live while it
+     * does` above, reversed: [growStartBounds] is the TAPPED CANDIDATE's own mini-card rect
+     * (the grow's origin), [growEndBounds] is the settled full tile (the grow's destination),
+     * and [midBounds] — captured a small delta after the swap-in tile first mounts — must sit
+     * strictly between them, exactly like [assertMidFlight] already validates for the shrink
+     * direction (it doesn't care which end is temporally first, only that mid is geometrically
+     * between the two, moving toward the "settled" one and never past it).
+     *
+     * A plain `click()` (not `longClick()`) doesn't carry a built-in recognition delay the way
+     * `longClick()` does (see the shrink test's own KDoc) — the swap fires on `up()` — so this
+     * pauses the clock BEFORE tapping and advances exactly one frame first (long enough for the
+     * `key(id)` remount the tap triggers — a snapshot-state write, picked up on the NEXT
+     * recomposition, not synchronously inside the tap handler — to actually happen) before the
+     * small [MID_FLIGHT_DELTA_MS] delta that puts the grow itself partway through its own
+     * animation.
+     */
+    @Test
+    fun `swap-in grows continuously from the tapped candidate's rect and stays live while it does`() {
+        val dataSource = FixedReadingsVehicleDataSource(fixedReadings())
+        setDashboard(DashboardViewModel(dataSource, clock, PickerInMemorySettingsRepository()))
+
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        val growStartBounds =
+            composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().getBoundsInRoot()
+
+        lateinit var midBounds: DpRect
+        composeTestRule.mainClock.autoAdvance = false
+        try {
+            composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performTouchInput { click() }
+            // One frame so the key(id) remount (coolant -> rpm) actually happens, THEN a small
+            // delta so the grow's own tween has visibly moved — not a fixed absolute time, same
+            // rationale as MID_FLIGHT_DELTA_MS's own KDoc above.
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.mainClock.advanceTimeBy(MID_FLIGHT_DELTA_MS)
+            midBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
+
+            // Liveness: a reading pushed mid-grow must render through the SAME live composable,
+            // not a placeholder or a stale value frozen at swap time.
+            dataSource.readings.value =
+                dataSource.readings.value +
+                (PidIds.RPM to Reading(PidIds.RPM, MID_GROW_RPM_VALUE, Instant.EPOCH, stale = false))
+            composeTestRule.mainClock.advanceTimeByFrame()
+            composeTestRule.onNodeWithTag("gauge-rpm-value").assertTextEquals(MID_GROW_RPM_TEXT)
+
+            composeTestRule.mainClock.advanceTimeBy(SWAP_SETTLE_MS)
+        } finally {
+            composeTestRule.mainClock.autoAdvance = true
+        }
+        composeTestRule.waitForIdle()
+
+        val growEndBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
+        assertMidFlight(full = growEndBounds, mid = midBounds, settled = growStartBounds)
+    }
+
+    /**
+     * AC: "Snap path under animator-scale 0." Mirrors
+     * `animator duration scale 0 snaps to the picker-card end state the instant the long-press
+     * registers` above, for the grow direction: [rememberPickerShrinkAnimationSpec] resolves to
+     * `snap()` under `ANIMATOR_DURATION_SCALE = 0` regardless of which direction drives it (it's
+     * the SAME spec function — GaugeSlot's own KDoc), so the grow-in `Animatable` should already
+     * be at its settled (full-size) target the instant the swapped-in tile first appears, rather
+     * than lingering at (or near) the tapped candidate's mini-card size for even one visible
+     * frame. Polls in small steps (same pattern as the long-press version) rather than assuming
+     * a fixed frame count, since exactly how many frames elapse between the tap and the `key(id)`
+     * remount picking it up isn't a timing contract this test should depend on.
+     */
+    @Test
+    fun `animator duration scale 0 snaps a swap-in grow to full size the instant it mounts`() {
+        val context = composeTestRule.activity
+        val originalScale =
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
+        try {
+            setDashboard(newViewModel())
+            composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+            composeTestRule.waitForIdle()
+            val miniCardBounds =
+                composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().getBoundsInRoot()
+
+            composeTestRule.mainClock.autoAdvance = false
+            try {
+                composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performTouchInput { click() }
+                var waited = 0L
+                while (composeTestRule.onAllNodesWithTag("gauge-rpm").fetchSemanticsNodes().isEmpty()) {
+                    check(waited < LONG_PRESS_POLL_TIMEOUT_MS) { "swap-in tile never mounted" }
+                    composeTestRule.mainClock.advanceTimeBy(LONG_PRESS_POLL_STEP_MS)
+                    waited += LONG_PRESS_POLL_STEP_MS
+                }
+
+                val justMountedBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
+                assertTrue(
+                    "expected the grow to already be (near) full size under animator-scale 0, but height " +
+                        "${justMountedBounds.height} is still close to the mini-card's ${miniCardBounds.height}",
+                    justMountedBounds.height > miniCardBounds.height * MIN_SNAPPED_GROW_HEIGHT_FACTOR,
+                )
+            } finally {
+                composeTestRule.mainClock.autoAdvance = true
+            }
+            composeTestRule.waitForIdle()
+        } finally {
+            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, originalScale)
+        }
     }
 
     /**
@@ -584,6 +710,19 @@ class GaugeSwapPickerTest {
         const val MID_SHRINK_COOLANT_VALUE = 245.0
         const val MID_SHRINK_COOLANT_TEXT = "245°F"
         const val ASPECT_TOLERANCE = 0.05f
+
+        // OBD-47: a distinct rpm value from RPM_VALUE/RPM_TEXT below, so a mid-grow assertion
+        // that accidentally read the PRE-swap seed value (rather than a genuinely fresh push)
+        // would fail loudly instead of coincidentally matching.
+        const val MID_GROW_RPM_VALUE = 4100.0
+        const val MID_GROW_RPM_TEXT = "4100 RPM"
+
+        // A real snap() lands the grow-in Animatable at its target on its very first frame — the
+        // settled tile is many times taller than a 96dp-wide mini-card; a broken (tween-driven)
+        // implementation would still be near mini-card height at this instant. Not 1:1 against a
+        // measured full-tile height (like the shrink test's own factor-of-2 check) for the same
+        // reason that test uses one: just "clearly already grown," robust to exact layout math.
+        const val MIN_SNAPPED_GROW_HEIGHT_FACTOR = 2
 
         const val COOLANT_VALUE = 235.0
         const val TRANS_VALUE = 150.0

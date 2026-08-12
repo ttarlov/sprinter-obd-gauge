@@ -5,7 +5,7 @@ module: app
 owner: ui-agent
 sprint: adhoc
 track: small
-status: in-progress
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

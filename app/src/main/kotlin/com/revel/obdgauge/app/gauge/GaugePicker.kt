@@ -1,12 +1,16 @@
 // Review round-1 BLOCKER B1's fix (pickerShrinkContentCounterScale) pushed this file to 11
 // tightly-related functions, one over detekt's TooManyFunctions default — all of them are the
 // picker's shrink-animation primitives/chrome, cohesive by design; splitting further would spread
-// one feature's mechanics across more files for no readability gain.
+// one feature's mechanics across more files for no readability gain. OBD-47's grow-in additions
+// (rememberGaugeGrowInProgress/growTargetBoundsInLocalSpace/currentSlotBoundsFrom) are the exact
+// same primitives run in reverse — deliberately landed here rather than pushing DashboardScreen.kt
+// over ITS OWN TooManyFunctions/LongMethod budget instead.
 @file:Suppress("TooManyFunctions")
 
 package com.revel.obdgauge.app.gauge
 
 import android.provider.Settings
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -55,7 +59,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.onClick
@@ -67,6 +73,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.util.lerp
 import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
 import com.revel.obdgauge.model.PidDefinition
@@ -510,6 +517,14 @@ private const val CARD_SCALE_ANIMATION_MS = 150
  * immediately. Without this gate, a candidate card tapped during that ~300 ms grow-back window
  * (fading out, but still fully composed and hit-testable) would fire a swap-select on a tile
  * that's already in the process of closing.
+ *
+ * OBD-47: [onSelectCandidate] carries the tapped card's own on-screen bounds
+ * ([androidx.compose.ui.layout.boundsInRoot], captured synchronously in the tap handler,
+ * `null` only if that card somehow never reported a layout) alongside the id — this is the swap
+ * target's GROW-IN origin, read by `GaugeSlot`/`GaugeTileGrid` (`DashboardScreen.kt`) so the
+ * freshly key(id)-remounted tile can animate FROM that rect instead of hard-cutting in at full
+ * size. Captured here (before this whole subtree tears down as part of the swap) rather than
+ * re-derived after the remount, because after teardown there is no live node left to measure.
  */
 @Composable
 @Suppress("LongParameterList") // one param per input the carousel/dismiss/select wiring actually needs.
@@ -521,7 +536,7 @@ internal fun GaugePickerChrome(
     alpha: Float,
     isPicking: Boolean,
     onDismiss: () -> Unit,
-    onSelectCandidate: (String) -> Unit,
+    onSelectCandidate: (id: String, tappedBoundsInRoot: Rect?) -> Unit,
     onCurrentSlotPositioned: (LayoutCoordinates) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -574,10 +589,10 @@ internal fun GaugePickerChrome(
                     candidates = candidates,
                     tileFor = tileFor,
                     selectedId = selectedId,
-                    onCandidateTapped = { id ->
+                    onCandidateTapped = { id, tappedBoundsInRoot ->
                         if (isPicking && selectedId == null) {
                             selectedId = id
-                            onSelectCandidate(id)
+                            onSelectCandidate(id, tappedBoundsInRoot)
                         }
                     },
                     modifier = Modifier.weight(1f),
@@ -592,6 +607,13 @@ internal fun GaugePickerChrome(
  * keep that function under detekt's `LongMethod` threshold. [selectedId]/[onCandidateTapped]
  * implement OBD-42's unchanged "confirm, rise, dismiss" swap-select beat — see
  * [GaugePickerChrome]'s KDoc.
+ *
+ * OBD-47: each item tracks its own last-reported [androidx.compose.ui.layout.boundsInRoot] in a
+ * `remember` scoped to its own `key(pid.id)` item identity (the same key [items] itself uses),
+ * so a scroll/recompose of ONE card never clobbers another's captured bounds. Read at tap time
+ * (still live — nothing has torn down yet) and handed to [onCandidateTapped] as the swap's
+ * grow-in origin; `null` only in the (effectively unreachable in practice — a card must lay out
+ * before it can be hit-tested at all) case a tap somehow lands before the first layout pass.
  */
 @Composable
 @Suppress("LongParameterList") // one param per input the carousel/select wiring actually needs.
@@ -600,7 +622,7 @@ private fun PickerCandidateCarousel(
     candidates: List<PidDefinition>,
     tileFor: (String) -> GaugeTileUiState?,
     selectedId: String?,
-    onCandidateTapped: (String) -> Unit,
+    onCandidateTapped: (id: String, boundsInRoot: Rect?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -618,11 +640,16 @@ private fun PickerCandidateCarousel(
                 animationSpec = tween(CARD_SCALE_ANIMATION_MS),
                 label = "gauge-picker-card-scale-${pid.id}",
             )
+            var cardBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
             GaugeMiniCard(
                 tile = tile,
                 isCurrent = false,
-                onClick = { onCandidateTapped(pid.id) },
-                modifier = Modifier.width(MINI_CARD_WIDTH_DP.dp).scale(scale),
+                onClick = { onCandidateTapped(pid.id, cardBoundsInRoot) },
+                modifier =
+                    Modifier
+                        .width(MINI_CARD_WIDTH_DP.dp)
+                        .scale(scale)
+                        .onGloballyPositioned { cardBoundsInRoot = it.boundsInRoot() },
             )
         }
     }
@@ -704,4 +731,75 @@ internal fun GaugeMiniCard(
             }
         }
     }
+}
+
+/**
+ * OBD-47: the grow-in counterpart of [rememberPickerShrinkProgress] — same [progress] semantic
+ * (0 full tile, 1 mini-card), same [rememberPickerShrinkAnimationSpec] (so grow and shrink are
+ * byte-identical in duration/easing/animator-scale-0 handling), but STARTING at `1f` and
+ * animating toward `0f` exactly once, driven by [incomingGrowOrigin] being non-null rather than
+ * by an `isPicking` boolean (there is no "picking" happening while a freshly-swapped-in tile
+ * grows — see `GaugeSlot`'s KDoc in `DashboardScreen.kt`). `null` means this mount was never the
+ * target of a swap-select tap — the [Animatable] starts and stays at `0f`, a no-op indistinguishable
+ * from every pre-OBD-47 mount.
+ *
+ * [id] keys BOTH `remember`s so this is evaluated fresh (and [androidx.compose.animation.core.Animatable.animateTo]
+ * launched fresh) exactly once per `GaugeSlot` mount — a plain in-place recomposition of the SAME
+ * id (e.g. a reading update) must never restart the grow.
+ */
+@Composable
+internal fun rememberGaugeGrowInProgress(
+    id: String,
+    incomingGrowOrigin: Rect?,
+): Float {
+    val growAnimatable = remember(id) { Animatable(if (incomingGrowOrigin != null) 1f else 0f) }
+    val growSpec = rememberPickerShrinkAnimationSpec()
+    LaunchedEffect(id) {
+        if (incomingGrowOrigin != null) {
+            growAnimatable.animateTo(targetValue = 0f, animationSpec = growSpec)
+        }
+    }
+    return growAnimatable.value
+}
+
+/**
+ * Converts [originInRoot] (OBD-47's captured grow-in origin — see `GaugeSlot`'s KDoc — in
+ * Compose-ROOT space, which survives the tapped candidate's own subtree tearing down, unlike a
+ * live [LayoutCoordinates] reference) into the local frame [pickerShrinkLayer] itself needs: an
+ * origin at [tileCoordinates]'s own top-left, matching its `fullSize` frame. Mirrors
+ * [AnisotropicRoundedCornerShape] and friends' own "no-op until known" pattern — `null` until
+ * [tileCoordinates] has laid out at least once, which [pickerShrinkLayer] already treats as "no
+ * live target yet" and no-ops on.
+ */
+internal fun growTargetBoundsInLocalSpace(
+    originInRoot: Rect?,
+    tileCoordinates: LayoutCoordinates?,
+): Rect? {
+    if (originInRoot == null || tileCoordinates == null || !tileCoordinates.isAttached) {
+        return null
+    }
+    return Rect(originInRoot.topLeft - tileCoordinates.positionInRoot(), originInRoot.size)
+}
+
+/**
+ * OBD-46/47 shared coordinate math: converts [GaugePickerChrome]'s current-slot ghost
+ * (`slotCoordinates`) into BOTH the LOCAL-space rect [pickerShrinkLayer] needs (anchored to
+ * [tileCoordinates] — unchanged from OBD-44/46) and the ROOT-space rect OBD-47's grow-in
+ * fallback origin needs (`GaugeSlot`'s own KDoc) — one ghost-position report, two consumers.
+ * Either half of the returned pair may be `null`: review round-1 N1's "both coordinates must
+ * still be attached" guard applies to the local half only (it needs BOTH nodes alive at once);
+ * the root half only needs [slotCoordinates] itself attached.
+ */
+internal fun currentSlotBoundsFrom(
+    tileCoordinates: LayoutCoordinates?,
+    slotCoordinates: LayoutCoordinates,
+): Pair<Rect?, Rect?> {
+    val local =
+        tileCoordinates
+            ?.takeIf { it.isAttached && slotCoordinates.isAttached }
+            ?.let { anchor ->
+                Rect(anchor.localPositionOf(slotCoordinates, Offset.Zero), slotCoordinates.size.toSize())
+            }
+    val root = slotCoordinates.takeIf { it.isAttached }?.boundsInRoot()
+    return local to root
 }
