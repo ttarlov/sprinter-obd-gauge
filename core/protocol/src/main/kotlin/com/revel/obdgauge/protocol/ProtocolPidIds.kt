@@ -5,10 +5,11 @@ package com.revel.obdgauge.protocol
  * (yet) name.
  *
  * `PidIds` is the frozen contract layer and holds the ids the UI already binds to — `coolant`,
- * `rpm`, `baro`, plus the mode-22 and computed channels. The three PIDs below are polled by the
- * protocol layer but not yet surfaced as their own gauges (`map` feeds the computed boost
- * channel; `iat` and `speed` are registry-complete but unbound), so their ids live here rather
- * than forcing a contract change on a frozen file.
+ * `rpm`, `baro`, plus the mode-22 and computed channels. The PIDs below are known to the
+ * protocol layer but not surfaced as their own gauges by the frozen contract (`map` feeds the
+ * computed boost channel; `iat`, `speed`, `engineLoad` and `throttle` are registry-complete and
+ * available to OBD-42's swap catalog), so their ids live here rather than forcing a contract
+ * change on a frozen file.
  *
  * Naming follows `PidIds`' convention exactly: the constant is the SCREAMING_SNAKE form of a
  * camelCase id string, and abbreviations stay abbreviated (`PidIds.BARO = "baro"`, so
@@ -24,4 +25,20 @@ object ProtocolPidIds {
 
     /** Vehicle speed (standard PID `010D`), km/h. */
     const val SPEED: String = "speed"
+
+    /** Calculated engine load (standard PID `0104`), percent. */
+    const val ENGINE_LOAD: String = "engineLoad"
+
+    /** Throttle position (standard PID `0111`), percent. See [PidRegistry.throttlePosition]. */
+    const val THROTTLE: String = "throttle"
+
+    /**
+     * Transmission fluid temperature read out of the TCU's KWP `21 30` record (OBD-49), °C.
+     *
+     * Deliberately **not** [com.revel.obdgauge.model.PidIds.TRANS_TEMP]: that id belongs to the
+     * X-Gauge-derived hypothesis in [MercedesPidRegistry], and the two are different decodes of
+     * the same request. See [TcuRecordRegistry] for which one the 2026-08-12 capture supports and
+     * why this branch does not silently swap them.
+     */
+    const val TRANS_TEMP_RECORD: String = "transTempRecord"
 }

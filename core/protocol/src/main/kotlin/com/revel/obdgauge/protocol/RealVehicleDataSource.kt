@@ -75,13 +75,38 @@ import kotlin.time.toKotlinDuration
  * @param onEvent sink for typed diagnostics; see [PollEvent]. Called from the loop coroutine, so
  *   it must not block.
  */
-class RealVehicleDataSource(
+class RealVehicleDataSource internal constructor(
     private val link: ObdLink,
     private val scope: CoroutineScope,
-    private val config: PollConfig = PollConfig(),
-    private val clock: Clock = Clock.systemUTC(),
-    private val onEvent: (PollEvent) -> Unit = {},
+    private val config: PollConfig,
+    private val clock: Clock,
+    private val onEvent: (PollEvent) -> Unit,
+    /**
+     * Channels resolvable in addition to [PidCatalog]'s. **Always empty in production**, and
+     * unreachable outside this module — the public constructor below cannot set it.
+     *
+     * It exists because the round-1 review's falsified-decode gate takes the catalog's *only*
+     * manufacturer channel out of circulation: `transTemp`'s X-Gauge decode was falsified, so it
+     * is never sent and never stored. That would silently delete the coverage of the manufacturer
+     * *pipeline* — the five-command framed sequence running inside a cycle, a rejected `ATSH`
+     * costing only that channel, an unacknowledged restore being retried — which is scheduler
+     * behaviour that has nothing to do with which spec rides on it. Tests supply their own
+     * vehicle for that pipeline rather than the pipeline going untested.
+     *
+     * The property `start` is built on survives intact: `start` still takes only ids, framing and
+     * scaling still come from a registry rather than from a caller's lambda, and `:app` cannot
+     * reach this list at all.
+     */
+    private val extraChannels: List<PolledPid>,
 ) : VehicleDataSource {
+    constructor(
+        link: ObdLink,
+        scope: CoroutineScope,
+        config: PollConfig = PollConfig(),
+        clock: Clock = Clock.systemUTC(),
+        onEvent: (PollEvent) -> Unit = {},
+    ) : this(link, scope, config, clock, onEvent, emptyList())
+
     private val mutableReadings = MutableStateFlow<Map<String, Reading>>(emptyMap())
     override val readings: StateFlow<Map<String, Reading>> = mutableReadings.asStateFlow()
 
@@ -127,13 +152,41 @@ class RealVehicleDataSource(
         val needed = requested.flatMap { id -> listOf(id) + PidCatalog.dependenciesOf(id) }.distinct()
         val polled =
             needed.mapNotNull { id ->
-                val resolved = PidCatalog.byId(id)
+                val resolved = PidCatalog.byId(id) ?: extraChannels.firstOrNull { it.definition.id == id }
                 if (resolved == null && id != PidIds.BOOST) {
                     onEvent(PollEvent.UnknownPid(id))
                 }
                 resolved
             }
+        reportUnavailable(needed)
         return PollPlan(polled = polled, computeBoost = computeBoost)
+    }
+
+    /**
+     * Announces, before a single command goes out, every channel in the plan that the hardware
+     * survey has already falsified — on this van, `map` and `iat`, and therefore `boost`.
+     *
+     * Walks the *expanded* set, so asking for boost reports both halves of the story: `boost` is
+     * [ChannelAvailability.MissingInputs]`(["map"])` — the consequence a gauge has to render —
+     * and `map` is [ChannelAvailability.UnsupportedByVehicle] with its capture — the cause.
+     *
+     * Once per session, at plan time, because that is when the answer is known: it comes from a
+     * capture, not from the wire. Deriving it instead from "boost has not been published for a
+     * while" would emit continuously, arrive late, and confuse a permanently absent PID with a
+     * reading that simply has not landed yet — which `readings` already expresses by absence.
+     *
+     * The unsupported PIDs are still polled. The survey is a fact about one vehicle recorded in
+     * [PidCatalog], and letting it *silence* a request would mean a wrong entry in that table
+     * could never be discovered; a `NO DATA` per cycle is one cheap round trip that keeps the
+     * evidence flowing.
+     */
+    private fun reportUnavailable(needed: List<String>) {
+        for (id in needed) {
+            val availability = PidCatalog.availabilityOf(id)
+            if (availability != ChannelAvailability.Available) {
+                onEvent(PollEvent.ChannelAvailabilityChanged(id, availability))
+            }
+        }
     }
 
     private suspend fun runSession(plan: PollPlan) {
@@ -186,6 +239,14 @@ class RealVehicleDataSource(
         samples: MutableMap<String, Sample>,
     ): Boolean {
         val id = pid.definition.id
+        // Round-1 review (OBD-43/49): a channel whose decode was FALSIFIED by capture is neither
+        // sent nor stored — unlike an unsupported PID (polled for discoverability), an answer
+        // here would be misread by construction, and the misreading renders a plausible-looking
+        // wrong number. The plan-time ChannelAvailabilityChanged(DecodeFalsified) announcement
+        // is the one signal; per-cycle re-announcement would be noise.
+        if (PidCatalog.availabilityOf(id) is ChannelAvailability.DecodeFalsified) {
+            return true
+        }
         return when (val outcome = poll(pid, requester)) {
             is PollOutcome.Value -> {
                 samples[id] = Sample(outcome.value, Instant.now(clock), pid.definition.pollPriority)
@@ -266,6 +327,10 @@ class RealVehicleDataSource(
             } else {
                 null
             }
+        // No boost reading rather than a substituted one: `boost == null` means an input is
+        // absent, and the identity element of a subtraction is 0 — which on a boost gauge reads
+        // as "engine not pulling" and is indistinguishable from a real measurement. See
+        // [ChannelAvailability]; [reportUnavailable] is what tells a consumer why.
         mutableReadings.value = if (boost == null) polled else polled + (boost.id to boost)
     }
 }

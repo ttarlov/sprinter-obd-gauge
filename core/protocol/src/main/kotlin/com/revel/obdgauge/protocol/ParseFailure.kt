@@ -83,6 +83,24 @@ sealed interface ParseFailure {
     ) : ParseFailure
 
     /**
+     * A headers-on multi-frame reply did not hold together: an ISO-TP consecutive frame arrived
+     * out of order, or a sequence began without a first frame.
+     *
+     * Refused rather than reassembled from what did arrive, because a missing frame shifts every
+     * byte after it. In a 24-byte record read by offset that does not produce an obviously broken
+     * value — it produces a *different field's* value at the temperature's index, which is the
+     * plausible-but-wrong number this module exists to prevent.
+     *
+     * @param expected the ISO-TP sequence number that should have come next, or `1` when a first
+     *   frame was required and a consecutive frame arrived instead.
+     * @param actual what arrived: a sequence number, or a PCI type for the no-first-frame case.
+     */
+    data class MultiFrameSequenceError(
+        val expected: Int,
+        val actual: Int,
+    ) : ParseFailure
+
+    /**
      * A [com.revel.obdgauge.model.PidDefinition.parse] lambda threw, or returned a non-finite
      * value. Unreachable through this parser's own registry (data length is validated first);
      * it exists so a future or third-party definition cannot break the never-throws guarantee

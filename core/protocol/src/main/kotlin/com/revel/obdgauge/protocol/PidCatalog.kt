@@ -52,6 +52,31 @@ sealed interface PolledPid {
  *    hypothesis is a property of the *definition*, constant across every reading it ever
  *    produces, so putting it on each `Reading` would be repeating a static fact thousands of
  *    times a minute.
+ * 3. **Vehicle availability by id** ([availabilityOf]) — a *different* question from (2), added
+ *    by OBD-43 once real hardware answered. See below.
+ *
+ * ## What the 2026-08-12 capture did to this catalog
+ *
+ * `docs/hardware/session-2026-08-12.md`, engine running, OM642 at ~5 800 ft:
+ *
+ * - **`010B` MAP → `NO DATA`. Not supported on this vehicle.** The `0100` bitmap does not
+ *   advertise it and the ECU does not answer it.
+ * - **`010F` IAT → `NO DATA`. Not supported either**, and the bitmap agrees.
+ * - Coolant, rpm, engine load, throttle and baro all answered; speed is bitmap-advertised.
+ *
+ * MAP being absent is not a cosmetic loss: it is one of the two inputs to [computedBoost], the
+ * channel this whole app was built around. The altitude-true `MAP − baro` arithmetic is still
+ * correct and still SAE-verified — it simply has nothing to chew on until a Mercedes mode-22 MAP
+ * DID is discovered (an OBD-41-style parked discovery session). Baro, the other half, works.
+ *
+ * So [availabilityOf] reports MAP and IAT as [ChannelAvailability.UnsupportedByVehicle] and
+ * boost as [ChannelAvailability.MissingInputs]`(["map"])`, [RealVehicleDataSource] emits that as
+ * a [PollEvent.ChannelAvailabilityChanged], and nothing anywhere substitutes a zero. See
+ * [ChannelAvailability] for why "show 0 PSI" is the outcome being engineered against.
+ *
+ * These verdicts are about **this van**. They are recorded here, next to the registry, rather
+ * than in a UI-side allow-list, because "which PIDs does the vehicle implement" is protocol
+ * knowledge, and because a second vehicle would want a second table — not a scattering of `if`s.
  */
 object PidCatalog {
     /** Every channel that is actually polled: standard PIDs first, then manufacturer PIDs. */
@@ -85,18 +110,44 @@ object PidCatalog {
     fun byId(id: String): PolledPid? = polled.firstOrNull { it.definition.id == id }
 
     /**
-     * Whether the channel [id] has been confirmed against real hardware.
+     * Whether the channel [id]'s **request and scaling** are confirmed rather than hypothesised.
      *
      * Unknown ids answer `false` — an id this module cannot vouch for is not verified, and the
      * conservative answer is the one that makes the UI show a caveat rather than hide one.
      * Computed boost answers `true`: both of its inputs are SAE-standard PIDs and the subtraction
      * introduces no hypothesis.
+     *
+     * **This is not the same as "will produce a value here"** — boost is `verified` and, on this
+     * van, [ChannelAvailability.MissingInputs]. Ask [availabilityOf] for that. A UI that badges
+     * only on this flag will render an unavailable channel as trustworthy-but-silent.
      */
     fun isVerified(id: String): Boolean =
         when (id) {
             PidIds.BOOST -> true
             else -> byId(id)?.definition?.verified ?: false
         }
+
+    /**
+     * Whether the channel [id] can produce a value on **this** vehicle, per the hardware survey.
+     *
+     * Computed channels are answered from their [dependenciesOf], so boost degrades explicitly
+     * the moment one of its inputs is known-unsupported instead of quietly never appearing.
+     *
+     * Unknown ids answer [ChannelAvailability.Available] — the optimistic direction on purpose:
+     * this table records *falsified* channels only (a captured `NO DATA`), so "not in the table"
+     * means "nothing is known against it", and the honest failure for such a channel is a skipped
+     * reading at poll time, not a pre-emptive refusal to try. [isVerified] is the pessimistic
+     * side of the pair; the two defaults differ because the two questions do.
+     */
+    fun availabilityOf(id: String): ChannelAvailability {
+        val unsupportedInputs = dependenciesOf(id).filter { availabilityOf(it) != ChannelAvailability.Available }
+        return when {
+            unsupportedInputs.isNotEmpty() -> ChannelAvailability.MissingInputs(unsupportedInputs)
+            id in UNSUPPORTED_BY_THIS_VEHICLE -> ChannelAvailability.UnsupportedByVehicle(NO_DATA_EVIDENCE)
+            id in FALSIFIED_DECODES -> ChannelAvailability.DecodeFalsified(FALSIFIED_EVIDENCE)
+            else -> ChannelAvailability.Available
+        }
+    }
 
     /**
      * The channels [id] needs polled in order to be produced. Empty for anything directly polled;
@@ -107,6 +158,36 @@ object PidCatalog {
      */
     fun dependenciesOf(id: String): List<String> =
         if (id == PidIds.BOOST) listOf(ProtocolPidIds.MAP, PidIds.BARO) else emptyList()
+
+    /**
+     * The channels the 2026-08-12 survey found this vehicle does **not** implement.
+     *
+     * A falsification list, not an allow-list: absence from it means "no evidence against",
+     * never "confirmed present". Adding to it requires a captured `NO DATA`, and the capture
+     * belongs in `docs/hardware/` before the id belongs here.
+     */
+    private val UNSUPPORTED_BY_THIS_VEHICLE: Set<String> = setOf(ProtocolPidIds.MAP, ProtocolPidIds.IAT)
+
+    private const val NO_DATA_EVIDENCE =
+        "captured NO DATA from the OM642, engine running, 2026-08-12 " +
+            "(docs/hardware/session-2026-08-12.md); the 0100 bitmap does not advertise it"
+
+    /**
+     * Channels whose currently-wired decode was falsified against real hardware (round-1 review
+     * of OBD-43/49, 2026-08-12). Same falsification-list discipline as
+     * [UNSUPPORTED_BY_THIS_VEHICLE]: adding an id requires a capture in `docs/hardware/`.
+     *
+     * `TRANS_TEMP`: the X-Gauge spec reads record byte 0, which the live capture shows is `0x00`
+     * — the decode renders −50 °C on this van. The true value lives at record byte 18
+     * ([TcuRecordRegistry], OBD-49), pending its 🖐 cold-start verification, after which the id
+     * is reassigned in one reviewed change and this entry is removed.
+     */
+    private val FALSIFIED_DECODES: Set<String> = setOf(PidIds.TRANS_TEMP)
+
+    private const val FALSIFIED_EVIDENCE =
+        "X-Gauge byte-0 decode falsified by the 2026-08-12 capture (record byte 0 = 0x00 → " +
+            "−50 °C; docs/hardware/session-2026-08-12.md). Correct source: 21 30 record byte 18 " +
+            "(OBD-49), pending cold-start verification"
 
     private const val BOOST_PLACEHOLDER_MODE = 0x01
     private const val BOOST_PLACEHOLDER_PID = 0x0B

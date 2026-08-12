@@ -92,7 +92,7 @@ object ResponseParser {
         expectedCount: Int,
     ): ParseOutcome<List<Int>> {
         val lines = splitLines(raw)
-        val protocolError = protocolError(lines, raw)
+        val protocolError = protocolErrorIn(lines, raw)
         return when {
             protocolError != null -> ParseOutcome.Failure(protocolError)
             lines.isEmpty() -> ParseOutcome.Failure(ParseFailure.Empty)
@@ -106,22 +106,6 @@ object ResponseParser {
      * Safe to run as a substring scan over the whole response: none of these tokens can occur
      * inside hex data, because each contains at least one character outside `0-9A-F`.
      */
-    private fun protocolError(
-        lines: List<String>,
-        raw: String,
-    ): ParseFailure? {
-        val compact = lines.joinToString(separator = "") { line -> line.filterNot(Char::isWhitespace) }
-        return when {
-            lines.any { it == UNKNOWN_COMMAND } -> ParseFailure.UnknownCommand
-            compact.contains(NO_DATA_TOKEN) -> ParseFailure.NoData
-            compact.contains(UNABLE_TO_CONNECT_TOKEN) -> ParseFailure.UnableToConnect
-            compact.contains(STOPPED_TOKEN) -> ParseFailure.Stopped
-            compact.contains(BUFFER_FULL_TOKEN) -> ParseFailure.BusError(raw.trim())
-            compact.contains(ERROR_TOKEN) -> ParseFailure.BusError(raw.trim())
-            else -> null
-        }
-    }
-
     private fun extractFrame(
         lines: List<String>,
         raw: String,
@@ -225,10 +209,36 @@ internal fun scaleReading(
     }
 
 /**
+ * Detects ELM327/bus status responses that mean "no value this time".
+ *
+ * Safe to run as a substring scan over the whole response: none of these tokens can occur inside
+ * hex data, because each contains at least one character outside `0-9A-F`.
+ *
+ * `internal` rather than private to [ResponseParser] so [KwpRecordParser] applies exactly the
+ * same status-line vocabulary. A second copy of this list is a second place for `NO DATA` to stop
+ * being recognized.
+ */
+internal fun protocolErrorIn(
+    lines: List<String>,
+    raw: String,
+): ParseFailure? {
+    val compact = lines.joinToString(separator = "") { line -> line.filterNot(Char::isWhitespace) }
+    return when {
+        lines.any { it == UNKNOWN_COMMAND } -> ParseFailure.UnknownCommand
+        compact.contains(NO_DATA_TOKEN) -> ParseFailure.NoData
+        compact.contains(UNABLE_TO_CONNECT_TOKEN) -> ParseFailure.UnableToConnect
+        compact.contains(STOPPED_TOKEN) -> ParseFailure.Stopped
+        compact.contains(BUFFER_FULL_TOKEN) -> ParseFailure.BusError(raw.trim())
+        compact.contains(ERROR_TOKEN) -> ParseFailure.BusError(raw.trim())
+        else -> null
+    }
+}
+
+/**
  * Splits [raw] into trimmed, uppercased, non-empty lines with prompt characters removed.
  * Kotlin's `uppercase()` is locale-independent, so this is safe on any device locale.
  */
-private fun splitLines(raw: String): List<String> =
+internal fun splitLines(raw: String): List<String> =
     raw
         .split('\r', '\n')
         .map { it.replace(PROMPT, "").trim().uppercase() }
@@ -242,7 +252,7 @@ private fun splitLines(raw: String): List<String> =
  * payload — the bare length line above them is framing metadata and is dropped, which also
  * protects byte alignment (a 3-digit length would shift every subsequent byte).
  */
-private fun hexPayload(lines: List<String>): String = normalizedHexLines(lines).joinToString(separator = "")
+internal fun hexPayload(lines: List<String>): String = normalizedHexLines(lines).joinToString(separator = "")
 
 /** The shared normalization pipeline: noise-stripped, whitespace-free, hex-only lines. */
 private fun normalizedHexLines(lines: List<String>): List<String> {
@@ -271,7 +281,7 @@ private fun dropIsoTpLengthLine(hexLines: List<String>): List<String> =
  * real. Left-to-right means an echoed request (`0105`) preceding the answer (`41055A`) resolves
  * to the answer, not to a stray overlap.
  */
-private fun indexOfAligned(
+internal fun indexOfAligned(
     hex: String,
     needle: String,
 ): Int {
@@ -306,5 +316,7 @@ private const val UNABLE_TO_CONNECT_TOKEN = "UNABLETOCONNECT"
 private const val STOPPED_TOKEN = "STOPPED"
 private const val BUFFER_FULL_TOKEN = "BUFFERFULL"
 private const val ERROR_TOKEN = "ERROR"
-private const val NEGATIVE_RESPONSE_PREFIX = "7F"
 private const val ISO_TP_LENGTH_DIGITS = 3
+
+/** The `7F` byte that opens every KWP/UDS negative response, on any service. */
+internal const val NEGATIVE_RESPONSE_PREFIX = "7F"

@@ -42,19 +42,21 @@ Behaviour worth knowing before you use it:
 
 ### `com.revel.obdgauge.protocol` — registry + parser (OBD-14)
 
-- `ProtocolPidIds` — `MAP = "map"`, `IAT = "iat"`, `SPEED = "speed"`: ids for the PIDs that the
-  frozen `PidIds` contract does not name yet, following its naming convention exactly.
+- `ProtocolPidIds` — `MAP = "map"`, `IAT = "iat"`, `SPEED = "speed"`, `ENGINE_LOAD =
+  "engineLoad"`, `THROTTLE = "throttle"`, `TRANS_TEMP_RECORD = "transTempRecord"`: ids for the
+  channels the frozen `PidIds` contract does not name, following its naming convention exactly.
 - `StandardPidSpec(definition, mode, pid, dataByteCount)` with `command` (`"0105"`),
   `responseMode` (`0x41`) and `responseHeader` (`"4105"`). `PidDefinition` carries no byte
   count — it is the frozen UI-facing contract — so the wire facts live here beside it.
 - `PidRegistry` — `coolant` `0105`, `rpm` `010C`, `map` `010B`, `baro` `0133`,
-  `intakeAirTemp` `010F`, `speed` `010D`; plus `all`, `definitions`, `byId(id)`,
-  `byPid(mode, pid)`.
+  `intakeAirTemp` `010F`, `speed` `010D`, `engineLoad` `0104`, `throttlePosition` `0111`
+  (the last two from OBD-43); plus `all`, `definitions`, `byId(id)`, `byPid(mode, pid)`.
 - `VendoredSaeScaling` — `temperatureCelsius(a)`, `engineRpm(a, b)`, `pressureKpa(a)`,
-  `speedKmh(a)`, `dataByte(data, index)`.
+  `speedKmh(a)`, `percent(a)`, `dataByte(data, index)`.
 - `ParseFailure` — sealed: `NoData`, `Stopped`, `UnableToConnect`, `UnknownCommand`, `Empty`,
   `BusError(raw)`, `NegativeResponse(requestMode, code)`, `NoMatchingFrame(expectedHeader, raw)`,
-  `MalformedHex(raw)`, `UnexpectedDataLength(expected, actual)`, `ScalingError(message)`.
+  `MalformedHex(raw)`, `UnexpectedDataLength(expected, actual)`,
+  `MultiFrameSequenceError(expected, actual)`, `ScalingError(message)`.
 - `ParseOutcome<T>` — `Success(value)` | `Failure(reason)`, with `valueOrNull()` /
   `failureOrNull()`.
 - `ResponseParser` — `parse(spec, raw): ParseOutcome<Double>`,
@@ -76,9 +78,32 @@ Behaviour worth knowing before you use it:
 - `Mode22Config(defaultHeader = "7DF", rxFilterEnabled = true, atTimeout = 2s,
   requestTimeout = 2s)`.
 - `Mode22Requester(link, config)` — `request(spec): PollOutcome`, `restoreHeaders(): Boolean`,
-  `restorePending`.
+  `restorePending`. Since OBD-49 a thin layer over the internal `HeaderScope`, which owns the
+  `ATSH`/`ATCRA` set-and-restore discipline for every physically addressed path.
 - `PollOutcome` — sealed: `Value(value)`, `Skipped(reason)`, `HeaderRejected(command, raw)`,
-  `LinkDown(message)`. Shared by both request paths.
+  `LinkDown(message)`. Shared by all three request paths.
+
+### `com.revel.obdgauge.protocol` — KWP `21 30` TCU record (OBD-49)
+
+- `KwpRecordSpec(definition, canId, rxFilter, localIdentifier, recordDataBytes, dataByteIndex)`
+  with `requestMode` (`0x21`), `requestBytes` (`"2130"`), `responseHeader` (`"6130"`),
+  `serviceByteCount` (26).
+- `KwpRecord(bytes)` — the 24 validated record bytes, with `byteAt(index)`.
+- `KwpRecordParser.parse(spec, raw): ParseOutcome<KwpRecord>` — reassembles both framings.
+- `KwpRecordRequester(link, config)` — `request(spec): RecordOutcome`, `poll(spec): PollOutcome`,
+  `restoreHeaders()`, `restorePending`.
+- `RecordOutcome` — sealed: `Received(record)`, `Skipped(reason)`, `HeaderRejected(command, raw)`,
+  `LinkDown(message)`.
+- `TcuRecordRegistry` — `transTempRecord`, `transTempCelsius(record)`, `TRANS_TEMP_BYTE` (18),
+  `RECORD_DATA_BYTES` (24), `CELSIUS_OFFSET` (50). The byte-11 coolant anchor
+  (`tcuCoolantCelsius`) is `internal` and test-only, never a displayed channel.
+
+### `com.revel.obdgauge.protocol` — vehicle availability (OBD-43)
+
+- `ChannelAvailability` — sealed: `Available`, `UnsupportedByVehicle(evidence)`,
+  `MissingInputs(missing)`, `DecodeFalsified(evidence)`.
+- `PidCatalog.availabilityOf(id): ChannelAvailability`.
+- `PollEvent.ChannelAvailabilityChanged(id, availability)`.
 
 ### `com.revel.obdgauge.protocol` — scheduler + computed channels (OBD-16)
 
@@ -176,6 +201,120 @@ consistently. Oil temp is unscheduled (OBD-35). Note also that `:app`'s placehol
 hypothesis (`22 05 43` → `62 05 43 XX`); this module implements the X-Gauge code the build plan
 §2B specifies. OBD-22 decides which, if either, the van answers.
 
+## What real hardware changed (session 1, 2026-08-12 — OBD-43 / OBD-49)
+
+`docs/hardware/session-2026-08-12.md` is the ground truth; this is what it did to this module.
+
+### The PID survey, and a channel that lost its input
+
+| PID | Verdict | Consequence here |
+|---|---|---|
+| `0105` `010C` `0104` `0111` `0133` | answered | live-confirmed; `010D` is bitmap-advertised |
+| `010B` MAP | **`NO DATA`** | boost has no MAP source on this vehicle |
+| `010F` IAT | **`NO DATA`** | channel unavailable |
+
+`010B` being absent is the consequential one: it is half of `boost = MAP − baro`, the channel the
+app was built around. The arithmetic is still correct and still SAE-verified; it has nothing to
+chew on until a Mercedes mode-22 MAP DID is found (an OBD-41-style parked discovery session).
+Baro works, so the altitude half is proven.
+
+**Two axes, deliberately not collapsed into one.** `PidDefinition.verified` asks *is our request
+and scaling right?*; `PidCatalog.availabilityOf` asks *will this van answer at all?* MAP stays
+`verified = true` (the SAE decode is correct) and reports
+`UnsupportedByVehicle(evidence)`; boost reports `MissingInputs(["map"])`.
+`RealVehicleDataSource` announces both at plan time, once per session — before a command goes
+out, because the answer comes from a capture, not from the wire — and still publishes **no boost
+`Reading` at all**. A boost gauge with no MAP source therefore renders unavailable, never
+`0 PSI`, which on a grade is indistinguishable from "engine not pulling". Unsupported PIDs are
+still polled: silencing a request would mean a wrong entry in that table could never be
+discovered.
+
+### `0111` on a diesel is not a throttle
+
+The OM642 read `0xD3` ≈ 83 % at warm idle, pedal untouched. There is no throttle butterfly
+metering power on a diesel; `0111` reports the intake/swirl flap. The scaling is right and the
+number is real — it simply does not travel 0→100 % with the pedal and idle is not ≈ 0 %. Anything
+that thresholds, colours or labels this channel must say "intake flap". A test pins the 83 %
+so that "fixing" it by rescaling toward a gasoline intuition fails loudly.
+
+### Trans temp: one hypothesis falsified, one confirmed, the offset still open
+
+- `ATSH7E1` + `22 05 43` → `7F 22 11`. **UDS `22` falsified** on this TCU in the default session,
+  and this project does not change diagnostic sessions — it is read-only by charter.
+- `ATSH7E1` + `21 30` → **confirmed**: positive `61 30`, a 26-byte record over four CAN frames.
+
+The 24 record bytes at warm idle:
+
+```
+  00 13 00 00 | 00 00 00 08 04 00 DD | 8E FF F3 FF F3 00 00 | 86 18 00 08 00 00
+   0  1  2  3    4  5  6  7  8  9 10   11 12 13 14 15 16 17   18 19 20 21 22 23
+```
+
+**Byte 11 is the anchor.** It read `8E → 8D → 93` = 92 → 91 → 97 °C under `raw − 50`, tracking
+engine coolant and rising ~6 °C over a 15-minute drive. That is independent *field* support for
+the `−50` offset OBD-15 derived algebraically from the ScanGauge `MTH` — two unrelated routes to
+the same constant — and `−50` is the only offset that makes both temperature fields in this
+record land somewhere sane simultaneously. It is **not published**: coolant already comes from
+`0105`, and two subtly different coolant numbers on one dashboard is a worse outcome than none.
+It lives as an `internal`, test-only framing probe: across the three captures it must read
+92/91/97 °C, which a reassembly off by one byte cannot manage.
+
+**Byte 18 is the channel, and it ships `verified = false`.** It read `86` = 84 °C — plausible for
+a warm 722.9 and consistent with its ~85 °C thermostatic setpoint — but it did not move: through
+idle, through a 90-second converter stall, through the drive. Rock-steady is what a correctly
+regulated transmission looks like *and* what a hard-coded constant looks like, and the capture
+cannot separate them. 🖐 One cold-start capture settles it (`issues/OBD-49.md`).
+
+### The falsified-decode gate (round-2, and the reason nothing waits for the id swap)
+
+The X-Gauge spec reads record byte 0. The capture shows record byte 0 is `0x00`, so the decode
+wired to `PidIds.TRANS_TEMP` renders **−50 °C** on this van. Round 1 documented that and deferred
+the fix to the id swap; round 2 rejected the deferral, and rightly — a known-wrong number does
+not get to sit on a gauge waiting for a scheduling window.
+
+`ChannelAvailability.DecodeFalsified(evidence)` is the third verdict, and it is **not**
+`UnsupportedByVehicle`. That one means "this van will not answer"; this one means "it answers,
+and we know we are reading it wrong". The difference is operational, not cosmetic:
+
+| | `UnsupportedByVehicle` | `DecodeFalsified` |
+|---|---|---|
+| the ECU | says nothing | answers normally |
+| still polled? | **yes** — a `NO DATA` per cycle keeps a wrong table entry discoverable | **no** — what the byte means is already known; re-observing buys nothing |
+| stored? | nothing to store | refused |
+
+`PidCatalog.FALSIFIED_DECODES` carries `TRANS_TEMP` with its evidence, and
+`RealVehicleDataSource.applyPoll` gates on it: the request is never framed, never sent, and no
+`Reading` is ever stored under that id. The plan-time
+`ChannelAvailabilityChanged(DecodeFalsified)` announcement is the single signal; the rest of the
+cycle is unaffected. Same falsification-list discipline as the unsupported set — an id goes in
+only with a capture in `docs/hardware/`.
+
+**The id swap is still the endgame, just no longer load-bearing.** After the 🖐 cold-start
+capture proves record byte 18, one reviewed change retires the X-Gauge entry from
+`MercedesPidRegistry`, reassigns `PidIds.TRANS_TEMP` to `TcuRecordRegistry.transTempRecord`, and
+removes the `FALSIFIED_DECODES` entry. Until then the dashboard shows a trans-temp channel that
+honestly reports itself unavailable, rather than −50 °C.
+
+One consequence worth knowing: `PidCatalog`'s only manufacturer channel is now gated, so
+`RealVehicleDataSourceTest` supplies its own `Mode22PidSpec` under a synthetic id through an
+`internal` constructor parameter (`extraChannels`, always empty in production, unreachable from
+`:app`). The manufacturer *pipeline* — framed sequence inside a cycle, `ATSH` rejection costing
+only that channel, restore retry — is scheduler behaviour independent of which spec rides on it,
+and keeps full coverage rather than being deleted alongside the falsified decode.
+
+### Why the reassembler is not the existing parser with a bigger `expectedCount`
+
+With headers off it nearly is, and that path is handled. With headers **on** — how the console
+captured these — an 11-bit CAN id prints as three hex digits, so every line is odd-length and the
+real `6130` sits at an odd offset. `ResponseParser` fails *safe* on that (a typed
+`NoMatchingFrame`, never a shifted byte) but cannot read it, and these captures are the only
+ground truth the channel has. `KwpRecordParser` handles both framings and validates: responder id
+(three ECUs answer on this bus, so foreign frames are dropped before reassembly, not concatenated
+into it), ISO-TP sequence numbers, the first frame's declared length (surplus is CAN padding and
+discarded; a shortfall is refused, never zero-filled), a `61 30` head, and `7F` negatives —
+reporting the service byte **as received**, so the captured `7F 22 11` reads as "service 22 was
+rejected" rather than being rewritten as a rejection of the `21` we sent.
+
 ## Scheduler semantics (OBD-16)
 
 `RealVehicleDataSource` runs **one coroutine per session**: initialize once, then repeat — poll
@@ -234,8 +373,11 @@ current. No boost reading exists at all until both inputs do.
 | baro | `0133` | `KPA` | absolute |
 | rpm | `010C` | `RPM` | `(256A + B) / 4` |
 | speed | `010D` | `KMH` | `A` |
-| transTemp | `2130` (mode-22) | `CELSIUS` | `A − 50`, **unverified** — see the decode section |
-| boost | computed | `KPA` | `MAP − baro`, gauge (signed) |
+| engineLoad | `0104` | `PERCENT` | `A × 100 / 255` |
+| throttle | `0111` | `PERCENT` | `A × 100 / 255` — diesel intake flap, see above |
+| transTemp | `2130` (mode-22) | `CELSIUS` | `A − 50` at record byte 0, **unverified** — X-Gauge decode, contradicted by the capture |
+| transTempRecord | `2130` (KWP record) | `CELSIUS` | `A − 50` at record byte **18**, **unverified** — the capture's decode |
+| boost | computed | `KPA` | `MAP − baro`, gauge (signed); **unavailable on this vehicle** |
 
 Display conversion to °F, PSI, or mph is the **UI's** job. Two reasons: protocol math stays in
 one unit system, and boost (`MAP − baro`, OBD-16) subtracts two quantities that are already
@@ -280,11 +422,13 @@ throws or returns a non-finite number.
 
 ## Test inventory
 
-186 JVM tests, `./gradlew :core:protocol:test`:
+247 JVM tests, `./gradlew :core:protocol:test`:
 
-- `VendoredSaeScalingTest` — 15, exact-value boundary checks written against SAE, not against
-  the vendored source.
-- `PidRegistryTest` — 14.
+- `VendoredSaeScalingTest` — 20, exact-value boundary checks written against SAE, not against
+  the vendored source. The OBD-43 percentage additions pin exact `0`/`100` endpoints (the /255
+  vs /256 trap), whole-number quotients, monotonicity over all 256 raws, and the van's own
+  captured readings via their independently written-down rounded values.
+- `PidRegistryTest` — 18.
 - `ResponseParserTest` — 30, values + tolerance + every typed failure.
 - `ResponseParserPropertyTest` — 3 tests, 4500 seeded pseudo-random cases: the parser never
   throws, and never returns a value outside the range its PID's formula can physically produce.
@@ -292,7 +436,7 @@ throws or returns a non-finite number.
   every injected fault at every step, cancel/restart.
 - `XGaugeCodeTest` — 15, the field decode step by step, anchored on the coolant control case,
   plus the °C ⇄ ScanGauge-°F round trip over all 256 raw values and every malformed-field refusal.
-- `MercedesPidRegistryTest` — 10, wiring, scaling, unverified flag, `ATCRA` derivation.
+- `MercedesPidRegistryTest` — 11, wiring, scaling, unverified flag, `ATCRA` derivation.
 - `Mode22ResponseParserTest` — 14, values + wire noise + every refusal, including the
   headers-on cases and a multi-byte UDS identifier.
 - `Mode22RequesterTest` — 10, exact command sequences for happy path, refusal, `ATSH`/`ATCRA`
@@ -300,11 +444,29 @@ throws or returns a non-finite number.
 - `ComputedChannelsTest` — 10, boost at three elevations, vacuum, staleness and timestamp
   propagation.
 - `PollScheduleTest` — 10, cadence over twelve cycles, order preservation, config validation.
-- `PidCatalogTest` — 8, resolution and `isVerified`.
-- `RealVehicleDataSourceTest` — 19, over `RecordingObdLink` + `FakeObdLink` on virtual time:
+- `PidCatalogTest` — 14, resolution, `isVerified`, and `availabilityOf`: the unsupported PIDs
+  carry their evidence, boost names the input it lost, the two axes are asserted to disagree on
+  purpose, and the falsified trans decode is asserted to be `DecodeFalsified` (evidence citing
+  the capture and the byte that replaces it) rather than `UnsupportedByVehicle`.
+- `KwpRecordParserTest` — 24, against the three **captured** records: byte-for-byte reassembly,
+  byte 18 across all three, the 92/91/97 °C byte-11 anchor, the uncatalogued state fields the
+  session tracked, padding discarded, both framings, spaces on/off, `\r`/`\n`/prompt, foreign-ECU
+  frames filtered out, and every refusal — dropped frame, out-of-order frame, no first frame,
+  truncated record, over-long consecutive frame, wrong identifier, both `7F` shapes, ELM status
+  lines, garbage.
+- `KwpRecordRequesterTest` — 12, the framed exchange with the ECU's half being the real capture:
+  command sequence, restore after every outcome, all three records through `poll`, the captured
+  `7F 22 11`, `ATSH` rejection (including that the restore still runs after one), link drop,
+  failed-restore retry, filter disabled, and the `verified = false` restraint.
+- `RealVehicleDataSourceTest` — 27, over `RecordingObdLink` + `FakeObdLink` on virtual time:
   init-once-then-poll, exact FAST/SLOW command sequences, the mode-22 sequence inside a cycle,
   boost dependency expansion, staleness, skip-not-poison, unknown PIDs, init failure, link drop
-  and park, and the pinned restart/idempotence contract.
+  and park, the pinned restart/idempotence contract, and OBD-43's availability announcement
+  (stated before the first command, once per session, silent for healthy channels, and a boost
+  gauge starved of MAP getting no reading rather than a zero), plus round-2's falsified-decode
+  gate: the trans channel is neither framed nor sent nor stored, only announced, and gating it
+  leaves the rest of the cycle untouched. The manufacturer-pipeline tests run against a
+  synthetic-id spec injected through the `internal` `extraChannels` seam.
 
 Line coverage measured ad hoc with JaCoCo (added to `build.gradle.kts`, measured, and reverted —
 the repo has no coverage plugin wired in):
@@ -324,9 +486,20 @@ synthetics and one `error(…)` line that is unreachable by construction.
 `core/protocol/src/test/resources/transcripts/mode22-trans-temp.txt` — a synthetic full-session
 transcript (init → standard PIDs → the framed mode-22 exchange → restore). It lives here rather
 than in `:core:testing` because this branch does not own that module. **It is a prediction, not
-a capture:** the trans-temp reply is what this module's decode says a 722.6 controller will send.
-**OBD-22 supersedes it** with real captures, at which point these fixtures should move to
-`:core:testing` and every test here re-run against the real bytes.
+a capture:** the trans-temp reply is what OBD-15's decode says a 722.6 controller will send.
+
+`TcuRecordCaptures` (test sources) — **the real thing.** The three `21 30` records the van's
+722.9 sent on 2026-08-12, as raw ELM327 text with headers on, plus the `7F 22 11` negative,
+transcribed byte for byte from `issues/OBD-49.md` and `docs/hardware/session-2026-08-12.md`.
+Nothing in them may be tidied: the padding byte, the odd-length lines, the header format and the
+spacing are the properties under test. `KwpRecordRequesterTest` splices them into the synthetic
+transcript in place of its predicted `2130` answer, so the AT half stays scripted and the ECU
+half is ground truth.
+
+One documented gap: the issue elides the unchanged leading frames of the post-stall and
+post-drive records as `…`, and they are reconstructed here from the warm-idle record. Those
+frames carry record bytes 4–10 only, which are uncatalogued and **read by no assertion** — every
+asserted field comes from a captured frame, so the reconstruction cannot prop up a passing test.
 
 ## Known limitations
 
@@ -349,7 +522,15 @@ a capture:** the trans-temp reply is what this module's decode says a 722.6 cont
   reorder (real dongles emit in order; out-of-order input fails safe on length).
 - **The trans-temp code is a hypothesis**, `verified = false`, and its RXF field does not decode
   consistently (see the decode section). It is also *a* hypothesis, not the only one in the repo
-  — `:app` and `:core:testing` carry a `22 05 43` variant. OBD-22 settles both questions.
+  — `:app` and `:core:testing` carry a `22 05 43` variant, which session 1 falsified outright
+  (`7F 22 11`).
+- **`MercedesPidRegistry.transTemp`'s decode is falsified and gated off** — it is still in
+  `PidCatalog.polled` (the OBD-15 tests pin it there) but is never sent and never stored; see the
+  falsified-decode gate above. `TcuRecordRegistry.transTempRecord` is the capture-backed
+  replacement, tested against the real bytes, held under its own id until the 🖐 cold-start
+  capture proves byte 18. Until that swap lands there is **no trans-temp reading at all** — which
+  is the correct state, not a regression: the only decode currently wired to that id is known to
+  be wrong.
 - **Poll-rate defaults are guesses**, not measurements: `cycleInterval = 200 ms` and
   `slowEveryNCycles = 5` were chosen for a typical BLE round trip, and Sprint 3 tunes them
   against real hardware latency. SLOW channels are all polled on the *same* cycle, which
@@ -363,12 +544,16 @@ a capture:** the trans-temp reply is what this module's decode says a 722.6 cont
   its `request` is a structural placeholder and its `parse` deliberately throws (trapped into a
   typed `ScalingError`, never a number). The scheduler routes by id and never calls it.
 
-- **Nothing here has met real hardware.** Every value is verified against the SAE standard and
-  the synthetic transcript fixture, not against the van's ECU. Hardware verification is OBD-22;
-  until then, treat "verified" as "verified against the standard".
-- **CAN-ID headers are assumed off** (`ATH0`, the ELM327 default this machine never changes).
-  With headers on, a `7E8` frame id would be concatenated into the payload and break byte
-  alignment. Mode-22 work (OBD-15) needs `ATSH`/`ATCRA` and owns that case.
+- **Most of this has now met real hardware, but not all of it.** Session 1 (2026-08-12) confirmed
+  six standard PIDs, the `21 30` request, and the record's framing. Still unproven against the
+  van: the trans-temp *byte offset* (🖐 cold-start capture), `010D` speed as an individual read,
+  and every synthetic-transcript scenario in `Mode22RequesterTest`. Treat `verified` on anything
+  not in the OBD-43 table above as "verified against the standard".
+- **`ResponseParser` still assumes CAN-ID headers are off** (`ATH0`, the ELM327 default this
+  machine never changes). With headers on, an 11-bit id makes the line odd-length and the parser
+  fails safe rather than shifting a byte. `KwpRecordParser` (OBD-49) is the one path that reads
+  headers-on framing deliberately, because that is how the session captures were taken; it never
+  sends `ATH1` either.
 - **`0100` only.** The init verify reads the first supported-PID bitmap (`0x01..0x20`), so
   `InitResult.Success.supports(0x33)` (baro) is `false` — that PID lives in the `0120`/`0140`
   bitmaps this machine does not request. `false` means "not advertised in this bitmap", not

@@ -12,10 +12,12 @@ import org.junit.Test
 /** Registry completeness, wire addresses, response lengths, units, and per-PID scaling. */
 class PidRegistryTest {
     @Test
-    fun `registry defines exactly the six standard PIDs OBD-14 requires`() {
-        assertEquals(6, PidRegistry.all.size)
+    fun `registry defines exactly the eight standard PIDs OBD-14 plus OBD-43 require`() {
+        assertEquals(8, PidRegistry.all.size)
         assertEquals(
-            listOf("0105", "010C", "010B", "0133", "010F", "010D"),
+            // OBD-14's six, then OBD-43's two appended — declaration order is stable and the
+            // new entries go on the end, so an existing caller's poll order does not shift.
+            listOf("0105", "010C", "010B", "0133", "010F", "010D", "0104", "0111"),
             PidRegistry.all.map { it.command },
         )
     }
@@ -46,6 +48,8 @@ class PidRegistryTest {
                 PidIds.BARO to 0x33,
                 ProtocolPidIds.IAT to 0x0F,
                 ProtocolPidIds.SPEED to 0x0D,
+                ProtocolPidIds.ENGINE_LOAD to 0x04,
+                ProtocolPidIds.THROTTLE to 0x11,
             )
         for (spec in PidRegistry.all) {
             assertEquals(0x01, spec.mode)
@@ -131,6 +135,50 @@ class PidRegistryTest {
         assertEquals(100.0, PidRegistry.map.definition.parse(byteArrayOf(0x64)), 0.0)
         assertEquals(98.0, PidRegistry.baro.definition.parse(byteArrayOf(0x62)), 0.0)
         assertEquals(80.0, PidRegistry.speed.definition.parse(byteArrayOf(0x50)), 0.0)
+    }
+
+    // --- OBD-43: engine load 0104 and throttle position 0111 -------------------------------
+
+    @Test
+    fun `the OBD-43 PIDs carry their SAE wire facts`() {
+        assertEquals(ProtocolPidIds.ENGINE_LOAD, PidRegistry.engineLoad.definition.id)
+        assertEquals("0104", PidRegistry.engineLoad.command)
+        assertEquals("4104", PidRegistry.engineLoad.responseHeader)
+        assertEquals(1, PidRegistry.engineLoad.dataByteCount)
+
+        assertEquals(ProtocolPidIds.THROTTLE, PidRegistry.throttlePosition.definition.id)
+        assertEquals("0111", PidRegistry.throttlePosition.command)
+        assertEquals("4111", PidRegistry.throttlePosition.responseHeader)
+        assertEquals(1, PidRegistry.throttlePosition.dataByteCount)
+    }
+
+    @Test
+    fun `the OBD-43 PIDs publish percent on the FAST cadence`() {
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.engineLoad.definition.unit)
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.throttlePosition.definition.unit)
+        assertEquals(PollPriority.FAST, PidRegistry.engineLoad.definition.pollPriority)
+        assertEquals(PollPriority.FAST, PidRegistry.throttlePosition.definition.pollPriority)
+    }
+
+    @Test
+    fun `the OBD-43 parse lambdas apply the full-scale-byte percentage exactly`() {
+        assertEquals(0.0, PidRegistry.engineLoad.definition.parse(byteArrayOf(0x00)), 0.0)
+        assertEquals(100.0, PidRegistry.engineLoad.definition.parse(byteArrayOf(0xFF.toByte())), 0.0)
+        assertEquals(20.0, PidRegistry.engineLoad.definition.parse(byteArrayOf(51)), 0.0)
+
+        assertEquals(0.0, PidRegistry.throttlePosition.definition.parse(byteArrayOf(0x00)), 0.0)
+        assertEquals(100.0, PidRegistry.throttlePosition.definition.parse(byteArrayOf(0xFF.toByte())), 0.0)
+    }
+
+    @Test
+    fun `an idling OM642 reads a high throttle number, and that is the intake flap not the pedal`() {
+        // The captured 0xD3 at warm idle, pedal untouched. Pinned as a REGRESSION GUARD ON THE
+        // KDOC, not as an aspiration: anyone who "fixes" this channel by rescaling it so idle
+        // lands near 0 % — the gasoline intuition — breaks this test, which is the point. The
+        // scaling is right; the actuator is simply not a throttle butterfly.
+        val idle = PidRegistry.throttlePosition.definition.parse(byteArrayOf(0xD3.toByte()))
+
+        assertTrue("a diesel intake flap idles wide open, near 83 %: was $idle", idle in 82.5..83.5)
     }
 
     @Test

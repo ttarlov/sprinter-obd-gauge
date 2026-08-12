@@ -85,10 +85,14 @@ class RealVehicleDataSourceTest {
     @Test
     fun `a mode-22 PID is polled as its whole framed sequence inside the cycle`() =
         runTest {
+            // Repointed in round 2 from PidIds.TRANS_TEMP to PIPELINE_CHANNEL: the trans-temp
+            // decode is falsified and must no longer reach the wire, but the scheduler behaviour
+            // asserted here — a manufacturer channel running its whole framed sequence within one
+            // cycle, between the standard polls — is spec-agnostic and keeps its full strength.
             val link = RecordingObdLink(FakeObdLink(transcript))
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
+            source.start(listOf(def(PidIds.RPM), def(PIPELINE_CHANNEL_ID)))
             runCurrent()
 
             assertEquals(
@@ -98,7 +102,7 @@ class RealVehicleDataSourceTest {
             assertEquals(
                 TRANS_TEMP_C,
                 source.readings.value
-                    .getValue(PidIds.TRANS_TEMP)
+                    .getValue(PIPELINE_CHANNEL_ID)
                     .value,
                 TOLERANCE,
             )
@@ -164,6 +168,164 @@ class RealVehicleDataSourceTest {
             assertFalse("map was just refreshed", readings.getValue(ProtocolPidIds.MAP).stale)
             assertTrue("a fresh MAP over an old baro is not a fresh boost", readings.getValue(PidIds.BOOST).stale)
             assertEquals(BOOST_KPA, readings.getValue(PidIds.BOOST).value, TOLERANCE)
+        }
+
+    // ---- OBD-43: explicit degradation when the vehicle cannot feed a channel ----
+
+    @Test
+    fun `asking for boost on this van announces the missing MAP before any command goes out`() =
+        runTest {
+            val link = RecordingObdLink(FakeObdLink(transcript))
+            val source = sourceFor(link)
+
+            source.start(listOf(def(PidIds.BOOST)))
+
+            // Before runCurrent(): nothing has been sent yet, and the verdict is already known
+            // from the hardware survey rather than inferred from a gauge that never moves.
+            assertEquals(emptyList<String>(), link.commands)
+            assertEquals(
+                // Consequence first (what the gauge renders), then cause (why), each typed.
+                listOf(
+                    PidIds.BOOST to ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAP)),
+                    ProtocolPidIds.MAP to PidCatalog.availabilityOf(ProtocolPidIds.MAP),
+                ),
+                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().map { it.id to it.availability },
+            )
+            assertTrue(
+                PidCatalog.availabilityOf(ProtocolPidIds.MAP) is ChannelAvailability.UnsupportedByVehicle,
+            )
+        }
+
+    @Test
+    fun `a boost gauge with no MAP reading gets no reading at all, never a zero`() =
+        runTest {
+            // The van's real shape: 010B answers NO DATA forever, 0133 answers. The subtraction
+            // has one operand, and 0 kPa — "no boost, engine not pulling" — must never stand in
+            // for "there is no MAP on this vehicle".
+            val faults = mapOf("010B" to List(NO_DATA_CYCLES) { Fault.NoData })
+            val source = start(def(PidIds.BOOST), link = FakeObdLink(transcript, commandFaults = faults))
+
+            assertNull("no boost reading", source.readings.value[PidIds.BOOST])
+            assertNull("and no MAP to have made one from", source.readings.value[ProtocolPidIds.MAP])
+            assertEquals(
+                "baro still reads — half the input is alive and that stays visible",
+                BARO_KPA,
+                source.readings.value
+                    .getValue(PidIds.BARO)
+                    .value,
+                TOLERANCE,
+            )
+            assertTrue(
+                "and the loop said why, in types",
+                events.any {
+                    it is PollEvent.ChannelAvailabilityChanged &&
+                        it.id == PidIds.BOOST &&
+                        it.availability == ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAP))
+                },
+            )
+        }
+
+    @Test
+    fun `the verdict is stated once per session, not once per publish`() =
+        runTest {
+            val faults = mapOf("010B" to List(NO_DATA_CYCLES) { Fault.NoData })
+            val source = start(def(PidIds.BOOST), link = FakeObdLink(transcript, commandFaults = faults))
+            runCycles(4)
+            source.stop()
+
+            // Dozens of publishes, one verdict. Deriving availability from "boost has not been
+            // published lately" would emit several times a second for the life of the session and
+            // drown the console it is meant to inform.
+            assertEquals(
+                1,
+                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == PidIds.BOOST },
+            )
+        }
+
+    @Test
+    fun `a fresh session restates the verdict rather than assuming the consumer remembers`() =
+        runTest {
+            val link = FakeObdLink(transcript)
+            val source = sourceFor(link)
+
+            source.start(listOf(def(PidIds.BOOST)))
+            runCurrent()
+            source.start(listOf(def(PidIds.BOOST)))
+            runCurrent()
+
+            assertEquals(
+                2,
+                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == PidIds.BOOST },
+            )
+        }
+
+    @Test
+    fun `a falsified decode is never requested and never stored, only announced`() =
+        runTest {
+            // The round-1 review's closing argument, as a test. The van DOES answer 2130 — this
+            // is not an unsupported PID — but the X-Gauge decode wired to `transTemp` reads
+            // record byte 0, which the capture shows is 0x00, i.e. −50 °C. An answer here would
+            // be misread by construction, so the request must not go out at all and no Reading
+            // may be stored. Polling it "for discoverability" (the UnsupportedByVehicle rule)
+            // buys nothing: what the byte means is already known.
+            val link = RecordingObdLink(FakeObdLink(transcript))
+            val source = sourceFor(link)
+
+            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
+            runCurrent()
+            runCycles(5)
+
+            val polls = link.commands.drop(INIT_COMMANDS.size)
+            assertFalse("the header must never be set for a falsified channel: $polls", "ATSH7E1" in polls)
+            assertFalse("and the request must never go out: $polls", "2130" in polls)
+            assertNull("nothing may be stored under it", source.readings.value[PidIds.TRANS_TEMP])
+            assertTrue(
+                "the verdict is announced once, at plan time",
+                events.any {
+                    it is PollEvent.ChannelAvailabilityChanged &&
+                        it.id == PidIds.TRANS_TEMP &&
+                        it.availability is ChannelAvailability.DecodeFalsified
+                },
+            )
+            assertEquals(
+                RPM,
+                source.readings.value
+                    .getValue(PidIds.RPM)
+                    .value,
+                TOLERANCE,
+            )
+        }
+
+    @Test
+    fun `gating the falsified channel costs the rest of the cycle nothing`() =
+        runTest {
+            // The gate skips a channel, it does not abort the cycle: everything else in the plan
+            // must still be polled, in order, exactly as if the falsified id were absent.
+            val link = RecordingObdLink(FakeObdLink(transcript))
+            val source = sourceFor(link)
+
+            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP), def(PidIds.COOLANT)))
+            runCurrent()
+
+            assertEquals(listOf("010C", "0105"), link.commands.drop(INIT_COMMANDS.size))
+            assertEquals(
+                COOLANT_C,
+                source.readings.value
+                    .getValue(PidIds.COOLANT)
+                    .value,
+                TOLERANCE,
+            )
+        }
+
+    @Test
+    fun `a channel nothing is known against is announced as nothing`() =
+        runTest {
+            start(def(PidIds.RPM), def(PidIds.COOLANT))
+
+            assertTrue(
+                "silence for healthy channels keeps the event stream a signal",
+                events.none { it is PollEvent.ChannelAvailabilityChanged },
+            )
         }
 
     // ---- refusals ----
@@ -238,11 +400,14 @@ class RealVehicleDataSourceTest {
         runTest {
             // A clone that answers "?" to ATSH: the manufacturer PID cannot be framed, but the
             // standard gauges must carry on as if it were not there.
+            // Repointed in round 2, same reason as the framed-sequence test above: "a dongle
+            // without ATSH support costs only the manufacturer channel" is a claim about the
+            // scheduler's failure isolation, not about which manufacturer spec is riding on it.
             val link = FakeObdLink(transcript.filterNot { it.command == "ATSH7E1" })
-            val source = start(def(PidIds.RPM), def(PidIds.TRANS_TEMP), link = link)
+            val source = start(def(PidIds.RPM), def(PIPELINE_CHANNEL_ID), link = link)
 
-            assertTrue(events.any { it is PollEvent.HeaderRejected && it.id == PidIds.TRANS_TEMP })
-            assertNull(source.readings.value[PidIds.TRANS_TEMP])
+            assertTrue(events.any { it is PollEvent.HeaderRejected && it.id == PIPELINE_CHANNEL_ID })
+            assertNull(source.readings.value[PIPELINE_CHANNEL_ID])
             assertEquals(
                 RPM,
                 source.readings.value
@@ -255,10 +420,13 @@ class RealVehicleDataSourceTest {
     @Test
     fun `a failed header restore is reported and retried at the top of the next cycle`() =
         runTest {
+            // Repointed in round 2: a restore can only fail after a header was actually set, and
+            // the falsified channel no longer sets one. The retry-at-top-of-cycle contract is
+            // unchanged and still fully asserted, now through PIPELINE_CHANNEL.
             val link = RecordingObdLink(FakeObdLink(transcript.filterNot { it.command == "ATSH7DF" }))
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
+            source.start(listOf(def(PidIds.RPM), def(PIPELINE_CHANNEL_ID)))
             runCurrent()
             runCycles(1)
 
@@ -286,7 +454,10 @@ class RealVehicleDataSourceTest {
             val link = RecordingObdLink(FakeObdLink(transcript, commandFaults = faults))
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.TRANS_TEMP), def(PidIds.RPM)))
+            // Repointed in round 2 for the same reason as the sibling restore test: the
+            // intra-cycle retry (review round-1 M1 of OBD-16) needs a manufacturer channel that
+            // actually sets a header, and the falsified one no longer does.
+            source.start(listOf(def(PIPELINE_CHANNEL_ID), def(PidIds.RPM)))
             runCurrent()
 
             val rpmAt = link.commands.indexOf("010C")
@@ -420,6 +591,7 @@ class RealVehicleDataSourceTest {
             config = config,
             clock = clock,
             onEvent = events::add,
+            extraChannels = listOf(PolledPid.Manufacturer(PIPELINE_CHANNEL)),
         )
 
     /** Starts a source, runs init plus cycle 0, and hands it back ready to assert on. */
@@ -488,7 +660,35 @@ class RealVehicleDataSourceTest {
         /** From the fixture: MAP `41 0B B4` = 180 kPa, baro `41 33 51` = 81 kPa. */
         const val BOOST_KPA = 99.0
 
+        /** From the fixture: baro `41 33 51`. */
+        const val BARO_KPA = 81.0
+
+        /** Enough scripted `NO DATA` answers to cover every cycle these tests run. */
+        const val NO_DATA_CYCLES = 20
+
         /** From the fixture: `61 30 91` → 145 − 50. */
         const val TRANS_TEMP_C = 95.0
+
+        /** A synthetic id, deliberately outside `PidCatalog`'s falsified-decode list. */
+        const val PIPELINE_CHANNEL_ID = "pipelineProbe"
+
+        /**
+         * The manufacturer channel these tests use to exercise the *scheduler pipeline*.
+         *
+         * Round-2 change (falsified-decode gate). `PidIds.TRANS_TEMP` used to be this vehicle,
+         * but its X-Gauge decode was falsified by the 2026-08-12 capture, so it is now neither
+         * sent nor stored — polling it is exactly what must no longer happen. The behaviour these
+         * tests actually cover is scheduler-level and spec-agnostic: does a `PolledPid.Manufacturer`
+         * run its whole five-command framed sequence inside one cycle, does a rejected `ATSH` cost
+         * only that channel, is an unacknowledged restore retried. So the pipeline gets a vehicle
+         * of its own rather than losing its coverage to a decision about a different question.
+         *
+         * It rides the same `2130` wire address as the fixture's scripted answer — the command
+         * sequence and the `61 30 91` reply are the point — under an id nothing has falsified.
+         */
+        val PIPELINE_CHANNEL: Mode22PidSpec =
+            MercedesPidRegistry.transTemp.let { source ->
+                source.copy(definition = source.definition.copy(id = PIPELINE_CHANNEL_ID))
+            }
     }
 }

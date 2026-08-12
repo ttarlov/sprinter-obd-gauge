@@ -2,6 +2,7 @@ package com.revel.obdgauge.protocol
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -109,6 +110,56 @@ class VendoredSaeScalingTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             VendoredSaeScaling.dataByte(ByteArray(0), 0)
+        }
+    }
+
+    // --- 0104 engine load / 0111 throttle: A * 100 / 255 percent (OBD-43) -------------------
+
+    @Test
+    fun `percent at raw 0x00 is exactly 0`() {
+        assertEquals(0.0, VendoredSaeScaling.percent(0x00), 0.0)
+    }
+
+    @Test
+    fun `percent at raw 0xFF is exactly 100, which is what the 255 divisor buys`() {
+        // The whole point of dividing by 255 rather than 256: full scale is full scale. A /256
+        // implementation lands on 99.609375 here and is wrong by a little bit everywhere else,
+        // which is invisible on a gauge and therefore exactly the kind of error to pin.
+        assertEquals(100.0, VendoredSaeScaling.percent(0xFF), 0.0)
+    }
+
+    @Test
+    fun `percent is exact wherever the SAE formula produces a whole number`() {
+        assertEquals(20.0, VendoredSaeScaling.percent(51), 0.0)
+        assertEquals(40.0, VendoredSaeScaling.percent(102), 0.0)
+        assertEquals(60.0, VendoredSaeScaling.percent(153), 0.0)
+        assertEquals(80.0, VendoredSaeScaling.percent(204), 0.0)
+    }
+
+    @Test
+    fun `percent reproduces the values captured from the van on 2026-08-12`() {
+        // docs/hardware/session-2026-08-12.md read 0x8E/0x90 as load "~56 %" and 0xD3 as
+        // throttle "83 %". Those rounded readings are the independent anchor — they were
+        // written down at the van, from a different tool, before this function existed.
+        assertEquals(56L, Math.round(VendoredSaeScaling.percent(0x8E)))
+        assertEquals(56L, Math.round(VendoredSaeScaling.percent(0x90)))
+        assertEquals(83L, Math.round(VendoredSaeScaling.percent(0xD3)))
+
+        // And the full-precision values behind them, so a change in the arithmetic (an
+        // int-truncating divide, a /256, a reordered multiply) cannot hide inside the rounding.
+        assertEquals(14200.0 / 255.0, VendoredSaeScaling.percent(0x8E), 0.0)
+        assertEquals(14400.0 / 255.0, VendoredSaeScaling.percent(0x90), 0.0)
+        assertEquals(21100.0 / 255.0, VendoredSaeScaling.percent(0xD3), 0.0)
+    }
+
+    @Test
+    fun `percent never leaves 0 to 100 and rises monotonically over the whole byte range`() {
+        var previous = -1.0
+        for (raw in 0..0xFF) {
+            val value = VendoredSaeScaling.percent(raw)
+            assertTrue("raw $raw produced $value", value in 0.0..100.0)
+            assertTrue("raw $raw did not increase: $previous -> $value", value > previous)
+            previous = value
         }
     }
 

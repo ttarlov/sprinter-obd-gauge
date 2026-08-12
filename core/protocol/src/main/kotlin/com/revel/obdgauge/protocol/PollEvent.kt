@@ -60,4 +60,27 @@ sealed interface PollEvent {
     data class UnknownPid(
         val id: String,
     ) : PollEvent
+
+    /**
+     * A requested channel cannot produce a value on this vehicle, said in types rather than
+     * leaving a gauge indistinguishable from a broken one.
+     *
+     * Emitted by [RealVehicleDataSource] **once per session, at plan time, before the first
+     * command goes out** — the verdict comes from [PidCatalog.availabilityOf]'s recorded survey,
+     * not from the wire, so there is nothing to wait for. Only non-[ChannelAvailability.Available]
+     * verdicts are emitted; a healthy channel produces no event, and there is **no** recovery
+     * event within a session (the survey table cannot change mid-session). A consumer that wants
+     * "current availability" should latch the events from session start; silence means available.
+     * (Round-1 review MAJOR-1: an earlier draft of this KDoc described an edge-triggered stream
+     * with publish-time re-evaluation and Available-on-recovery; none of that exists.)
+     *
+     * The alternative — publishing a [com.revel.obdgauge.model.Reading] with a placeholder value
+     * — is the one thing this module never does: a boost gauge reading 0 PSI because its MAP
+     * source does not exist looks exactly like a boost gauge reading 0 PSI because the engine is
+     * not pulling. See [ChannelAvailability].
+     */
+    data class ChannelAvailabilityChanged(
+        val id: String,
+        val availability: ChannelAvailability,
+    ) : PollEvent
 }

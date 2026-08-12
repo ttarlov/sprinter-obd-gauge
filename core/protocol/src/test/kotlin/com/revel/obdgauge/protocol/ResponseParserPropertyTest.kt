@@ -178,6 +178,8 @@ class ResponseParserPropertyTest {
                 PidRegistry.baro.definition.id to 0.0..255.0,
                 PidRegistry.speed.definition.id to 0.0..255.0,
                 PidRegistry.rpm.definition.id to 0.0..16383.75,
+                PidRegistry.engineLoad.definition.id to 0.0..100.0,
+                PidRegistry.throttlePosition.definition.id to 0.0..100.0,
             )
     }
 }

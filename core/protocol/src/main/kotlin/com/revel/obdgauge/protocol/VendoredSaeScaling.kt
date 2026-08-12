@@ -39,6 +39,15 @@ package com.revel.obdgauge.protocol
  * | `0133` | Barometric   | `A` kPa (absolute) | `bytesToInt(1 byte)`                           | yes     |
  * | `010D` | Speed        | `A` km/h           | `bytesToInt(1 byte)`                           | yes     |
  * | `010C` | Engine speed | `(256·A + B) / 4`  | `bytesToInt(2 bytes) / 4` — see the note below | see note |
+ * | `0104` | Engine load  | `A × 100 / 255` %  | **not vendored** — see the percentage note        | n/a     |
+ * | `0111` | Throttle pos | `A × 100 / 255` %  | **not vendored** — see the percentage note        | n/a     |
+ *
+ * **Percentage note (OBD-43).** [percent] is **not** vendored from kotlin-obd-api; it is taken
+ * directly from the SAE J1979 definitions of PID `04` (calculated engine load) and PID `11`
+ * (throttle position), which are the same `A × 100 / 255` full-scale-byte mapping. It lives in
+ * this file so that all mode-01 scaling has one home, but the Apache-2.0 header above covers the
+ * vendored formulas only — nothing in [percent] is derived from that project, and the licence
+ * obligation is unchanged either way.
  *
  * **RPM note (the one divergence, deliberate and documented rather than silent).** The
  * *formula and the constant* agree with SAE — `(256·A + B)` scaled by ¼. The *arithmetic* does
@@ -104,6 +113,24 @@ object VendoredSaeScaling {
     }
 
     /**
+     * Full-scale-byte percentage PIDs (`0104` calculated engine load, `0111` throttle position):
+     * `A × 100 / 255`, percent.
+     *
+     * The divisor is **255, not 256**: SAE defines the byte as a full-scale fraction, so raw
+     * `0xFF` is exactly 100 % and raw `0x00` is exactly 0 %. Dividing by 256 — an easy and
+     * invisible slip — would top the gauge out at 99.6 % and shift every reading below it, which
+     * is precisely the plausible-but-wrong number this module refuses to produce. Multiplying
+     * *before* dividing keeps the two endpoints and the exact quotients (e.g. raw `51` → 20 %,
+     * raw `204` → 80 %) bit-exact in IEEE-754 rather than merely close.
+     *
+     * Not vendored — see the percentage note on [VendoredSaeScaling].
+     */
+    fun percent(a: Int): Double {
+        requireDataByte(a, "A")
+        return a * PERCENT_FULL_SCALE / MAX_BYTE
+    }
+
+    /**
      * Reads [index] of [data] as an unsigned OBD data byte (`0..255`).
      *
      * Kotlin's `Byte` is signed, so a raw `0xBE` arrives as `-66`; every scaling call must mask
@@ -136,6 +163,9 @@ object VendoredSaeScaling {
 
     /** Big-endian byte weight, from kotlin-obd-api `ParserFunctions.kt`'s `bytesToInt` fold. */
     private const val HIGH_BYTE_WEIGHT = 256
+
+    /** SAE J1979 full-scale percentage numerator: raw `0xFF` maps to exactly 100 %. */
+    private const val PERCENT_FULL_SCALE = 100.0
 
     private const val MAX_BYTE = 255
     private const val BYTE_MASK = 0xFF

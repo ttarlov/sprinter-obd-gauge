@@ -29,15 +29,31 @@ data byte 18, scaling raw−50 °C. Ships `verified=false` until the cold-start 
   regulation; NOT yet movement-proven
 
 ## Acceptance criteria
-- [ ] Request/response cycle: header set/restore discipline (as Mode22Requester), 61 30
+- [x] Request/response cycle: header set/restore discipline (as Mode22Requester), 61 30
       validation, negative-response (7F 21 xx) typed handling, multi-frame reassembly
       against the captured raw-frame fixtures above (exact bytes as test fixtures)
-- [ ] Extraction: data byte 18, °C = raw − 50; PidDefinition `verified = false`
-- [ ] Byte-11 coolant cross-check decoder (same record, raw−50) as a consistency probe —
+- [x] Extraction: data byte 18, °C = raw − 50; PidDefinition `verified = false`
+- [x] Byte-11 coolant cross-check decoder (same record, raw−50) as a consistency probe —
       NOT displayed; test-only anchor
-- [ ] Fixture tests for all three captured records + the 7F 22 11 negative
+- [x] Fixture tests for all three captured records + the 7F 22 11 negative
 - [ ] 🖐 Hardware checklist (cold-start capture, Taras): byte 18 ≈ ambient+50 when cold,
       climbs toward 0x86 warm → flip verified=true in a follow-up
+
+## Notes for review
+- Fixtures are byte-exact in `TcuRecordCaptures` (test sources). The issue elides the unchanged
+  `10`/`21` frames of the post-stall and post-drive records as `…`; those are reconstructed from
+  the warm-idle record and carry bytes 4-10 only, which **no assertion reads**.
+- Header set/restore discipline was **extracted** into an internal `HeaderScope` shared by
+  `Mode22Requester` and the new `KwpRecordRequester` — behaviour-preserving, existing
+  `Mode22RequesterTest` green unchanged. Two copies of that restore logic would be two places for
+  it to rot, and the failure mode is silent (every standard gauge stops).
+- **Round 2 (review closing argument, accepted):** the falsified X-Gauge decode is now STOPPED,
+  not deferred to the id swap. `ChannelAvailability.DecodeFalsified` +
+  `PidCatalog.FALSIFIED_DECODES` + a `RealVehicleDataSource.applyPoll` gate mean `transTemp` is
+  never framed, never sent and never stored — only announced once at plan time. Distinct from
+  `UnsupportedByVehicle`: that one is still polled for discoverability, this one is not, because
+  what the byte means is already known. The id swap remains the endgame after the cold-start
+  proof, but nothing wrong reaches a gauge in the meantime.
 
 ## Out of scope
 Uncatalogued record fields (bytes 13/15 pairs, state fields); oil temp; MAP DID discovery.

@@ -50,9 +50,33 @@ data class StandardPidSpec(
  * `MODULE.md` for the mismatch this creates with `:app`'s current `DASHBOARD_PIDS` placeholder.
  *
  * Mode-22 (Mercedes) PIDs are **not** here: they arrive with OBD-15 and carry
- * [PidDefinition.verified] `= false` until hardware-verified. Everything in this registry is
- * `verified = true` by the SAE standard, though "verified against the standard" is not the same
- * as "verified against this van's ECU" — see `MODULE.md`'s known limitations.
+ * [PidDefinition.verified] `= false` until hardware-verified.
+ *
+ * ## Hardware status after session 1 (2026-08-12, OM642, engine running — OBD-43)
+ *
+ * Everything here is `verified = true`, and for six of the eight that is now backed by a live
+ * capture rather than only by the SAE standard:
+ *
+ * | PID | Channel | 2026-08-12 result |
+ * |---|---|---|
+ * | `0105` | [coolant] | ✓ `86` = 94 °C, all three ECUs agreed |
+ * | `010C` | [rpm] | ✓ `0B54`–`0B64` = 725–729 rpm at idle |
+ * | `0104` | [engineLoad] | ✓ `8E`/`90` ≈ 56 % |
+ * | `0111` | [throttlePosition] | ✓ `D3` ≈ 83 % — diesel intake flap, see its KDoc |
+ * | `010D` | [speed] | ✓ advertised in the `0100` bitmap (not individually captured) |
+ * | `0133` | [baro] | ✓ `52` = 82 kPa, consistent with ~5 800 ft |
+ * | `010B` | [map] | ✗ **`NO DATA` — not supported on this vehicle** |
+ * | `010F` | [intakeAirTemp] | ✗ **`NO DATA` — not supported** (the bitmap agrees) |
+ *
+ * **[map] and [intakeAirTemp] keep `verified = true` on purpose, and that is not a contradiction
+ * — it is the whole point of keeping two axes apart.** [PidDefinition.verified] answers "is this
+ * app's request and scaling for this PID correct?", which for two SAE-standard PIDs it is; it
+ * does not answer "will this van reply?". That second question is
+ * [PidCatalog.availabilityOf], which reports both of these as
+ * [ChannelAvailability.UnsupportedByVehicle] from the capture above — and which is what makes
+ * the computed boost channel degrade to a *typed unavailable state* instead of a silent zero.
+ * Conflating the two would have meant flipping a correct SAE decode to "unverified" and leaving
+ * the boost gauge with no way to say why it has nothing to show.
  */
 object PidRegistry {
     /** Engine coolant temperature, `0105`, `A − 40` °C. */
@@ -135,8 +159,56 @@ object PidRegistry {
             parse = { data -> VendoredSaeScaling.speedKmh(VendoredSaeScaling.dataByte(data, 0)) },
         )
 
+    /**
+     * Calculated engine load, `0104`, `A × 100 / 255` %.
+     *
+     * `FAST`: load is the engine's instantaneous answer to the pedal and to grade, moving on the
+     * same timescale as rpm and boost. Polling it on the SLOW cadence would show a value from up
+     * to five cycles ago next to a live boost needle — two numbers describing the same instant
+     * that disagree, which is worse than not showing it.
+     *
+     * Live-confirmed 2026-08-12 on the OM642 (`8E`/`90` ≈ 56 % at warm idle with AC on, at
+     * ~5 800 ft); the `0100` bitmap advertises it.
+     */
+    val engineLoad: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.ENGINE_LOAD,
+            label = "Load",
+            unit = MeasurementUnit.PERCENT,
+            pid = ENGINE_LOAD_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.FAST,
+            parse = { data -> VendoredSaeScaling.percent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /**
+     * Throttle position, `0111`, `A × 100 / 255` %.
+     *
+     * `FAST` for the same reason as [engineLoad] — it is a pedal-rate signal.
+     *
+     * **Diesel caveat, and it is not a small one.** On the OM642 this PID does not report a
+     * driver-commanded throttle plate: a diesel has no throttle butterfly metering power, and
+     * `0111` reads the *intake flap* (swirl/EGR actuator), which the 2026-08-12 capture found
+     * sitting at `D3` ≈ **83 % at warm idle with the pedal untouched**. Interpreted with gasoline
+     * intuition ("83 % throttle at idle") that number is alarming and wrong. It is a real,
+     * correctly scaled reading of a different actuator, and it does not travel 0→100 % with the
+     * pedal. Anything that thresholds, colours, or labels this channel must say "intake flap",
+     * not "throttle", and must not assume idle ≈ 0 %.
+     */
+    val throttlePosition: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.THROTTLE,
+            label = "Throttle",
+            unit = MeasurementUnit.PERCENT,
+            pid = THROTTLE_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.FAST,
+            parse = { data -> VendoredSaeScaling.percent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
     /** Every standard PID in the registry, in a stable declaration order. */
-    val all: List<StandardPidSpec> = listOf(coolant, rpm, map, baro, intakeAirTemp, speed)
+    val all: List<StandardPidSpec> =
+        listOf(coolant, rpm, map, baro, intakeAirTemp, speed, engineLoad, throttlePosition)
 
     /** The [PidDefinition]s of [all], for handing to a `VehicleDataSource`. */
     val definitions: List<PidDefinition> get() = all.map(StandardPidSpec::definition)
@@ -182,6 +254,8 @@ object PidRegistry {
     private const val BARO_PID = 0x33
     private const val IAT_PID = 0x0F
     private const val SPEED_PID = 0x0D
+    private const val ENGINE_LOAD_PID = 0x04
+    private const val THROTTLE_PID = 0x11
 
     private const val ONE_DATA_BYTE = 1
     private const val TWO_DATA_BYTES = 2
