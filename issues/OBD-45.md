@@ -4,7 +4,7 @@ title: Dual-channel builds — develop branch + dev/test APK alongside master bu
 module: tools
 owner: infra-agent
 sprint: adhoc
-status: in-progress
+status: in-review
 type: infra
 hardware-verify: false
 blocked-by: []
