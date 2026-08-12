@@ -129,3 +129,19 @@ verification/mutations and a normal review record so merge.sh is unchanged.
 displayed-value computation — Tier A never rides the small track (§5.5 outranks). BLOCKER
 findings or scope creep into excluded surface escalate to a spawned Tier-B reviewer.
 `track: small` recorded in issue frontmatter. Full spec: docs/05-local-workflow.md §6c.
+
+## D7 — Micro track: minimal-context small fixes (Taras, 2026-08-12)
+
+**Status:** decided by Taras 2026-08-12 — "small fixes need minimal token usage; they can
+run in isolation with minimal context."
+
+**Decision:** three execution sizes for ad-hoc work, orchestrator-tiered, recorded in
+issue frontmatter. `micro`: orchestrator edits directly (no agent), targeted tests once,
+no-self-review waived at this size only (merge.sh double gate + existing suite + Taras's
+on-device check are the net); hard-bounded to no-new-logic-path changes, never
+protocol/BLE/contracts/displayed-value. `small`: agent with a SURGICAL brief — exact
+file+line read-list, orchestrator diagnosis, targeted test tasks only, never full gate
+(merge.sh gates twice already); Haiku/low-effort when fully specified. Full track for
+anything architectural. Expected costs stated at filing (~20-40k / ~60-120k), ledger
+records actual vs expected. Calibration examples: OBD-46 should have been ~micro+;
+OBD-47 was correctly bigger (cross-remount design). Full spec: docs/05 §6c.1.

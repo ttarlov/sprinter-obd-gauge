@@ -292,6 +292,40 @@ feature size. For genuinely small asks that's the wrong tool. The small track:
 - **Merge target:** `develop`, like all ad-hoc work (§6b); dev APK on every merge.
 - **Cost expectation:** ~150-250k per small feature, vs ~450-650k on the full track.
 
+### 6c.1 Micro track (D7, Taras 2026-08-12): minimal-context execution
+
+D6's first runs (OBD-46 ~200k, OBD-47 ~300k) showed the cost is NOT the code — it's
+context: builders reading whole files, running the full gate, and iterating with a growing
+conversation. When the orchestrator has already done the design thinking, the builder is
+executing a spec, not solving a problem. Three sizes now, picked by the orchestrator and
+recorded as `track:` in frontmatter:
+
+- **`track: micro`** — fully-specified changes with no new logic paths: constants, copy,
+  colors, durations, parametric tweaks, mechanical renames. The ORCHESTRATOR edits
+  directly on a branch — no agent at all. Targeted test class run once; no new tests for
+  feel-only changes. Review record states `micro — orchestrator-authored` with the diff
+  summary; §5.4's no-self-review rule is EXPLICITLY waived at this size only, because the
+  safety net is structural: merge.sh still runs the full gate twice, the existing suite
+  still pins behavior, and Taras's on-device check is the real acceptance. Hard bounds:
+  never touches protocol/BLE/contracts, never anything computing a displayed value, never
+  a new code path. If the edit grows a second idea, stop and re-tier. Target: ~20-40k.
+- **`track: small`** — needs an agent (real code, but shaped by an orchestrator
+  diagnosis). The brief now MUST be surgical: exact files + line regions to read (the
+  agent reads ONLY those — no whole-file sweeps, no doc reads), the diagnosis, the
+  intended mechanism, and targeted test tasks ONLY — the builder never runs full gate.sh
+  (merge.sh runs it twice; a gate failure at merge bounces back, which is cheaper than
+  every builder paying the gate every time). Model: Haiku/low-effort when the mechanism is
+  fully specified; Sonnet when the agent must make layout/API judgment calls. Orchestrator
+  review as in §6c. Target: ~60-120k.
+- **Full track** (§5.5) — anything architectural. OBD-47 is the calibration example: "make
+  the pop match the shrink" sounded small but required cross-remount state design — that's
+  a design problem wearing a small hat, and pretending otherwise just moves the cost into
+  fix rounds.
+
+The orchestrator states the chosen track and its expected cost when filing the issue, and
+the ledger records actual vs expected — mis-tiering is a process bug to learn from, not
+hide.
+
 ## 7. Agent execution model (how this actually runs)
 
 - One orchestrating Claude session. Feature roles are **named subagents in isolated git worktrees** — parallel branches never collide in the working tree. Reviewer roles are fresh subagents per round (context isolation, §5.4).
