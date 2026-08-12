@@ -1,8 +1,8 @@
 package com.revel.obdgauge.app.gauge
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -22,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -30,13 +30,19 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
@@ -53,10 +59,12 @@ import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidIds
 import kotlinx.coroutines.flow.StateFlow
 
-// internal (not private): GaugePicker.kt's GaugePickerTile reuses these so the picker frame
-// matches the tile's own corner radius/padding exactly — "still THAT tile" (issues/OBD-42.md).
+// internal (not private): GaugePicker.kt's GaugePickerChrome/pickerShrink* helpers reuse these so
+// the picker frame and the OBD-44 shrink target both match the tile's own corner
+// radius/padding/background exactly — "still THAT tile" (issues/OBD-42.md).
 internal const val TILE_CORNER_RADIUS_DP = 16
 internal const val TILE_PADDING_DP = 16
+internal const val TILE_BACKGROUND_ALPHA = 0.18f
 private const val TILE_SPACING_DP = 12
 private const val SPARKLINE_TOP_PADDING_DP = 4
 
@@ -253,12 +261,20 @@ private fun GaugeTileGrid(
 }
 
 /**
- * Dispatches to [BoostTile] for the boost id (arc + neutral color), [GaugeTile] otherwise — or,
- * when [isPicking] is true, to [GaugePickerTile] (OBD-42's long-press swap carousel).
- * [AnimatedContent] cross-fades/scales between "normal tile" and "picker mode" so entering and
- * dismissing-without-selecting both read as the gauge sinking into, and rising back out of, its
- * own frame — see `GaugePicker.kt`'s `gaugePickerContentTransition`. A swap-select is *not*
- * animated across this boundary; see [GaugeTileGrid]'s KDoc for why.
+ * Dispatches to [BoostTile] for the boost id (arc + neutral color), [GaugeTile] otherwise — and,
+ * when [isPicking] is true, layers [GaugePickerChrome] (OBD-42's carousel of OTHER candidates)
+ * behind it. Unlike the pre-OBD-44 version, there is no [AnimatedContent] swap between "normal
+ * tile" and "picker mode" here: exactly ONE [GaugeTile]/[BoostTile] instance is composed for
+ * [id], always — OBD-44's AC ("single surface, no content pop/crossfade... stays live mid-
+ * shrink") requires that the composable rendering the live value is never torn down and remounted
+ * across the picker-mode boundary. What changes is purely visual: [progress] (0 normal → 1 fully
+ * picking) drives that one instance's own [pickerShrinkLayer] transform from filling this whole
+ * slot down to sitting inside [currentSlotBounds] — the picker chrome's reserved slot for the
+ * current gauge, measured via `onGloballyPositioned` and converted into this Box's own local
+ * coordinate space (via [outerCoordinates]) so the two composables agree on where "the mini-card
+ * position" actually is on screen. A swap-select (picking a DIFFERENT candidate) is *not*
+ * animated across the tile-identity boundary; see [GaugeTileGrid]'s KDoc for why — that path
+ * keeps OBD-42's local "rise" treatment entirely inside [GaugePickerChrome].
  */
 @Composable
 @Suppress("LongParameterList") // one param per input GaugeSlot's dispatch/callbacks actually need.
@@ -273,55 +289,160 @@ private fun GaugeSlot(
     onSelectCandidate: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // MINOR M3: fall back to a placeholder (like GaugePickerTile's own mini-cards already do)
+    // MINOR M3: fall back to a placeholder (like GaugePickerChrome's own mini-cards already do)
     // rather than skipping this slot's render entirely — DashboardUiState.Loading only carries
     // the four core placeholders (extraTiles is empty by default), so a tile freshly swapped to
     // a non-core id (e.g. rpm) would otherwise render as a gap in the layout for every frame
     // before the first real reading arrives.
     val tile = uiState.tileFor(id) ?: GaugeTileUiState.placeholder(id, GAUGE_CATALOG_BY_ID[id]?.label ?: id)
-    AnimatedContent(
-        targetState = isPicking,
-        modifier = modifier,
-        transitionSpec = { gaugePickerContentTransition() },
-        label = "gauge-picker-$id",
-    ) { picking ->
-        if (picking) {
-            GaugePickerTile(
+    val progress = rememberPickerShrinkProgress(isPicking, label = "gauge-picker-shrink-$id")
+
+    // The live GaugeTile/BoostTile's OWN (pre-transform) layout coordinates — both the "fullSize"
+    // pickerShrinkLayer shrinks FROM and the coordinate-space anchor used to convert the chrome's
+    // ghost position into a Rect this tile's own graphicsLayer transform can target. Deliberately
+    // NOT reset to null when isPicking flips false: GaugePickerChrome keeps rendering (and
+    // re-reporting the ghost's position) for as long as progress > 0f below, which spans the
+    // whole reverse "grow back to full tile" animation on dismiss — pickerShrinkLayer needs a
+    // valid target the entire time or the grow-back would snap instead of animating.
+    var tileCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var currentSlotBounds by remember { mutableStateOf<Rect?>(null) }
+
+    // `modifier` (carrying RowScope.weight()+fillMaxSize in landscape, or fillMaxWidth alone in
+    // portrait — see GaugeTileGrid) lives on THIS Box, exactly where AnimatedContent used to
+    // receive it pre-OBD-44: Row/Column only sees weight() on their own direct child, so it must
+    // land on whatever GaugeSlot's composition roots at. GaugeTile/BoostTile below gets no size
+    // modifier of its own (just the onGloballyPositioned decorator) and so inherits this Box's
+    // resolved constraints — filling it under landscape's tight weight-driven constraints, or
+    // driving its height from content under portrait's width-only ones — the same sizing
+    // behavior AnimatedContent had. That parity needs propagateMinConstraints = true (Box's
+    // default is false): Box normally LOOSENS a plain child's min constraints to 0, which would
+    // leave GaugeTile sized to wrap its own content instead of filling the weighted landscape
+    // slot (AnimatedContent isn't a Box and doesn't do this loosening). In portrait this Box's
+    // own incoming minHeight is already 0 (fillMaxWidth only, inside a scrolling Column), so
+    // propagating it changes nothing there — GaugeTile still sizes to its own content height.
+    // GaugePickerChrome, by contrast, DOES use Modifier.matchParentSize(): its own
+    // caption+carousel content must never influence this Box's resolved size, only fill whatever
+    // GaugeTile/BoostTile already determined it to be.
+    Box(modifier = modifier, propagateMinConstraints = true) {
+        if (progress > 0f) {
+            GaugePickerChrome(
                 currentId = id,
-                candidates = remember(id, gaugeOrder) { candidateGaugesFor(id, gaugeOrder) },
+                currentTile = tile,
+                candidates =
+                    remember(id, gaugeOrder) {
+                        candidateGaugesFor(id, gaugeOrder).filterNot { it.id == id }
+                    },
                 tileFor = uiState::tileFor,
+                alpha = progress,
                 onDismiss = onDismissPicker,
                 onSelectCandidate = onSelectCandidate,
+                isPicking = isPicking,
+                onCurrentSlotPositioned = { slotCoordinates ->
+                    // Review round-1 N1: both coordinates must still be attached to the layout
+                    // tree — a callback can fire after either side has been torn down (e.g. this
+                    // tile's own dismiss racing the chrome's teardown), and `localPositionOf` on
+                    // a detached `LayoutCoordinates` throws rather than returning a stale value.
+                    tileCoordinates?.let { anchor ->
+                        if (anchor.isAttached && slotCoordinates.isAttached) {
+                            val topLeft = anchor.localPositionOf(slotCoordinates, Offset.Zero)
+                            currentSlotBounds = Rect(topLeft, slotCoordinates.size.toSize())
+                        }
+                    }
+                },
+                modifier = Modifier.matchParentSize(),
             )
-        } else if (id == PidIds.BOOST) {
-            BoostTile(tile, sparkline, onLongPress = onLongPress, onTap = onDismissPicker)
+        }
+        val fullSize = tileCoordinates?.size?.toSize()
+        val liveModifier = Modifier.onGloballyPositioned { tileCoordinates = it }
+        if (id == PidIds.BOOST) {
+            BoostTile(
+                tile,
+                sparkline,
+                onLongPress = onLongPress,
+                onTap = onDismissPicker,
+                isPicking = isPicking,
+                shrinkProgress = progress,
+                fullSize = fullSize,
+                targetBounds = currentSlotBounds,
+                modifier = liveModifier,
+            )
         } else {
-            GaugeTile(tile, sparkline, onLongPress = onLongPress, onTap = onDismissPicker)
+            GaugeTile(
+                tile,
+                sparkline,
+                onLongPress = onLongPress,
+                onTap = onDismissPicker,
+                isPicking = isPicking,
+                shrinkProgress = progress,
+                fullSize = fullSize,
+                targetBounds = currentSlotBounds,
+                modifier = liveModifier,
+            )
         }
     }
 }
 
-/** One temp/numeric tile: label, large value, threshold-colored background, stale treatment, optional sparkline. */
+/**
+ * Review round-1 M3: a test-only hook, no-op by default (production code never overrides it —
+ * `LocalGaugeTileMountProbe.current` is only ever assigned in `GaugeSwapPickerTest`). `GaugeTile`/
+ * `BoostTile` fire it exactly once per `remember { }` — i.e. once per composition MOUNT, never on
+ * a plain in-place recomposition — so a test can assert the count stays at 1 across a long-press +
+ * dismiss cycle, directly pinning OBD-44's core architectural guarantee (`GaugeSlot`'s KDoc):
+ * this composable is never torn down and remounted across the picker-mode boundary. Guards
+ * against a regression as narrow as wrapping either tile's call site in `key(isPicking) { }`,
+ * which `waitForIdle()`-based value/tag assertions alone would not catch (the value would still
+ * eventually read correctly after a fresh remount — only the *liveness-during-the-animation* and
+ * *never-recreated* properties would be lost).
+ */
+internal val LocalGaugeTileMountProbe = compositionLocalOf<() -> Unit> { {} }
+
+/**
+ * One temp/numeric tile: label, large value, threshold-colored background, stale treatment,
+ * optional sparkline. OBD-44: also the single composable instance that plays the picker-mode
+ * shrink/grow for its own tile — see [GaugeSlot]'s KDoc. [isPicking]/[shrinkProgress]/[fullSize]/
+ * [targetBounds] are all `false`/`0f`/`null`/`null` by default so every pre-OBD-44 call site
+ * (including [DashboardScreenshotTest]'s two references, which never enter picker mode) renders
+ * byte-identical to before: [pickerShrinkLayer] and the picker-aware tag/interaction switch below
+ * both no-op whenever [shrinkProgress] is `0f`.
+ */
 @Composable
+@Suppress("LongParameterList") // one param per OBD-44 shrink input, all defaulted for non-picker call sites.
 fun GaugeTile(
     state: GaugeTileUiState,
     sparkline: StateFlow<List<SparklinePoint>>? = null,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
+    isPicking: Boolean = false,
+    shrinkProgress: Float = 0f,
+    fullSize: Size? = null,
+    targetBounds: Rect? = null,
 ) {
+    val mountProbe = LocalGaugeTileMountProbe.current
+    remember { mountProbe() }
     val zoneColor = zoneColor(state.zone)
+    val visuals = pickerShrinkVisuals(zoneColor, shrinkProgress)
     Box(
         modifier =
             modifier
-                .gaugeTileInteraction(state.id, state.zone, onLongPress, onTap)
-                .background(
-                    zoneColor.copy(alpha = TILE_BACKGROUND_ALPHA),
-                    RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp),
-                ).padding(TILE_PADDING_DP.dp),
+                .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
+                .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
+                .background(visuals.backgroundColor, visuals.shape)
+                .then(
+                    if (shrinkProgress > 0f) {
+                        Modifier.border(visuals.borderWidth, visuals.borderColor, visuals.shape)
+                    } else {
+                        Modifier
+                    },
+                ).padding(visuals.contentPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            // Review round-1 BLOCKER B1: counter-scales pickerShrinkLayer's anisotropic outer
+            // squash so this content renders uniformly (no smear) — see its KDoc.
+            modifier = Modifier.pickerShrinkContentCounterScale(shrinkProgress, fullSize, targetBounds),
+        ) {
             Text(
                 text = state.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -335,7 +456,7 @@ fun GaugeTile(
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("gauge-${state.id}-value"),
+                modifier = Modifier.testTag(pickerAwareValueTag(state.id, isPicking)),
             )
             state.staleText?.let { staleText ->
                 Text(
@@ -359,27 +480,43 @@ fun GaugeTile(
 
 /**
  * Boost tile: same shell as [GaugeTile] plus the [BoostArc] sweep indicator — see its KDoc for
- * [onLongPress]/[onTap].
+ * [onLongPress]/[onTap] and the OBD-44 shrink params.
  */
 @Composable
+@Suppress("LongParameterList") // one param per OBD-44 shrink input, all defaulted for non-picker call sites.
 private fun BoostTile(
     state: GaugeTileUiState,
     sparkline: StateFlow<List<SparklinePoint>>?,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
+    isPicking: Boolean = false,
+    shrinkProgress: Float = 0f,
+    fullSize: Size? = null,
+    targetBounds: Rect? = null,
 ) {
+    val mountProbe = LocalGaugeTileMountProbe.current
+    remember { mountProbe() }
+    val visuals = pickerShrinkVisuals(GaugeNeutral, shrinkProgress)
     Box(
         modifier =
             modifier
-                .gaugeTileInteraction(state.id, state.zone, onLongPress, onTap)
-                .background(
-                    GaugeNeutral.copy(alpha = TILE_BACKGROUND_ALPHA),
-                    RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp),
-                ).padding(TILE_PADDING_DP.dp),
+                .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
+                .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
+                .background(visuals.backgroundColor, visuals.shape)
+                .then(
+                    if (shrinkProgress > 0f) {
+                        Modifier.border(visuals.borderWidth, visuals.borderColor, visuals.shape)
+                    } else {
+                        Modifier
+                    },
+                ).padding(visuals.contentPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.pickerShrinkContentCounterScale(shrinkProgress, fullSize, targetBounds),
+        ) {
             Text(
                 text = state.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -394,7 +531,7 @@ private fun BoostTile(
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("gauge-${state.id}-value"),
+                modifier = Modifier.testTag(pickerAwareValueTag(state.id, isPicking)),
             )
             sparkline?.let { flow ->
                 GaugeSparklineStrip(
@@ -425,8 +562,6 @@ private fun GaugeSparklineStrip(
     val points by flow.collectAsStateWithLifecycle()
     SparklineChart(points = points, color = color, modifier = modifier.testTag("gauge-$id-sparkline"))
 }
-
-private const val TILE_BACKGROUND_ALPHA = 0.18f
 
 /** Zone→theme-color mapping backing each tile's background. Internal so tests can pin it. */
 internal fun zoneColor(zone: ThresholdZone): Color =
