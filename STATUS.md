@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (OBD-46 small-track) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **25 merged / 41 issues** (OBD-44+46 on `develop`, NOT yet promoted to main). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (OBD-47 small-track) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **26 merged / 42 issues** (OBD-44+46+47 on `develop`, NOT yet promoted to main). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -13,7 +13,7 @@
 | | |
 |---|---|
 | Current phase | **ALL OF SPRINT 2 COMPLETE** — 24/40 merged (OBD-44 on `develop` awaiting promotion). Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
-| Repo | Gate green on `main` @ `0723e58` (merge.sh step 7 verified @ `ecbafa9`) and on `develop` @ `be735ac` (merge.sh step 7). **No open branches.** Channel APKs staged: `builds/main/` @ ecbafa9, `builds/dev/` @ 3288e67 (installed on Pixel) |
+| Repo | Gate green on `main` @ `0723e58` (merge.sh step 7 verified @ `ecbafa9`) and on `develop` @ `be735ac` (merge.sh step 7). **No open branches.** Channel APKs staged: `builds/main/` @ ecbafa9, `builds/dev/` @ 2234744 (install pending — phone disconnected) |
 | Blockers | None. 🖐 Taras: OBD-44 feel verdict on the dev build (shrink animation) → promotion develop→main; side-by-side install ✅ confirmed on the Pixel 2026-08-12 (both packages coexist) |
 | Next action | Taras: sideload `builds/dev/app-dev-debug.apk`, feel-test the shrink, say "promote" (or send it back for a feel round) — or start Sprint 3 software half: "run Sprint 3, +900k". Sprint 3's hardware gates (🖐 OBD-22a/22b/26) still need the van/dongle |
 
@@ -152,3 +152,4 @@ Hardware gates — **🖐 TARAS**:
 | OBD-42 wave (feature request) | ~600k est | ~915k | 2 arb-assisted rounds | Long-press swap carousel. Swap correctness held from round 1 (4/4 mutations); reviews caught stale-picker-state (eaten back press), catalog-drift resurrection via forward-simulation, and a zero-tile unrecoverable state. UI-wave 2x pattern holds. |
 | OBD-44/45 wave (ad-hoc pair) | ~500k (orch-set) | ~930k | 0 | infra 119k / ui build+fix 602k / Opus review 158k / orch ~50k. Review earned it again: BLOCKER (2.9:1 anisotropic squash, blessed by its own re-recorded screenshot) + 3 vacuous-test MAJORs incl. a mutation that survived every unit test and was caught only by the defective reference image. Cost postmortem → D6 small track (builder agent + orchestrator review, ~150-250k target) for future tiny asks; full builder+reviewer shape has a proven ~450k floor. |
 | OBD-46 small-track (D6 first run) | 150-250k | ~200k (build 181k + orch review) | 0 | Corner-parity bug (anisotropic scale squashing radius+border — builder measured 2.9:1 border distortion and fixed beyond brief) + shrink 220→300ms. D6 shape validated: brief-prescribed git flow, orchestrator review, on-device verify. |
+| OBD-47 small-track (swap-grow) | 150-250k | ~300k (build 282k + orch review incl. live mutation) | 0 | Swap-in hard cut → grow-in from tapped card's rect via cross-remount handoff registry; same spec/stack as shrink. Priciest small-track yet — remount plumbing; still ~1/3 of full track. |
