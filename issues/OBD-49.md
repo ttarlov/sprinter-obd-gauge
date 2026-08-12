@@ -4,7 +4,7 @@ title: KWP 21 30 trans-temp channel — TCU record requester + byte-18 extractio
 module: core/protocol
 owner: protocol-agent
 sprint: 3
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: true
 blocked-by: []
