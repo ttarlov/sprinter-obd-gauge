@@ -40,11 +40,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -57,7 +63,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
@@ -84,7 +92,7 @@ import androidx.compose.ui.unit.lerp as lerpDp
 // candidates) plus the shared shrink-transform primitives GaugeTile/BoostTile apply to
 // themselves.
 
-private const val PICKER_SHRINK_MS = 220
+private const val PICKER_SHRINK_MS = 300
 private const val PICKER_SHRINK_ELEVATION_DP = 6
 
 /**
@@ -165,12 +173,24 @@ internal data class PickerShrinkVisuals(
     val borderWidth: Dp,
     val contentPadding: Dp,
     val elevation: Dp,
+    val cornerRadius: Dp,
 )
 
+/**
+ * OBD-46: [fullSize]/[targetBounds] (same inputs [pickerShrinkLayer] itself takes) let this
+ * compute the settled ANISOTROPIC-compensated corner shape — see [AnisotropicRoundedCornerShape]'s
+ * KDoc for why a plain single-radius [RoundedCornerShape] reads squashed/near-square once drawn
+ * inside [pickerShrinkLayer]'s independent scaleX/scaleY transform. Both default to `null` so
+ * pre-OBD-46 call sites (if any ever call this without them) fall back to the plain isotropic
+ * shape unchanged — matching the one frame per long-press where [pickerShrinkLayer] itself hasn't
+ * picked up a target yet either (see its KDoc), so there is no live anisotropy to compensate for.
+ */
 @Composable
 internal fun pickerShrinkVisuals(
     zoneColor: Color,
     progress: Float,
+    fullSize: Size? = null,
+    targetBounds: Rect? = null,
 ): PickerShrinkVisuals {
     val cornerRadius = lerpDp(TILE_CORNER_RADIUS_DP.dp, MINI_CARD_CORNER_RADIUS_DP.dp, progress)
     val miniComposite = lerpColor(MaterialTheme.colorScheme.surface, zoneColor, MINI_CARD_ZONE_ALPHA)
@@ -178,13 +198,21 @@ internal fun pickerShrinkVisuals(
     val borderColor = MaterialTheme.colorScheme.primary.copy(alpha = progress)
     val borderWidth = lerpDp(0.dp, MINI_CARD_CURRENT_BORDER_WIDTH_DP.dp, progress)
     val elevation = lerpDp(0.dp, PICKER_SHRINK_ELEVATION_DP.dp, progress)
+    val scale = outerScaleFactors(progress, fullSize, targetBounds)
+    val shape =
+        if (scale == null) {
+            RoundedCornerShape(cornerRadius)
+        } else {
+            AnisotropicRoundedCornerShape(cornerRadius / scale.x, cornerRadius / scale.y)
+        }
     return PickerShrinkVisuals(
-        RoundedCornerShape(cornerRadius),
+        shape,
         backgroundColor,
         borderColor,
         borderWidth,
         TILE_PADDING_DP.dp,
         elevation,
+        cornerRadius,
     )
 }
 
@@ -208,7 +236,7 @@ internal fun pickerShrinkVisuals(
  * No-ops (returns [this] unchanged) until both [fullSize] and [targetBounds] are known — the
  * first composition frame after a long-press, before the chrome's ghost has reported its
  * position via `onGloballyPositioned`, briefly renders the full tile un-transformed rather than
- * guessing a position; the transform picks up on the next frame, well within the ~220 ms shrink
+ * guessing a position; the transform picks up on the next frame, well within the ~300 ms shrink
  * (or, under `Settings.Global.ANIMATOR_DURATION_SCALE = 0`, the very next frame after the `snap`
  * — see [rememberPickerShrinkAnimationSpec]'s KDoc, review round-1 N3).
  */
@@ -219,17 +247,14 @@ internal fun Modifier.pickerShrinkLayer(
     shape: Shape,
     elevation: Dp,
 ): Modifier {
-    if (progress <= 0f || targetBounds == null || !fullSize.isUsable()) {
-        return this
-    }
+    val scale = outerScaleFactors(progress, fullSize, targetBounds) ?: return this
     val size = requireNotNull(fullSize)
+    val bounds = requireNotNull(targetBounds)
     return this.graphicsLayer {
-        val scaleXTarget = targetBounds.width / size.width
-        val scaleYTarget = targetBounds.height / size.height
-        scaleX = lerp(1f, scaleXTarget, progress)
-        scaleY = lerp(1f, scaleYTarget, progress)
+        scaleX = scale.x
+        scaleY = scale.y
         val fullCenter = Offset(size.width / 2f, size.height / 2f)
-        val targetCenter = targetBounds.center
+        val targetCenter = bounds.center
         translationX = (targetCenter.x - fullCenter.x) * progress
         translationY = (targetCenter.y - fullCenter.y) * progress
         this.shape = shape
@@ -256,23 +281,143 @@ internal fun Modifier.pickerShrinkContentCounterScale(
     fullSize: Size?,
     targetBounds: Rect?,
 ): Modifier {
-    if (progress <= 0f || targetBounds == null || !fullSize.isUsable()) {
-        return this
-    }
-    val size = requireNotNull(fullSize)
+    val scale = outerScaleFactors(progress, fullSize, targetBounds) ?: return this
+    val uniformScale = min(scale.x, scale.y)
     return this.graphicsLayer {
-        val scaleXTarget = targetBounds.width / size.width
-        val scaleYTarget = targetBounds.height / size.height
-        val outerScaleX = lerp(1f, scaleXTarget, progress)
-        val outerScaleY = lerp(1f, scaleYTarget, progress)
-        val uniformScale = lerp(1f, min(scaleXTarget, scaleYTarget), progress)
-        scaleX = uniformScale / outerScaleX
-        scaleY = uniformScale / outerScaleY
+        scaleX = uniformScale / scale.x
+        scaleY = uniformScale / scale.y
     }
 }
 
 /** True when non-null and both dimensions are positive — a usable shrink-transform source size. */
 private fun Size?.isUsable(): Boolean = this != null && width > 0f && height > 0f
+
+/**
+ * The per-axis scale factors [pickerShrinkLayer]'s outer transform is driven by at [progress] —
+ * the single source [pickerShrinkContentCounterScale]'s uniform counter-scale,
+ * [pickerShrinkVisuals]'s [AnisotropicRoundedCornerShape] compensation, and [pickerShrinkBorder]'s
+ * ring-width compensation all read, so all four always agree on the exact same numbers instead of
+ * four independent (and possibly drifting) copies of this arithmetic. `null` before both
+ * [fullSize] and [targetBounds] are known — the same guard [pickerShrinkLayer] itself no-ops on
+ * (see its KDoc for why that single frame is transient and harmless).
+ */
+private fun outerScaleFactors(
+    progress: Float,
+    fullSize: Size?,
+    targetBounds: Rect?,
+): ScaleFactors? {
+    if (progress <= 0f || targetBounds == null || !fullSize.isUsable()) {
+        return null
+    }
+    val size = requireNotNull(fullSize)
+    return ScaleFactors(
+        x = lerp(1f, targetBounds.width / size.width, progress),
+        y = lerp(1f, targetBounds.height / size.height, progress),
+    )
+}
+
+private data class ScaleFactors(
+    val x: Float,
+    val y: Float,
+)
+
+/**
+ * A rounded-rect [Shape] with INDEPENDENT x/y corner radii — [RoundedCornerShape] only takes a
+ * single radius per corner, which is exactly what breaks once the shape is drawn INSIDE
+ * [pickerShrinkLayer]'s anisotropic (independent scaleX/scaleY) `graphicsLayer`: a shape's
+ * `clip`/outline is defined in this layer's own PRE-scale local coordinate space, then that whole
+ * space gets squashed per-axis by the layer's `scaleX`/`scaleY` — so a nominally-round corner of
+ * radius `r` renders as an ELLIPSE of semi-axes `r * scaleX` (horizontal) and `r * scaleY`
+ * (vertical). In portrait, [pickerShrinkLayer]'s settled scale factors are wildly anisotropic
+ * (≈0.52 × ≈0.18 — the full tile is portrait-tall, the mini-card slot it lands in is
+ * landscape-wide), so a single 12dp target radius comes out as a ~6dp × ~2dp sliver: visually
+ * near-square, not the intended rounding (OBD-46).
+ *
+ * The fix: choose [radiusX]/[radiusY] so that, AFTER the outer layer's own per-axis scale is
+ * applied, the rendered corner is isotropic again — i.e. `radiusX * scaleX == radiusY * scaleY ==`
+ * the intended visual radius. Callers ([pickerShrinkVisuals]) do this by dividing the intended
+ * visual radius by each axis's own scale factor before constructing this shape; at `progress ==
+ * 0f` both scale factors are `1f`, so [radiusX]/[radiusY] collapse back to the plain full-tile
+ * radius — this shape is a strict superset of the isotropic case, not a special-cased override of
+ * it.
+ */
+private class AnisotropicRoundedCornerShape(
+    private val radiusX: Dp,
+    private val radiusY: Dp,
+) : Shape {
+    override fun createOutline(
+        size: Size,
+        layoutDirection: LayoutDirection,
+        density: Density,
+    ): Outline {
+        val rx = with(density) { radiusX.toPx() }.coerceIn(0f, size.width / 2f)
+        val ry = with(density) { radiusY.toPx() }.coerceIn(0f, size.height / 2f)
+        return Outline.Rounded(RoundRect(Rect(Offset.Zero, size), CornerRadius(rx, ry)))
+    }
+}
+
+/**
+ * Draws [pickerShrinkVisuals]'s border as a filled even-odd RING (outer round-rect minus an inner
+ * one) rather than [androidx.compose.foundation.border]'s single uniform-width stroke. Reasoning
+ * mirrors [AnisotropicRoundedCornerShape]: [androidx.compose.foundation.border] draws its stroke
+ * at a fixed width in [pickerShrinkLayer]'s own PRE-scale local space, so once that layer's
+ * anisotropic `scaleX`/`scaleY` are applied, the RENDERED thickness differs by direction around
+ * the shape (thicker on the axis with the larger scale factor, thinner on the smaller one) instead
+ * of reading as one uniform border (OBD-46).
+ *
+ * [insetX]/[insetY] pre-compensate exactly like [AnisotropicRoundedCornerShape]'s own radii do —
+ * divide the intended visual [borderWidth] by that axis's own scale factor — and, because the
+ * outer boundary's per-axis radii were built the SAME way, subtracting each axis's inset from its
+ * own radius keeps the inner boundary concentric with the outer one after the scale is applied
+ * too: the ring comes out a uniform visual width all the way around, corners included, not just on
+ * the four straight edges.
+ *
+ * Falls back to a plain [androidx.compose.foundation.border] using [visuals]'s own (isotropic)
+ * [PickerShrinkVisuals.shape] whenever there's no live anisotropy to compensate for —
+ * [PickerShrinkVisuals.borderWidth] is `0.dp` (progress `0f`, nothing to draw) or
+ * [outerScaleFactors] itself returns `null` (the same single unmeasured frame [pickerShrinkLayer]
+ * no-ops on — [pickerShrinkVisuals] reads that identical `null` and already falls back to a plain
+ * [RoundedCornerShape] for [PickerShrinkVisuals.shape] itself in that case).
+ */
+internal fun Modifier.pickerShrinkBorder(
+    progress: Float,
+    fullSize: Size?,
+    targetBounds: Rect?,
+    visuals: PickerShrinkVisuals,
+): Modifier {
+    if (visuals.borderWidth <= 0.dp) {
+        return this
+    }
+    val scale = outerScaleFactors(progress, fullSize, targetBounds)
+    return if (scale == null) {
+        this.border(visuals.borderWidth, visuals.borderColor, visuals.shape)
+    } else {
+        val radiusX = visuals.cornerRadius / scale.x
+        val radiusY = visuals.cornerRadius / scale.y
+        val insetX = visuals.borderWidth / scale.x
+        val insetY = visuals.borderWidth / scale.y
+        this.drawWithContent {
+            drawContent()
+            val rx = radiusX.toPx().coerceIn(0f, size.width / 2f)
+            val ry = radiusY.toPx().coerceIn(0f, size.height / 2f)
+            val insetXPx = insetX.toPx().coerceIn(0f, size.width / 2f)
+            val insetYPx = insetY.toPx().coerceIn(0f, size.height / 2f)
+            val outer = RoundRect(Rect(Offset.Zero, size), CornerRadius(rx, ry))
+            val inner =
+                RoundRect(
+                    Rect(insetXPx, insetYPx, size.width - insetXPx, size.height - insetYPx),
+                    CornerRadius((rx - insetXPx).coerceAtLeast(0f), (ry - insetYPx).coerceAtLeast(0f)),
+                )
+            val ring =
+                Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addRoundRect(outer)
+                    addRoundRect(inner)
+                }
+            drawPath(ring, color = visuals.borderColor)
+        }
+    }
+}
 
 /**
  * The touch handling GaugeTile/BoostTile apply to themselves: normal [gaugeTileInteraction]
@@ -362,7 +507,7 @@ private const val CARD_SCALE_ANIMATION_MS = 150
  * [isPicking] gates candidate taps (review round-1 N2): this composable stays mounted for as
  * long as [alpha]'s backing `progress` is above 0, which spans the WHOLE reverse "grow back to
  * full tile" animation after a dismiss — [isPicking] itself, by contrast, flips to `false`
- * immediately. Without this gate, a candidate card tapped during that ~220 ms grow-back window
+ * immediately. Without this gate, a candidate card tapped during that ~300 ms grow-back window
  * (fading out, but still fully composed and hit-testable) would fire a swap-select on a tile
  * that's already in the process of closing.
  */

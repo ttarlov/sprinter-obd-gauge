@@ -2,7 +2,6 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -421,19 +420,18 @@ fun GaugeTile(
     val mountProbe = LocalGaugeTileMountProbe.current
     remember { mountProbe() }
     val zoneColor = zoneColor(state.zone)
-    val visuals = pickerShrinkVisuals(zoneColor, shrinkProgress)
+    val visuals = pickerShrinkVisuals(zoneColor, shrinkProgress, fullSize, targetBounds)
     Box(
         modifier =
             modifier
                 .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
                 .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
                 .background(visuals.backgroundColor, visuals.shape)
-                .then(
-                    if (shrinkProgress > 0f) {
-                        Modifier.border(visuals.borderWidth, visuals.borderColor, visuals.shape)
-                    } else {
-                        Modifier
-                    },
+                .pickerShrinkBorder(
+                    progress = shrinkProgress,
+                    fullSize = fullSize,
+                    targetBounds = targetBounds,
+                    visuals = visuals,
                 ).padding(visuals.contentPadding),
         contentAlignment = Alignment.Center,
     ) {
@@ -497,19 +495,18 @@ private fun BoostTile(
 ) {
     val mountProbe = LocalGaugeTileMountProbe.current
     remember { mountProbe() }
-    val visuals = pickerShrinkVisuals(GaugeNeutral, shrinkProgress)
+    val visuals = pickerShrinkVisuals(GaugeNeutral, shrinkProgress, fullSize, targetBounds)
     Box(
         modifier =
             modifier
                 .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
                 .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
                 .background(visuals.backgroundColor, visuals.shape)
-                .then(
-                    if (shrinkProgress > 0f) {
-                        Modifier.border(visuals.borderWidth, visuals.borderColor, visuals.shape)
-                    } else {
-                        Modifier
-                    },
+                .pickerShrinkBorder(
+                    progress = shrinkProgress,
+                    fullSize = fullSize,
+                    targetBounds = targetBounds,
+                    visuals = visuals,
                 ).padding(visuals.contentPadding),
         contentAlignment = Alignment.Center,
     ) {

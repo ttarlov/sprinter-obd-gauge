@@ -320,7 +320,7 @@ class GaugeSwapPickerTest {
      * correctly)." Review round-1 MAJOR M2: the original version of this test advanced a FIXED
      * delta from an assumed `t == 0`, but `performTouchInput { longClick() }`'s own synthetic
      * gesture already advances `mainClock` by roughly its long-press timeout (~630 ms, comfortably
-     * past `PICKER_SHRINK_MS`'s 220 ms) as part of recognizing the gesture at all — the fixed
+     * past `PICKER_SHRINK_MS`'s 300 ms) as part of recognizing the gesture at all — the fixed
      * delta landed a few ms BEFORE the animation settled, making the test pass even against a
      * broken (already-settled) implementation. Fixed by advancing a small delta from
      * `mainClock.currentTime` captured immediately AFTER the gesture, and — this is the "so drift
@@ -373,7 +373,7 @@ class GaugeSwapPickerTest {
      * attempt (pause `mainClock`, trigger the long-press via `longClick()`, advance exactly one
      * frame) turned out to be vacuous too: `longClick()`'s own synthetic gesture already advances
      * `mainClock` by roughly its long-press timeout as part of recognizing the gesture at all
-     * (~630 ms, comfortably longer than `PICKER_SHRINK_MS`'s 220 ms) — a REAL tween would have
+     * (~630 ms, comfortably longer than `PICKER_SHRINK_MS`'s 300 ms) — a REAL tween would have
      * fully settled by the time `longClick()` even returns, one frame or not.
      *
      * Fixed by driving the press manually — `down()` then `advanceEventTime()` in small polled
@@ -383,7 +383,7 @@ class GaugeSwapPickerTest {
      * resolve) — stopping the INSTANT the picker-card identity appears, i.e. as close to the real
      * long-press threshold as this polling granularity allows. At that exact instant, a real
      * `snap()` must have the shrink ALREADY at (or very near) its settled size; a `tween` — even a
-     * 220 ms one — would still be almost full-size, since barely any *animation* time has elapsed
+     * 300 ms one — would still be almost full-size, since barely any *animation* time has elapsed
      * beyond the threshold crossing itself.
      */
     @Test
