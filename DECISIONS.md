@@ -113,3 +113,19 @@ docs/05-local-workflow.md §D5.
 **Implementation:** OBD-45 (`tools/channel-build.sh`, `app/build.gradle.kts` channel
 switch, `tools/merge.sh` `MERGE_TARGET_BRANCH` + post-merge instruction, `builds/`
 gitignored). Full spec: docs/05-local-workflow.md §D5.
+
+## D6 — Small-track ad-hoc: agent builds, orchestrator reviews (Taras, 2026-08-11)
+
+**Status:** decided by Taras 2026-08-11, prompted by the OBD-44/45 wave costing ~625k for a
+"tiny" request (the full builder+reviewer shape has a ~450k floor on :app work).
+
+**Decision:** small ad-hoc features get a lighter shape: a spawned builder agent in a
+worktree (isolation stays), with the orchestrator (1) prescribing the complete workflow and
+git process in the spawn brief — branch, base, merge target, commit rules, gate — and
+(2) performing the quality review itself instead of spawning a reviewer, with targeted
+verification/mutations and a normal review record so merge.sh is unchanged.
+
+**Bounds:** single-module :app/tooling work only; no contract surface, no protocol/BLE, no
+displayed-value computation — Tier A never rides the small track (§5.5 outranks). BLOCKER
+findings or scope creep into excluded surface escalate to a spawned Tier-B reviewer.
+`track: small` recorded in issue frontmatter. Full spec: docs/05-local-workflow.md §6c.

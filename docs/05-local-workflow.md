@@ -266,6 +266,32 @@ alternatives, not "`merge.sh` invokes `channel-build.sh` automatically."
 **`develop` branch:** already created from `main` (OBD-45). No further scaffolding — it's an
 ordinary long-lived branch, gated by the same `tools/gate.sh` as `main`.
 
+## 6c. Small-track ad-hoc (D6)
+
+(Taras, 2026-08-11, after the OBD-44/45 wave ran ~625k on a "tiny" request.) The full
+builder-agent + reviewer-agent shape has a ~450k floor for anything touching `:app` —
+fixed overhead (doc reads, repeated gradle runs, gate, screenshots) dominates regardless of
+feature size. For genuinely small asks that's the wrong tool. The small track:
+
+- **Builder: still a spawned agent in a worktree** (isolation is non-negotiable), but the
+  orchestrator's spawn brief **prescribes the entire workflow and git process** — branch
+  name and base, merge target, commit granularity + `Role:` trailer, which gradle tasks to
+  run, gate requirement, no-merge rule. The brief IS the workflow contract; the agent
+  follows it, not its own process judgment.
+- **Review: the orchestrator, not a spawned reviewer.** Diff read hunk-by-hunk plus
+  targeted verification (run the tests, mutation-check anything that smells unpinned).
+  Review record written to `reviews/OBD-N-round1.md` on the branch as usual — the merge.sh
+  contract is unchanged.
+- **Qualifies:** single-module `:app` or tooling work with no contract surface, no
+  protocol/BLE changes, and nothing that computes or transforms a displayed value. Tier A
+  work NEVER rides the small track — §5.5 tiering outranks this section. The orchestrator
+  makes the call and records `track: small` in the issue frontmatter.
+- **Escalation valve:** if the orchestrator's review finds a BLOCKER, or the diff turns out
+  to touch qualifying-exclusion surface, the round escalates to a spawned Tier-B reviewer —
+  the small track is a cost optimization, not a quality waiver.
+- **Merge target:** `develop`, like all ad-hoc work (§6b); dev APK on every merge.
+- **Cost expectation:** ~150-250k per small feature, vs ~450-650k on the full track.
+
 ## 7. Agent execution model (how this actually runs)
 
 - One orchestrating Claude session. Feature roles are **named subagents in isolated git worktrees** — parallel branches never collide in the working tree. Reviewer roles are fresh subagents per round (context isolation, §5.4).
