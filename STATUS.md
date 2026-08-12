@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (SPRINT 3 WAVE 1 START — post hardware session 1) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **26 merged / 42 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (Sprint 3 wave 1 END — protocol merged; ble+app parked at ceiling) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **28 merged / 44 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -13,9 +13,9 @@
 | | |
 |---|---|
 | Current phase | **ALL OF SPRINT 2 COMPLETE + picker feel stack promoted** — 26/42 merged, channels aligned @ ca896b5. Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
-| Repo | Gate green on `main` @ `ca896b5` (full gate post-promotion); `develop` fast-forwarded to same. **No open branches.** Master APK @ ca896b5 installed on Pixel (replaces old master); dev APK @ 2234744 also on device |
-| Blockers | None. Feel verdict ✅ accepted + promoted 2026-08-12; side-by-side install ✅ confirmed |
-| Next action | Sprint 3 wave 1 in flight. 🖐 Taras: COLD-START capture (30s, before morning drive) settles OBD-49's byte-18 proof. Hardware session 1 done 2026-08-12 — see docs/hardware/session-2026-08-12.md |
+| Repo | Gate green on `main` @ `60e5a57` (merge.sh double gate); develop ff'd. **Two parked branches:** `ble/23-48-reconnect-traffic` @ 69b3713 (BLOCKER: retry exception boundary), `ui/24-27-service-badge` @ 67a182f (BLOCKER: FGS perm crash) — full fix briefs in reviews/OBD-23-round1.md + OBD-24-round1.md on the branches. Master APK rebuilt @ a9e2a39 (not yet reinstalled — no UI change) |
+| Blockers | Ceiling: Sprint 3 wave 1 closed at ~1.5M vs +900k. 🖐 Taras: (1) cold-start capture (gates trans-temp verify + id swap), (2) "+400k fix wave" to land ble+app parked branches, then OBD-25 (+300k, hazard statement ready in reviews/OBD-24-round1.md) |
+| Next action | Taras: "run the fix wave, +400k" (lands OBD-23/48/24/27) → then "OBD-25, +300k" (prod wiring — real gauges in the van). 🖐 cold-start capture whenever a cold morning allows |
 
 ## Wave board
 
@@ -29,7 +29,7 @@
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ✅ done 2026-08-11 | ~1.0M | 2 merged / 0 rolled |
 | Ad-hoc — OBD-42 swap carousel | ~600k est | ✅ done 2026-08-11 | ~915k | 1 merged / 0 rolled |
 | Ad-hoc — OBD-44 shrink animation + OBD-45 dual-channel builds | ~500k (orchestrator-set) | ✅ done 2026-08-11 — OBD-45 → main, OBD-44 → develop (promotion = Taras feel verdict) | ~930k | 2 merged / 0 rolled |
-| Sprint 3 — Real Van (software half) | +900k (overrun risk ~1.1M flagged at start; OBD-25 rolls if ceiling hits) | 🔄 wave 1 started 2026-08-12: ble(23+48) protocol(43+49) app(24+27) parallel; OBD-25 wave 2 | — | — |
+| Sprint 3 — Real Van (software half) | +900k | 🔄 wave 1 closed 2026-08-12: OBD-43+49 MERGED (60e5a57, 247 protocol tests); ble(23+48) + app(24+27) PARKED changes-requested at ceiling — fix briefs committed on branches | ~1.5M | 2 merged / 4 parked |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
