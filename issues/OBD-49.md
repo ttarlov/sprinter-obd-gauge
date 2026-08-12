@@ -41,3 +41,11 @@ data byte 18, scaling raw−50 °C. Ships `verified=false` until the cold-start 
 
 ## Out of scope
 Uncatalogued record fields (bytes 13/15 pairs, state fields); oil temp; MAP DID discovery.
+
+## Hardware checklist (session 1, 2026-08-12 — Taras at the van, engine running)
+- [x] `ATSH7E1` + `220543` → `7F 22 11` observed (UDS hypothesis falsified on hardware)
+- [x] `ATSH7E1` + `2130` → positive `61 30` 26-byte record; three captures committed
+      (warm idle / post-stall / post-drive) — byte 11 tracked engine coolant 92→91→97 °C
+      across the session under raw−50
+- [ ] 🖐 COLD-START capture (Taras, any cold morning, 30s before driving): byte 18 ≈
+      ambient+50 and climbing → flips verified=true + triggers the id-swap change
