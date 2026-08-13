@@ -30,3 +30,13 @@ docs/hardware/research-2026-08-13-boost-inference.md).
 
 ## Out of scope
 Estimated boost (OBD-57); the 0168 padded-byte identification (separate probe).
+
+## Hardware checklist (observed 2026-08-13, Car Scanner packet capture)
+- [x] MAF: PID 0166 answered `41 66 01 01 C7` on the van → sensor A = (256+199)/32 = 14.2 g/s
+      (plausible for idle/light load on the OM642)
+- [x] IAT: PID 0168 answered `41 68 01 54 …` → sensor 1 = 0x54−40 = 44°C (plausible
+      intake/charge temp)
+- [ ] 🖐 Throttle-sweep confirmation (Taras, any rev/drive): MAF must RISE with load
+      (idle ~14 → mid-load 40-80+ g/s), IAT ≈ ambient+soak → flips these verified=false→true
+      AND is the data that calibrates OBD-57's VE curve. Not a merge gate; the decode FORMAT
+      is confirmed (matches SAE J1979-DA exactly), only the values-under-load await a sweep.
