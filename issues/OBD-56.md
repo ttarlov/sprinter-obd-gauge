@@ -3,7 +3,7 @@ id: OBD-56
 title: MAF (0166) + IAT (0168) real-sensor PIDs — the survey missed them
 module: core/protocol
 owner: protocol-agent
-sprint: backlog
+sprint: boost-wave
 status: open
 type: feature
 hardware-verify: true
