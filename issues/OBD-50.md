@@ -4,7 +4,7 @@ title: Oil temp via standard 015C + live-verified PID catalog additions (fuel, a
 module: core/protocol
 owner: protocol-agent
 sprint: backlog
-status: open
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
