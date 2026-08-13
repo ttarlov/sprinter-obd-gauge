@@ -4,11 +4,11 @@ title: High-quality speed-density boost estimation (MAF+IAT+RPM+baro)
 module: core/protocol
 owner: protocol-agent
 sprint: backlog
-status: merged
+status: in-review
 type: feature
 hardware-verify: true
 blocked-by: [OBD-56]
-branch: protocol/57-speed-density-boost
+branch: protocol/56-57-speed-density-boost
 ---
 
 ## Decision (Taras 2026-08-13): BUILD IT, high quality.
