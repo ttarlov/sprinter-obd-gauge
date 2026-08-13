@@ -145,3 +145,16 @@ file+line read-list, orchestrator diagnosis, targeted test tasks only, never ful
 anything architectural. Expected costs stated at filing (~20-40k / ~60-120k), ledger
 records actual vs expected. Calibration examples: OBD-46 should have been ~micro+;
 OBD-47 was correctly bigger (cross-remount design). Full spec: docs/05 §6c.1.
+
+## D8 — Hardware probing charter amendment: extended session at engine ECU (Taras, 2026-08-13)
+
+**Status:** decided by Taras 2026-08-13 — "targeted test first; if we don't get anything
+out of it we move to full sweep."
+
+**Decision:** the read-only probing charter (OBD-41 discipline) gains one bounded
+exception: UDS `10 03` (extended diagnostic session) at the ENGINE ECU (7E0) only, for
+read-only service-22 DID probing — targeted `22 20 C4` first, full researched-range sweep
+if targeted fails. Never at the TCU; never security access; never writes/routines/DTC
+operations. Session state is non-persistent (lapses on timeout). Context: research annex
+docs/hardware/research-2026-08-13-boost.md — this is the standard handshake every
+commercial scan tool performs. Spec: issues/OBD-52.md.

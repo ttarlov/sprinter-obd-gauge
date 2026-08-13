@@ -4,7 +4,7 @@ title: Boost/MAP discovery — extended-session UDS sweep at engine ECU (charter
 module: core/protocol
 owner: orchestrator
 sprint: backlog
-status: blocked
+status: in-progress
 type: process
 hardware-verify: true
 blocked-by: []
@@ -18,7 +18,18 @@ none of the researched DIDs (8032/8010/20C4) in the DEFAULT session. Commercial 
 extended diagnostic session (`10 03`) + DID sweep at 7E0 — routine for scan tools, but a
 UDS SESSION CHANGE, which the standing read-only charter excludes.
 
-## 🖐 BLOCKED ON TARAS: explicit charter amendment decision
+## ✅ CHARTER DECISION (Taras, 2026-08-13): targeted-first, sweep-on-failure
+"Let's tighten it to the targeted test first. If we don't get anything out of it we move
+to full sweep." Approved scope, in order:
+1. TARGETED: `10 03` at 7E0 → immediately `22 20 C4` (ScanGauge's NCV3 3.0L boost DID)
+   → read → session lapses naturally. One probe, ten seconds.
+2. IF NRC persists: full read-only 22-DID sweep at 7E0 under 10 03 (researched ranges
+   first: 20xx, 80xx, B0xx), engine idling, parked.
+Always: 7E0 only, never the TCU; reads only; no security access, no writes, no routines,
+no DTC ops. Session-21-at-engine sweep (default session, no session change) remains
+approved implicitly as pure read.
+
+## Original blocked framing (superseded)
 - Scope if approved: `10 03` at 7E0 only (never the TCU), read-only 22-xx-xx sweeps of
   researched ranges (20xx, 80xx), engine idling, parked, session drops back on timeout
   naturally; no writes, no routines, no DTC clearing, ever.
