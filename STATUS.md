@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (OBD-25 MERGED — SPRINT 3 SOFTWARE 100% COMPLETE. The van build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **33 merged / 44 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (OBD-25 MERGED — SPRINT 3 SOFTWARE 100% COMPLETE. The van build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **34 merged / 47 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| Current phase | **SPRINT 3 SOFTWARE COMPLETE** — prod wiring merged; the app reads a real engine the moment it meets one. Remaining: 🖐 van session (OBD-26 live milestone + device ACs), Sprint 4, backlog |
+| Current phase | **SPRINT 3 DONE + oil temp live (OBD-50)** — app reads real coolant/RPM/oil/load the moment it meets the van. Remaining: 🖐 van session (boost probe, trans snapshot, live demo), Sprint 4, backlog |
 | Repo | Gate green @ `58c0f8e`; develop synced; no open branches. VAN BUILD: builds/van/app-prod-debug.apk (prod DI: BleObdLink → RealVehicleDataSource → DisplayUnitDataSource seam → dashboard; restart-on-Ready ownership; connect UX + runtime perms). Demo/master APK @ 58c0f8e in builds/main/ |
 | Blockers | None in software. 🖐 Taras: (1) cold-start capture (trans verify + id swap), (2) next van session device checks: fresh-install FGS start, 10-min screen-off polling |
-| Next action | Session 2 done (2026-08-13): OIL TEMP SOLVED (015C standard); trans byte-1 hypothesis one drive-test from proof (OBD-51 🖐); boost needs extended-session decision (OBD-52 🖐 BLOCKED ON TARAS). Software: OBD-50 registry additions ready to build; live-gauges app demo still pending (session ran console+Car Scanner) |
+| Next action | OBD-50 MERGED (981c2ef): oil tile now live-backed (015C) + 6 verified PIDs; van APK rebuilt @ 981c2ef in builds/van/. 🖐 at the van: targeted boost probe (10 03→2220C4, D8-approved, ignition ON), trans drive-snapshot (OBD-51), live-gauges demo. Software: OBD-53 (kill verified-flag dup), Sprint 4, gauge-catalog tiles |
 
 ## Wave board
 
@@ -155,3 +155,4 @@ Hardware gates — **🖐 TARAS**:
 | OBD-47 small-track (swap-grow) | 150-250k | ~300k (build 282k + orch review incl. live mutation) | 0 | Swap-in hard cut → grow-in from tapped card's rect via cross-remount handoff registry; same spec/stack as shrink. Priciest small-track yet — remount plumbing; still ~1/3 of full track. |
 | Sprint 3 fix wave | +400k | ~290k (ble 79k + app 173k + orch close-outs) | 0 | FIRST UNDER-BUDGET WAVE: builder continuations in kept worktrees + orchestrator close-outs instead of fresh reviewer spawns. Both round-1 blockers killed with layered mutation proof (ble even caught its own compile-error fake mutation). |
 | OBD-25 integration wave | +300k | ~500k (build 328k — unit-mismatch discovery + keep-alive redesign; scoped Tier-A review 132k; orch arbitration) | 1 arb | Review found the exact charter risk: boost kPa→PSI seam had ZERO coverage (bypass mutation survived 372 tests) — 6-line orchestrator fix, mutation-verified. Reviewer also proved the ownership pin real (1→41 when reverted). |
+| OBD-50 verified PIDs | small | ~260k (build) + orch mutation-review | 1 arb | Oil temp SOLVED (015C standard, closes OBD-35) + 6 live-verified PIDs. Scaling mutation-verified. Module-isolation violation (protocol-agent → 12 :app files) accepted as forced flag-flip cascade; root cause = verified-flag duplication → OBD-53 filed. |
