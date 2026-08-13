@@ -4,7 +4,7 @@ title: Re-gate trans temp to unavailable — byte-1 decode FALSIFIED in the fiel
 module: core/protocol
 owner: protocol-agent
 sprint: boost-wave
-status: in-progress
+status: in-review
 type: bug
 hardware-verify: false
 blocked-by: []
