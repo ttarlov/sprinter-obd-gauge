@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (Sprint 3 wave 1 END — protocol merged; ble+app parked at ceiling) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **28 merged / 44 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (FIX WAVE COMPLETE — Sprint 3 software done except OBD-25) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **32 merged / 44 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -13,9 +13,9 @@
 | | |
 |---|---|
 | Current phase | **ALL OF SPRINT 2 COMPLETE + picker feel stack promoted** — 26/42 merged, channels aligned @ ca896b5. Remaining: Sprint 3 (van + software), Sprint 4, backlog (OBD-40/41/43) |
-| Repo | Gate green on `main` @ `60e5a57` (merge.sh double gate); develop ff'd. **Two parked branches:** `ble/23-48-reconnect-traffic` @ 69b3713 (BLOCKER: retry exception boundary), `ui/24-27-service-badge` @ 67a182f (BLOCKER: FGS perm crash) — full fix briefs in reviews/OBD-23-round1.md + OBD-24-round1.md on the branches. Master APK rebuilt @ a9e2a39 (not yet reinstalled — no UI change) |
-| Blockers | Ceiling: Sprint 3 wave 1 closed at ~1.5M vs +900k. 🖐 Taras: (1) cold-start capture (gates trans-temp verify + id swap), (2) "+400k fix wave" to land ble+app parked branches, then OBD-25 (+300k, hazard statement ready in reviews/OBD-24-round1.md) |
-| Next action | Taras: "run the fix wave, +400k" (lands OBD-23/48/24/27) → then "OBD-25, +300k" (prod wiring — real gauges in the van). 🖐 cold-start capture whenever a cold morning allows |
+| Repo | Gate green on `main` @ `171d9ce`; develop synced; NO open branches. 194 ble + 247 protocol + 196 app tests. Master APK staged @ 171d9ce (not yet on phone). Stack now: reconnect machine, traffic logging, FGS + wake lock + honest notifications, unverified badges, availability axis, falsified-decode gate |
+| Blockers | None in software. 🖐 Taras: (1) cold-start capture (trans verify + id swap), (2) next van session device checks: fresh-install FGS start, 10-min screen-off polling |
+| Next action | Taras: "OBD-25, +300k" — prod DI wiring, THE last software step before live gauges in the van (self-heal ownership hazard statement ready in reviews/OBD-24-round1.md §end). 🖐 cold-start capture any cold morning |
 
 ## Wave board
 
@@ -29,7 +29,7 @@
 | Sprint 2c — UI charts/settings (Tier B, batched) | +400k | ✅ done 2026-08-11 | ~1.0M | 2 merged / 0 rolled |
 | Ad-hoc — OBD-42 swap carousel | ~600k est | ✅ done 2026-08-11 | ~915k | 1 merged / 0 rolled |
 | Ad-hoc — OBD-44 shrink animation + OBD-45 dual-channel builds | ~500k (orchestrator-set) | ✅ done 2026-08-11 — OBD-45 → main, OBD-44 → develop (promotion = Taras feel verdict) | ~930k | 2 merged / 0 rolled |
-| Sprint 3 — Real Van (software half) | +900k | 🔄 wave 1 closed 2026-08-12: OBD-43+49 MERGED (60e5a57, 247 protocol tests); ble(23+48) + app(24+27) PARKED changes-requested at ceiling — fix briefs committed on branches | ~1.5M | 2 merged / 4 parked |
+| Sprint 3 — Real Van (software half) | +900k wave1 / +400k fix wave | ✅ waves 1+fix done 2026-08-12: 43+49 → 60e5a57, 23+48 → 15740fb, 24+27 → 533253c. ONLY OBD-25 remains (+300k) | ~1.5M + ~290k | 6 merged / 0 parked |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
@@ -153,3 +153,4 @@ Hardware gates — **🖐 TARAS**:
 | OBD-44/45 wave (ad-hoc pair) | ~500k (orch-set) | ~930k | 0 | infra 119k / ui build+fix 602k / Opus review 158k / orch ~50k. Review earned it again: BLOCKER (2.9:1 anisotropic squash, blessed by its own re-recorded screenshot) + 3 vacuous-test MAJORs incl. a mutation that survived every unit test and was caught only by the defective reference image. Cost postmortem → D6 small track (builder agent + orchestrator review, ~150-250k target) for future tiny asks; full builder+reviewer shape has a proven ~450k floor. |
 | OBD-46 small-track (D6 first run) | 150-250k | ~200k (build 181k + orch review) | 0 | Corner-parity bug (anisotropic scale squashing radius+border — builder measured 2.9:1 border distortion and fixed beyond brief) + shrink 220→300ms. D6 shape validated: brief-prescribed git flow, orchestrator review, on-device verify. |
 | OBD-47 small-track (swap-grow) | 150-250k | ~300k (build 282k + orch review incl. live mutation) | 0 | Swap-in hard cut → grow-in from tapped card's rect via cross-remount handoff registry; same spec/stack as shrink. Priciest small-track yet — remount plumbing; still ~1/3 of full track. |
+| Sprint 3 fix wave | +400k | ~290k (ble 79k + app 173k + orch close-outs) | 0 | FIRST UNDER-BUDGET WAVE: builder continuations in kept worktrees + orchestrator close-outs instead of fresh reviewer spawns. Both round-1 blockers killed with layered mutation proof (ble even caught its own compile-error fake mutation). |
