@@ -34,6 +34,32 @@ data class BleConfig(
      * truncated response or dongle reset costs one quiet window — never the link.
      */
     val debtQuietWindow: Duration = DEFAULT_DEBT_QUIET_MILLIS.milliseconds,
+    /** First wait after a recoverable drop, before the backoff starts doubling (OBD-23). */
+    val reconnectInitialDelay: Duration = DEFAULT_RECONNECT_INITIAL_SECONDS.seconds,
+    /**
+     * Ceiling on the backoff. A minute between attempts is cheap enough to leave running while
+     * the van is parked and short enough that a key-on is noticed within one cycle.
+     */
+    val reconnectMaxDelay: Duration = DEFAULT_RECONNECT_MAX_SECONDS.seconds,
+    /**
+     * Proportional jitter applied to each computed wait, ±this fraction. Not thundering-herd
+     * insurance — there is one dongle — but desynchronisation from *its* cycle: a dongle that
+     * reboots on a fixed period and a phone that retries on a fixed period can lock into a phase
+     * where every attempt lands in the dead window and stays there.
+     */
+    val reconnectJitter: Double = DEFAULT_RECONNECT_JITTER,
+    /**
+     * Consecutive failed attempts before auto-reconnect gives up and parks in
+     * `LinkState.Error`, waiting to be asked again.
+     *
+     * At the defaults that is roughly twelve hours of trying — long enough to survive a
+     * trailhead, a ferry, or a night parked up, which is the whole point of key-off recovery.
+     * It is bounded rather than infinite for two reasons: a link that is never coming back
+     * (dongle left at home) should stop touching the radio eventually, and an unbounded
+     * self-rescheduling delay makes a virtual clock non-terminating, which would quietly turn
+     * `advanceUntilIdle()` into a hang in any future test that armed one.
+     */
+    val reconnectMaxAttempts: Int = DEFAULT_RECONNECT_MAX_ATTEMPTS,
 ) {
     /**
      * Pass 1 is filtered and cheap; pass 2 sweeps unfiltered for dongles that advertise a name
@@ -67,5 +93,12 @@ data class BleConfig(
         private const val DEFAULT_MTU_MILLIS = 2500
         private const val DEFAULT_WRITE_MILLIS = 2000
         private const val DEFAULT_DEBT_QUIET_MILLIS = 300
+
+        private const val DEFAULT_RECONNECT_INITIAL_SECONDS = 1
+        private const val DEFAULT_RECONNECT_MAX_SECONDS = 60
+        private const val DEFAULT_RECONNECT_JITTER = 0.25
+
+        /** ~12 h at the 60 s ceiling: 1+2+4+…+32 s of ramp, then 714 attempts a minute apart. */
+        private const val DEFAULT_RECONNECT_MAX_ATTEMPTS = 720
     }
 }

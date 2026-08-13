@@ -17,6 +17,8 @@ import com.revel.obdgauge.ble.scan.BleScanner
 import com.revel.obdgauge.ble.scan.DongleFilter
 import com.revel.obdgauge.ble.store.DataStoreRememberedDeviceStore
 import com.revel.obdgauge.ble.store.RememberedDeviceStore
+import com.revel.obdgauge.ble.traffic.TrafficLog
+import com.revel.obdgauge.ble.traffic.defaultTrafficLog
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -86,6 +88,16 @@ internal object BleProvidersModule {
     @Provides
     @Singleton
     fun provideDongleFilter(): DongleFilter = DongleFilter()
+
+    /**
+     * OBD-48. [defaultTrafficLog] is declared once per build type: `src/debug/` returns the
+     * `ObdTraffic` logcat sink, `src/release/` returns [TrafficLog.NONE]. The variant chooses,
+     * not a runtime flag — so the sink, its tag and its formatter are absent from the release
+     * variant's bytecode rather than merely unreachable in it.
+     */
+    @Provides
+    @Singleton
+    fun provideTrafficLog(): TrafficLog = defaultTrafficLog()
 
     /**
      * The DataStore is built here and kept behind [RememberedDeviceStore] rather than exposed as

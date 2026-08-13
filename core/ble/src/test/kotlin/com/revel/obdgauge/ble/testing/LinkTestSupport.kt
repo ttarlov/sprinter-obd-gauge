@@ -2,8 +2,12 @@ package com.revel.obdgauge.ble.testing
 
 import com.revel.obdgauge.ble.BleConfig
 import com.revel.obdgauge.ble.BleLinkException
+import com.revel.obdgauge.ble.BleLogger
 import com.revel.obdgauge.ble.BleObdLink
 import com.revel.obdgauge.ble.gatt.GattTransportFactory
+import com.revel.obdgauge.ble.scan.BleScanner
+import com.revel.obdgauge.ble.store.RememberedDeviceStore
+import com.revel.obdgauge.ble.traffic.TrafficLog
 import com.revel.obdgauge.model.LinkState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -24,11 +28,16 @@ const val STALE_DEVICE = "11:22:33:44:55:66"
 @Suppress("LongParameterList") // Mirrors the production constructor; each one is a seam.
 fun TestScope.bleObdLink(
     environment: FakeBleEnvironment,
-    scanner: FakeBleScanner,
+    /** Widened from `FakeBleScanner` for OBD-23: reconnect tests need a scanner whose answer changes between sweeps. */
+    scanner: BleScanner,
     transports: GattTransportFactory,
-    store: FakeRememberedDeviceStore,
-    logger: RecordingLogger,
+    /** Widened for OBD-23 round 2: the m2/M1 regressions need a store whose read actually suspends. */
+    store: RememberedDeviceStore,
+    /** Widened for OBD-23 round 2: the B1 handler-net test needs a logger that throws. */
+    logger: BleLogger,
     config: BleConfig = BleConfig(),
+    /** OBD-48 capture tap. Defaulted off so pre-OBD-48 tests exercise the untapped link. */
+    traffic: TrafficLog = TrafficLog.NONE,
 ): BleObdLink =
     BleObdLink(
         environment = environment,
@@ -38,6 +47,7 @@ fun TestScope.bleObdLink(
         config = config,
         logger = logger,
         dispatcher = StandardTestDispatcher(testScheduler),
+        traffic = traffic,
     )
 
 /** Runs [block], asserting it fails with the module's typed transport exception. */

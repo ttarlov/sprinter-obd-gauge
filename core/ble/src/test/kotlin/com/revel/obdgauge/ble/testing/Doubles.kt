@@ -16,6 +16,8 @@ import com.revel.obdgauge.ble.scan.BleScanner
 import com.revel.obdgauge.ble.scan.ScanOutcome
 import com.revel.obdgauge.ble.scan.ScanPass
 import com.revel.obdgauge.ble.store.RememberedDeviceStore
+import com.revel.obdgauge.ble.traffic.TrafficEntry
+import com.revel.obdgauge.ble.traffic.TrafficLog
 import com.revel.obdgauge.model.LinkError
 
 /** Captures the module's log so tests can assert on what a connect decided and reported. */
@@ -27,6 +29,15 @@ class RecordingLogger : BleLogger {
     }
 
     fun containing(fragment: String): List<String> = lines.filter { it.contains(fragment) }
+}
+
+/** Captures the OBD-48 traffic tap in arrival order, so a test can assert on the capture. */
+class RecordingTrafficLog : TrafficLog {
+    val entries = mutableListOf<TrafficEntry>()
+
+    override fun record(entry: TrafficEntry) {
+        entries += entry
+    }
 }
 
 class FakeBleEnvironment(

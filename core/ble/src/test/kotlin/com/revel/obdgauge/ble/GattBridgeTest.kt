@@ -324,8 +324,12 @@ class GattBridgeTest {
         }
 
     @Test
-    fun `a peer drop after Ready parks in Error and does not reconnect on its own`() =
+    fun `a peer drop after Ready surfaces the typed error before any retry runs`() =
         runTest {
+            // OBD-23 made the drop recoverable, but the *observable* moment is unchanged and
+            // still belongs here: the drop is reported with the stack's own status, immediately,
+            // and no retry has run yet — `LinkState` has no Reconnecting case, so the wait that
+            // follows is spent in exactly this state. When and how it retries is ReconnectTest's.
             val link = newLink()
             link.connect()
             val scansAtReady = scanner.calls
@@ -334,7 +338,7 @@ class GattBridgeTest {
             runCurrent()
 
             assertEquals(LinkState.Error(LinkError.Gatt(FakeGattTransport.GATT_ERROR)), link.state.value)
-            assertEquals("no auto-reconnect until OBD-23", scansAtReady, scanner.calls)
+            assertEquals("the backoff has not elapsed; nothing may have been tried yet", scansAtReady, scanner.calls)
         }
 
     @Test

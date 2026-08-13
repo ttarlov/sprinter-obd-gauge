@@ -12,12 +12,13 @@ sequence over `sendRaw` once the link reports `Ready`.
 
 | Type | Role |
 |---|---|
-| `BleObdLink` | The `ObdLink` implementation. Plus `missingPermissions`, `rememberedDevice()`, `forgetRememberedDevice()` for `:app`. |
+| `BleObdLink` | The `ObdLink` implementation. Plus `missingPermissions`, `retrying`, `rememberedDevice()`, `forgetRememberedDevice()` for `:app`. |
 | `BleConfig` | Timeouts, MTU request, scan-pass plan. Injected, so tests and `:app` can retune. |
 | `BleLinkException(error: LinkError)` | What `sendRaw` throws. `IOException` subclass; the payload is the same typed `LinkError` vocabulary `LinkState.Error` uses. |
 | `BleLogger` / `AndroidBleLogger` | Connect/probe narrative. Logcat tag `ObdBle`. |
 | `BlePermissionPolicy` | Which runtime permissions are needed at a given API level. Pure. |
 | `ConnectPlanner`, `ConnectPreconditions`, `ConnectPlan` | Direct-connect vs scan vs abort. Pure. |
+| `ReconnectPolicy`, `Recoverability` | OBD-23: which failures are worth retrying, and the backoff schedule. Pure. |
 | `gatt.ResponseAssembler` | Notification chunks → `>`-terminated responses. Pure. |
 | `gatt.SerialProfileProbe`, `SerialProfile`, `CandidateProfile` | UUID probing. Pure. |
 | `gatt.GattTransport` / `GattTransportFactory` / `GattEvent` | The seam over `BluetoothGatt`. |
@@ -26,6 +27,7 @@ sequence over `sendRaw` once the link reports `Ready`.
 | `store.RememberedDeviceStore`, `BluetoothAddress` | Fast-path persistence and address validation. |
 | `di.BleModule`, `di.LinkDispatcher` | Internal bindings. **`ObdLink` is deliberately not bound here** — `:app` does that per flavor in OBD-25. |
 | `console.ConsoleSession`, `console.ConsoleEntry`, `console.RememberedDeviceForgetter` | OBD-19's debug-console REPL controller. Pure logic over `ObdLink` (no Android imports); `app/src/debug/` is the only consumer. |
+| `traffic.TrafficLog`, `traffic.TrafficEntry`, `traffic.RxFate` | OBD-48's headless capture tap. Observed only; the logcat sink behind it exists in the **debug variant only**. |
 
 `BleObdLink` is constructor-injected; `:app` only needs
 `@Binds fun bind(impl: BleObdLink): ObdLink`.
@@ -69,6 +71,45 @@ Activity is the only place it meets Android.
 - `recordError(message, command = null)` is public and non-suspending: it exists for the
   `:app` edge to log outcomes `:core:ble` cannot see itself — e.g. a denied runtime permission,
   reported by `ConsoleActivity`'s `ActivityResultContracts` callback.
+
+## `traffic` package (OBD-48) — headless capture
+
+Hardware session 1 lost a whole drive capture because the OBD-19 console only renders traffic on
+a screen and the phone locked mid-drive (`docs/hardware/session-2026-08-12.md`). `TrafficLog` is
+the fix: an ordered tap that records **every TX line, every RX line and every link-state
+transition** to logcat, so a capture runs screen-off.
+
+```
+adb logcat -c && adb logcat -s ObdTraffic
+04:04:31.482 ==  Ready
+04:04:31.501 TX  0105
+04:04:31.622 RX  41 05 86\r41 05 86\r41 05 86\r\r
+04:04:33.640 --  no response to "010B" within 2s
+04:04:33.901 RX  NO DATA\r\r   [dropped: paid response debt]
+```
+
+- **Pure tap.** Nothing in the module reads a return value from it, branches on one, or waits on
+  one. `TrafficTapTest` runs the same script twice — once tapped, once with `TrafficLog.NONE` —
+  and asserts identical responses, identical wire chunks and identical client-close counts.
+- **Complete, including the drops.** A response discarded to pay a response debt, or an
+  unsolicited one, is captured and marked (`RxFate`) — those are exactly the pathologies a drive
+  capture exists to catch, and a capture that showed only delivered responses would show a gap
+  with no reason beside it.
+- **Ordered.** Every call site is on the link dispatcher, so TX/RX/state interleave truthfully.
+  `BleObdLink.publish` is the sole writer of the state flow, which is what makes "no transition
+  can be missed" structural rather than a convention.
+- **One entry, one logcat line.** ELM327 responses are full of `\r`; they are escaped, not
+  emitted raw, so a captured response cannot break into records that no longer say what they
+  answered.
+- **Debug fence.** `defaultTrafficLog()` is declared once per build type: `src/debug/` returns
+  `LogcatTrafficLog`, `src/release/` returns `TrafficLog.NONE`. Not a `BuildConfig.DEBUG` branch
+  — `:app` builds with `isMinifyEnabled = false`, so a runtime branch would leave the sink, the
+  `ObdTraffic` tag and every format literal in the release dex. Verified by inspecting both
+  AARs' `classes.jar`, with the debug one as the positive control (same treatment OBD-19's
+  console got). `:core:ble`'s detekt `source` lists the two build-type source sets explicitly,
+  since the non-variant-aware `detekt` task defaults to `src/main/kotlin` only.
+- `TrafficFormat` is tested from `src/testDebug/` — a test of it under `src/test/` would fail to
+  compile the release unit-test variant, which is itself part of the fence's proof.
 
 ## Architecture
 
@@ -134,6 +175,73 @@ BleObdLink ── ConnectPlanner (pure) ── BleEnvironment ──→ AndroidB
 5. `connectGatt` → `discoverServices` → UUID probe → `setCharacteristicNotification` + **CCCD
    write** → `requestMtu(512)` → `Ready`.
 
+## Auto-reconnect (OBD-23)
+
+`connect()` does not mean "try once", it means **be connected**. It arms auto-reconnect, and a
+recoverable failure — now or eight hours from now — schedules another attempt instead of parking
+for good. Each retry re-runs the whole connect flow above, so the remembered-device fast path
+*is* the resume path and the scan fallback *is* the resume-on-found path; there is no second
+connect implementation to keep in step with the first.
+
+**The classification rule is: retry unless a retry is provably futile** — futile meaning the
+module would be asking the same question of the same unchanged world.
+
+| Cause | | Why |
+|---|---|---|
+| `Unknown("dongle disconnected")`, `Gatt(status)` | retry | key-off, out of range, stack hiccup |
+| `DeviceNotFound`, `Timeout` | retry | the van is off, or parked out of range |
+| `BluetoothOff` | retry | **usually a stack restart, not a person** — see below |
+| `Unknown(ScanStateMachine.THROTTLED)` | retry | the rolling 30 s window drains by itself |
+| `Unknown(ReconnectPolicy.ABNORMAL_ATTEMPT)` | retry | an attempt that threw; the budget bounds the believing |
+| `PermissionDenied` | stop | the app may not even look until it is granted |
+| `Unknown(ConnectPlanner.LOCATION_OFF / BLE_UNSUPPORTED)` | stop | a settings screen, or a phone with no radio |
+| `disconnect()`, `forgetRememberedDevice()` | stop | the user said so |
+
+Round 1 stated this as "anything only a human can fix is terminal", which reads well and is
+wrong in one important place. The dominant cause of `BluetoothOff` is **not** a user reaching
+for the toggle — it is the Bluetooth stack restarting, which reports the adapter off for a few
+seconds. `planConnect` re-reads `isBluetoothEnabled()` on every attempt and the first backoff is
+one second, so the module sampled almost exactly that window: one unlucky read disarmed
+auto-reconnect permanently and silently, and the link never returned even after the adapter did.
+Retrying costs one `isEnabled()` read per backoff cycle and touches no radio.
+
+`PermissionDenied` stays terminal on the narrower ground that the app may not look at all until
+it is granted, and `:app` owns that dialog and re-calls `connect()` on the grant — the module is
+not the thing waiting.
+
+- **Backoff**: 1 s doubling to a 60 s ceiling, ±25 % jitter. The jitter is not thundering-herd
+  insurance (there is one dongle) — it desynchronises from *its* cycle, so a dongle that reboots
+  on a fixed period and a phone that retries on a fixed period cannot lock into a phase where
+  every attempt lands in the dead window and stay there.
+- **Budget**: 720 attempts ≈ 12 hours, then it parks in `LinkState.Error` and waits to be asked
+  again. Bounded rather than infinite for two reasons: a dongle left at home should stop costing
+  radio eventually, and an unbounded self-rescheduling delay makes a virtual clock
+  non-terminating — which would quietly turn any future test's `advanceUntilIdle()` into a hang.
+- **No `Reconnecting` state, but `retrying` tells you.** `LinkState` is a frozen `:core:model`
+  contract, so the wait is spent in `LinkState.Error(cause)` — the cause stays visible the whole
+  time — and the attempt itself moves through `Connecting`/`Scanning` like any other connect.
+  That made "still trying, sit tight" and "gave up, press Retry" observationally identical, so
+  `BleObdLink` exposes a module-level `retrying: StateFlow<Boolean>` alongside
+  `missingPermissions`. **`state is Error && !retrying` is exactly the Retry affordance**;
+  neither half means it alone.
+- **Every attempt has an exception boundary.** `scanner.scan` (OEM stacks throw
+  `IllegalStateException` when the adapter dies mid-sweep — `AndroidBleScanner` guards only
+  `SecurityException`), `isBluetoothEnabled` (`SecurityException` on API 31+) and `connectGatt`
+  can all throw. Before OBD-23 the only caller was a `viewModelScope`, which has a boundary; a
+  scheduled retry has none, and the throw left the link on `Scanning` forever with nothing
+  scheduled and nothing logged. An abnormal exit is now one more failed attempt: typed
+  `Error(Unknown(ReconnectPolicy.ABNORMAL_ATTEMPT …))`, then reschedule-or-disarm out loud.
+  `CancellationException` is rethrown untouched. A `CoroutineExceptionHandler` on `linkScope` is
+  the second layer, for when the recovery path itself throws.
+- **The generation counter gates the retry too.** `scheduleReconnect` refuses a stale attempt
+  before anything else, because booking a retry *is* work and a stale attempt does no work. The
+  case that proves it is not decorative: when the winning attempt has also failed, the state flow
+  already holds an `Error`, so every later guard waves the loser through — and unchecked it books
+  a second retry, orphaning the first scheduled job rather than replacing it. Pinned by
+  `ReconnectTest."a stale attempt that finishes after the winner has already failed books
+  nothing"`, which was written *because* an earlier version of that test failed to kill the
+  mutation.
+
 ### Scan budget
 
 Android allows an app 5 `startScan` calls per rolling 30 seconds; exceed it and the app gets
@@ -188,14 +296,32 @@ missing (`BleObdLink.missingPermissions`) and parks a connect attempt in
 
 ## Tests
 
-146 JVM tests, no device, no Robolectric — the `GattTransport`/`BleScanner`/`BleEnvironment`
-seams mean nothing under test needs an Android runtime.
+194 JVM tests, no device, no Robolectric — the `GattTransport`/`BleScanner`/`BleEnvironment`
+seams mean nothing under test needs an Android runtime. 188 run in both build variants; the six
+`TrafficFormatTest` cases live in `src/testDebug/` because their subject does.
 
 - `GattBridgeTest` (38) — handshake, probe, CCCD/MTU, single-flight, timeout and the response
   debt, cancellation, refused requests, drops mid-handshake and mid-response.
+- `ReconnectTest` (25, OBD-23) — every transition of the reconnect machine on virtual time: the
+  drop→retry loop, the doubling schedule and its ceiling, the reset on success, key-off/key-on
+  with no user action, resume-on-found after the remembered address stops answering, each way of
+  stopping (user disconnect, forget, terminal cause, spent budget) and the re-arm after one, the
+  jitter band through the real link, three generation-invariant cases, and the round-2 set: a
+  sweep that throws (reported and retried, never wedged in `Scanning`), one that throws with the
+  budget spent (disarms out loud), a recovery that itself throws (the handler net), forget
+  landing mid-attempt, a superseded attempt not burning a scan, `retrying` tracking the machine,
+  and an adapter that comes back within the budget.
 - `BleObdLinkTest` (15), `ResponseAssemblerTest` (15) — preconditions/discovery/remembered-device
   fast path; fragmentation, including a property test asserting that *any* chunking of a
   transcript reassembles identically, and an exhaustive every-split-point test.
+- `ReconnectPolicyTest` (10, OBD-23) — the classification rule case by case (including a
+  tripwire on `ConnectPlanner`'s own abort messages, which the policy string-matches, and
+  `BluetoothOff` pinned on its own because its reclassification is not self-evident), the backoff
+  schedule, the ceiling, overflow at `Int.MAX_VALUE`, and the jitter band over 200 samples.
+- `TrafficFormatTest` (6) + `TrafficTapTest` (5), OBD-48 — line format and escaping; tap order,
+  captured discards, and a tapped-vs-untapped run asserting the tap changes nothing.
+- `ReconnectSoakTest` (2, OBD-23) — fifty scripted drop/recover cycles (see its KDoc), plus the
+  never-recovers case that must stop at its budget rather than run forever.
 - `SerialProfileProbeTest` (13) — every candidate family, the fallback, write-type selection.
 - `ConsoleSessionTest` (11, OBD-19) — against `FakeObdLink`: command/response round trips in
   order, the ambient link state logged at construction, a timeout logged as an error entry
@@ -211,8 +337,24 @@ seams mean nothing under test needs an Android runtime.
   MTU behaviour are all informed guesses until OBD-22 puts this in front of the actual Veepeak
   OBDCheck BLE+. The fallback probe exists precisely because that list will be wrong for
   someone.
-- **No auto-reconnect.** A dropped link closes its GATT client, parks in `LinkState.Error` and
-  waits to be asked again. Exponential backoff and resume-on-device-found are OBD-23.
+- **Auto-reconnect keeps the link alive, not the process.** Retries run on the link dispatcher
+  and stop with it: if Android kills the process, or the app is backgrounded long enough for the
+  dispatcher to be starved, nothing here brings the link back. That is OBD-24's foreground
+  service, and until it lands the reconnect budget is bounded by process lifetime in practice
+  rather than by its 12-hour arithmetic.
+- **Auto-reconnect notices the adapter coming back only on its next tick.** There is no
+  `BluetoothAdapter` state receiver, so a re-enabled radio is discovered by the next scheduled
+  attempt rather than immediately — up to the 60 s ceiling of latency once the backoff has run
+  out. A receiver would make it instant and belongs at the `:app` edge where the lifecycle is.
+- **`disconnect()` cancels a *pending* retry, not one already running.** A sweep already in
+  flight finishes and burns its scan-budget slot; the result is discarded by the generation gate,
+  so state is unaffected. Left as-is deliberately: cancelling an attempt mid-`connectGatt` risks
+  leaking the GATT client that `openSession`'s structure exists to always close, and Android
+  gives a process about 32 of them. Round-1 NIT, declined with this reasoning.
+- **A blocking `TrafficLog` sink is not covered.** `TrafficLog.record` is non-suspending, so a
+  sink structurally cannot suspend the link — but one that blocks (a file write, an upload) would
+  stall the link dispatcher, and no test catches that today. The debug logcat sink does not
+  block. **Anything adding an on-device file sink must add that coverage first.**
 - **No foreground service** — OBD-24.
 - `AndroidGattTransport`, `AndroidBleScanner` and `AndroidBleEnvironment` have no unit tests by
   design: they contain no decisions, only translation. Bugs there are translation bugs and are

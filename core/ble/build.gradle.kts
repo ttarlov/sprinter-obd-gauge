@@ -57,4 +57,10 @@ dependencies {
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    // OBD-48 adds two build-type source sets (`src/debug/kotlin` holds the ObdTraffic logcat
+    // sink, `src/release/kotlin` its no-op twin). The plain, non-variant-aware `detekt` task
+    // defaults to `src/main/kotlin` only, so without this the debug-only sink would be the one
+    // file in the module nothing lints — same explicit listing :app already does for its
+    // flavor source sets.
+    source.setFrom("src/main/kotlin", "src/debug/kotlin", "src/release/kotlin")
 }

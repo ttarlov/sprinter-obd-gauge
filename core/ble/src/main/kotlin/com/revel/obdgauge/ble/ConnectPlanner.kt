@@ -56,10 +56,16 @@ object ConnectPlanner {
      */
     const val LOCATION_OFF = "Location services must be on for Bluetooth scanning below Android 12"
 
+    /**
+     * Message prefix for the no-radio abort, for the same reason as [LOCATION_OFF]. OBD-23's
+     * [ReconnectPolicy] matches on it: a phone with no BLE radio is the one abort that no amount
+     * of retrying, and no action by the user, will ever change.
+     */
+    const val BLE_UNSUPPORTED = "Bluetooth LE is not available on this device"
+
     fun plan(preconditions: ConnectPreconditions): ConnectPlan =
         when {
-            !preconditions.bleSupported ->
-                ConnectPlan.Abort(LinkError.Unknown("Bluetooth LE is not available on this device"))
+            !preconditions.bleSupported -> ConnectPlan.Abort(LinkError.Unknown(BLE_UNSUPPORTED))
 
             preconditions.missingPermissions.isNotEmpty() -> ConnectPlan.Abort(LinkError.PermissionDenied)
 

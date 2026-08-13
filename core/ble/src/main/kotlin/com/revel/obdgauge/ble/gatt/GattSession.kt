@@ -3,6 +3,9 @@ package com.revel.obdgauge.ble.gatt
 import com.revel.obdgauge.ble.BleConfig
 import com.revel.obdgauge.ble.BleLinkException
 import com.revel.obdgauge.ble.BleLogger
+import com.revel.obdgauge.ble.traffic.RxFate
+import com.revel.obdgauge.ble.traffic.TrafficEntry
+import com.revel.obdgauge.ble.traffic.TrafficLog
 import com.revel.obdgauge.model.LinkError
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -58,6 +61,12 @@ internal class GattSession(
     private val scope: CoroutineScope,
     private val config: BleConfig,
     private val logger: BleLogger,
+    /**
+     * OBD-48 capture tap. Observed only — no branch in this class reads a return value or waits
+     * on it, so a session with [TrafficLog.NONE] wired (release builds, and every test written
+     * before OBD-48) behaves identically to one with the logcat sink wired.
+     */
+    private val traffic: TrafficLog = TrafficLog.NONE,
 ) {
     private val events = Channel<GattEvent>(Channel.UNLIMITED)
     private val assembler = ResponseAssembler()
@@ -153,9 +162,11 @@ internal class GattSession(
         commandOnTheWire = false
         assembler.reset()
         return try {
+            traffic.record(TrafficEntry.Tx(command))
             writeCommand(target, command)
             withTimeout(timeout) { deferred.await() }
         } catch (timedOut: TimeoutCancellationException) {
+            traffic.record(TrafficEntry.Note("no response to \"$command\" within $timeout"))
             throw BleLinkException(LinkError.Timeout, "no response to \"$command\" within $timeout", timedOut)
         } finally {
             if (responseAwaiter === deferred) {
@@ -245,12 +256,16 @@ internal class GattSession(
                 responseDebt > 0 -> {
                     responseDebt--
                     logger.log("paid response debt, discarded: ${response.take(LOG_SNIPPET_CHARS)}")
+                    traffic.record(TrafficEntry.Rx(response, RxFate.DISCARDED_AS_DEBT))
                     settleGateIfClear()
                 }
-                awaiter == null ->
+                awaiter == null -> {
                     logger.log("discarded unsolicited response: ${response.take(LOG_SNIPPET_CHARS)}")
+                    traffic.record(TrafficEntry.Rx(response, RxFate.DISCARDED_UNSOLICITED))
+                }
                 else -> {
                     responseAwaiter = null
+                    traffic.record(TrafficEntry.Rx(response, RxFate.DELIVERED))
                     awaiter.complete(response)
                 }
             }
@@ -271,6 +286,7 @@ internal class GattSession(
         val wasReady = ready
         ready = false
         logger.log("GATT link to ${transport.address} dropped: $error")
+        traffic.record(TrafficEntry.Note("link to ${transport.address} dropped: $error"))
         failPending(BleLinkException(error, "link dropped: $error"))
         if (wasReady) {
             onTerminated?.invoke(error)
