@@ -190,8 +190,11 @@ class ProdChainEndToEndTest {
             // returns null instead of a difference-of-absent-inputs.
             assertEquals(NO_READING_TEXT, state.boost.valueText)
             assertFalse(state.boost.valueText.contains("0"))
-            // Trans (falsified decode) and oil (no registry entry at all — OBD-35 unscheduled)
-            // both render as "no reading", never as a number.
+            // Trans (falsified decode) renders as "no reading", never as a number. Oil (OBD-50:
+            // PidRegistry.oilTemp now exists, standard 015C) also renders "no reading" here —
+            // not because the channel is unavailable, but because this session's 2026-08-12
+            // capture never scripted a 015C response and CAPTURED_CHANNELS below only requests
+            // channels this fixture actually has bytes for.
             assertEquals(NO_READING_TEXT, state.transTemp.valueText)
             assertEquals(NO_READING_TEXT, state.oilTemp.valueText)
 
@@ -218,13 +221,16 @@ class ProdChainEndToEndTest {
             // lives in PidCatalog.isVerified. This pins the two together across the module
             // boundary for every id both know about, so a hypothesis promoted (or demoted) in
             // :core:protocol cannot silently leave the dashboard badging the opposite.
-            for (id in listOf(PidIds.COOLANT, PidIds.RPM, PidIds.BOOST, PidIds.TRANS_TEMP)) {
+            // OBD-50: oilTemp joins the pinned set now that PidRegistry.oilTemp exists — the
+            // exact gap this parity check exists to close (there was nothing in PidCatalog to
+            // compare against before this issue).
+            for (id in listOf(PidIds.COOLANT, PidIds.RPM, PidIds.BOOST, PidIds.TRANS_TEMP, PidIds.OIL_TEMP)) {
                 assertEquals(id, PidCatalog.isVerified(id), GAUGE_CATALOG_BY_ID.getValue(id).verified)
             }
             assertTrue(state.coolant.verified)
             assertTrue(state.extraTiles.getValue(PidIds.RPM).verified)
             assertFalse(state.transTemp.verified)
-            assertFalse(state.oilTemp.verified)
+            assertTrue(state.oilTemp.verified)
         }
 
     @Test

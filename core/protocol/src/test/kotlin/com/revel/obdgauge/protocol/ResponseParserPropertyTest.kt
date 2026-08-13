@@ -167,6 +167,13 @@ class ResponseParserPropertyTest {
                 "0105\r41 05 5A\r",
                 "014\r0: 41 00 BE 3E\r1: B8 11 00 00",
                 "41 05 5A 00 00 00",
+                // OBD-50 (session 2, 2026-08-13) additions.
+                "41 5C 81",
+                "41 2F 6D",
+                "41 46 3C",
+                "41 49 0D",
+                "41 61 82",
+                "41 62 88",
             )
 
         /** The full range each PID's SAE formula can produce, from raw `0x00` to raw `0xFF(FF)`. */
@@ -180,6 +187,13 @@ class ResponseParserPropertyTest {
                 PidRegistry.rpm.definition.id to 0.0..16383.75,
                 PidRegistry.engineLoad.definition.id to 0.0..100.0,
                 PidRegistry.throttlePosition.definition.id to 0.0..100.0,
+                // OBD-50 (session 2, 2026-08-13) additions.
+                PidRegistry.oilTemp.definition.id to -40.0..215.0,
+                PidRegistry.fuelLevel.definition.id to 0.0..100.0,
+                PidRegistry.ambientTemp.definition.id to -40.0..215.0,
+                PidRegistry.accelPedal.definition.id to 0.0..100.0,
+                PidRegistry.demandTorque.definition.id to -125.0..130.0,
+                PidRegistry.actualTorque.definition.id to -125.0..130.0,
             )
     }
 }

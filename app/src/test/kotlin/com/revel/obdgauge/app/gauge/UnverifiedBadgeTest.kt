@@ -46,10 +46,13 @@ class UnverifiedBadgeTest {
     fun `unverified gauges show the badge, verified gauges do not`() {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
-        composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertIsDisplayed()
+        // OBD-50: oilTemp moved to the verified side once PidRegistry.oilTemp wired it to the
+        // live-verified standard PID 015C — transTemp is now the dashboard's only mode-22
+        // hypothesis, so it carries this suite's "unverified" examples alone.
         composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertIsDisplayed()
         composeTestRule.onNodeWithTag("gauge-coolant-unverified-badge").assertDoesNotExist()
         composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertDoesNotExist()
     }
 
     @Test
@@ -68,13 +71,14 @@ class UnverifiedBadgeTest {
 
     @Test
     fun `closing the raw-response viewer dismisses it`() {
+        // transTemp (OBD-50: oilTemp is verified now, see the class KDoc note above).
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
-        composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").performClick()
-        composeTestRule.onNodeWithTag("raw-viewer-oilTemp").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").performClick()
+        composeTestRule.onNodeWithTag("raw-viewer-transTemp").assertIsDisplayed()
 
-        composeTestRule.onNodeWithTag("raw-viewer-oilTemp-close").performClick()
+        composeTestRule.onNodeWithTag("raw-viewer-transTemp-close").performClick()
 
-        composeTestRule.onNodeWithTag("raw-viewer-oilTemp").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("raw-viewer-transTemp").assertDoesNotExist()
     }
 
     // Mutation (c) killer (round-1 review, reviews/OBD-24-round1.md): "drop the settled gate"
@@ -85,7 +89,8 @@ class UnverifiedBadgeTest {
     // the mutant would remove, deterministically.
     @Test
     fun `badge does not render while the tile is mid-shrink or mid-grow (settled = false)`() {
-        val unverifiedTile = readyState().oilTemp
+        // transTemp (OBD-50: oilTemp is verified now, see the class KDoc note above).
+        val unverifiedTile = readyState().transTemp
 
         composeTestRule.setContent {
             ObdGaugeTheme {
@@ -100,12 +105,12 @@ class UnverifiedBadgeTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertDoesNotExist()
     }
 
     @Test
     fun `badge renders once settled becomes true for the same unverified tile`() {
-        val unverifiedTile = readyState().oilTemp
+        val unverifiedTile = readyState().transTemp
 
         composeTestRule.setContent {
             ObdGaugeTheme {
@@ -120,7 +125,7 @@ class UnverifiedBadgeTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertIsDisplayed()
     }
 
     // B9 MINOR: the visible glyph stays small, but the tap target must meet Android's 48dp
@@ -130,7 +135,7 @@ class UnverifiedBadgeTest {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
         composeTestRule
-            .onNodeWithTag("gauge-oilTemp-unverified-badge")
+            .onNodeWithTag("gauge-transTemp-unverified-badge")
             .assertWidthIsAtLeast(MIN_TOUCH_TARGET_DP.dp)
             .assertHeightIsAtLeast(MIN_TOUCH_TARGET_DP.dp)
     }
@@ -142,7 +147,7 @@ class UnverifiedBadgeTest {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
         composeTestRule
-            .onNodeWithTag("gauge-oilTemp-unverified-badge")
+            .onNodeWithTag("gauge-transTemp-unverified-badge")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             .assert(
                 SemanticsMatcher.expectValue(

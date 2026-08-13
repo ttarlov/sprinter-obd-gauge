@@ -12,12 +12,31 @@ import org.junit.Test
 /** Registry completeness, wire addresses, response lengths, units, and per-PID scaling. */
 class PidRegistryTest {
     @Test
-    fun `registry defines exactly the eight standard PIDs OBD-14 plus OBD-43 require`() {
-        assertEquals(8, PidRegistry.all.size)
+    fun `registry defines exactly the fourteen standard PIDs OBD-14, OBD-43 and OBD-50 require`() {
+        // OBD-50 grows this from 8 to 14: oilTemp, fuelLevel, ambientTemp, accelPedal,
+        // demandTorque, actualTorque — six of the eight session-2 live-verified PIDs (fuelRate
+        // and moduleVoltage are blocked on a missing MeasurementUnit; see PidRegistry's KDoc).
+        assertEquals(14, PidRegistry.all.size)
         assertEquals(
-            // OBD-14's six, then OBD-43's two appended — declaration order is stable and the
-            // new entries go on the end, so an existing caller's poll order does not shift.
-            listOf("0105", "010C", "010B", "0133", "010F", "010D", "0104", "0111"),
+            // OBD-14's six, then OBD-43's two, then OBD-50's six appended — declaration order is
+            // stable and new entries go on the end, so an existing caller's poll order never
+            // shifts under it.
+            listOf(
+                "0105",
+                "010C",
+                "010B",
+                "0133",
+                "010F",
+                "010D",
+                "0104",
+                "0111",
+                "015C",
+                "012F",
+                "0146",
+                "0149",
+                "0161",
+                "0162",
+            ),
             PidRegistry.all.map { it.command },
         )
     }
@@ -30,6 +49,15 @@ class PidRegistryTest {
         assertEquals(ProtocolPidIds.MAP, PidRegistry.map.definition.id)
         assertEquals(ProtocolPidIds.IAT, PidRegistry.intakeAirTemp.definition.id)
         assertEquals(ProtocolPidIds.SPEED, PidRegistry.speed.definition.id)
+        // OBD-50: oilTemp is the one session-2 addition wired to a frozen PidIds constant — it's
+        // the id :app's dashboard oil tile already requests (DashboardPids.kt). The rest are
+        // module-local, same as the OBD-43 pair above.
+        assertEquals(PidIds.OIL_TEMP, PidRegistry.oilTemp.definition.id)
+        assertEquals(ProtocolPidIds.FUEL_LEVEL, PidRegistry.fuelLevel.definition.id)
+        assertEquals(ProtocolPidIds.AMBIENT_TEMP, PidRegistry.ambientTemp.definition.id)
+        assertEquals(ProtocolPidIds.ACCEL_PEDAL, PidRegistry.accelPedal.definition.id)
+        assertEquals(ProtocolPidIds.DEMAND_TORQUE, PidRegistry.demandTorque.definition.id)
+        assertEquals(ProtocolPidIds.ACTUAL_TORQUE, PidRegistry.actualTorque.definition.id)
     }
 
     @Test
@@ -50,6 +78,12 @@ class PidRegistryTest {
                 ProtocolPidIds.SPEED to 0x0D,
                 ProtocolPidIds.ENGINE_LOAD to 0x04,
                 ProtocolPidIds.THROTTLE to 0x11,
+                PidIds.OIL_TEMP to 0x5C,
+                ProtocolPidIds.FUEL_LEVEL to 0x2F,
+                ProtocolPidIds.AMBIENT_TEMP to 0x46,
+                ProtocolPidIds.ACCEL_PEDAL to 0x49,
+                ProtocolPidIds.DEMAND_TORQUE to 0x61,
+                ProtocolPidIds.ACTUAL_TORQUE to 0x62,
             )
         for (spec in PidRegistry.all) {
             assertEquals(0x01, spec.mode)
@@ -66,6 +100,12 @@ class PidRegistryTest {
         assertEquals(1, PidRegistry.baro.dataByteCount)
         assertEquals(1, PidRegistry.intakeAirTemp.dataByteCount)
         assertEquals(1, PidRegistry.speed.dataByteCount)
+        assertEquals(1, PidRegistry.oilTemp.dataByteCount)
+        assertEquals(1, PidRegistry.fuelLevel.dataByteCount)
+        assertEquals(1, PidRegistry.ambientTemp.dataByteCount)
+        assertEquals(1, PidRegistry.accelPedal.dataByteCount)
+        assertEquals(1, PidRegistry.demandTorque.dataByteCount)
+        assertEquals(1, PidRegistry.actualTorque.dataByteCount)
     }
 
     @Test
@@ -77,6 +117,12 @@ class PidRegistryTest {
         assertEquals("4133", PidRegistry.baro.responseHeader)
         assertEquals("410F", PidRegistry.intakeAirTemp.responseHeader)
         assertEquals("410D", PidRegistry.speed.responseHeader)
+        assertEquals("415C", PidRegistry.oilTemp.responseHeader)
+        assertEquals("412F", PidRegistry.fuelLevel.responseHeader)
+        assertEquals("4146", PidRegistry.ambientTemp.responseHeader)
+        assertEquals("4149", PidRegistry.accelPedal.responseHeader)
+        assertEquals("4161", PidRegistry.demandTorque.responseHeader)
+        assertEquals("4162", PidRegistry.actualTorque.responseHeader)
     }
 
     @Test
@@ -87,6 +133,12 @@ class PidRegistryTest {
         assertEquals(MeasurementUnit.KPA, PidRegistry.baro.definition.unit)
         assertEquals(MeasurementUnit.RPM, PidRegistry.rpm.definition.unit)
         assertEquals(MeasurementUnit.KMH, PidRegistry.speed.definition.unit)
+        assertEquals(MeasurementUnit.CELSIUS, PidRegistry.oilTemp.definition.unit)
+        assertEquals(MeasurementUnit.CELSIUS, PidRegistry.ambientTemp.definition.unit)
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.fuelLevel.definition.unit)
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.accelPedal.definition.unit)
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.demandTorque.definition.unit)
+        assertEquals(MeasurementUnit.PERCENT, PidRegistry.actualTorque.definition.unit)
     }
 
     @Test
@@ -97,6 +149,13 @@ class PidRegistryTest {
         assertEquals(PollPriority.SLOW, PidRegistry.coolant.definition.pollPriority)
         assertEquals(PollPriority.SLOW, PidRegistry.baro.definition.pollPriority)
         assertEquals(PollPriority.SLOW, PidRegistry.intakeAirTemp.definition.pollPriority)
+        // OBD-50: none of session 2's additions are boost-rate signals — all SLOW.
+        assertEquals(PollPriority.SLOW, PidRegistry.oilTemp.definition.pollPriority)
+        assertEquals(PollPriority.SLOW, PidRegistry.fuelLevel.definition.pollPriority)
+        assertEquals(PollPriority.SLOW, PidRegistry.ambientTemp.definition.pollPriority)
+        assertEquals(PollPriority.SLOW, PidRegistry.accelPedal.definition.pollPriority)
+        assertEquals(PollPriority.SLOW, PidRegistry.demandTorque.definition.pollPriority)
+        assertEquals(PollPriority.SLOW, PidRegistry.actualTorque.definition.pollPriority)
     }
 
     @Test
@@ -190,5 +249,54 @@ class PidRegistryTest {
             PidRegistry.rpm.definition.parse(byteArrayOf(0xFF.toByte(), 0xFF.toByte())),
             0.0,
         )
+    }
+
+    // --- OBD-50 (session 2, 2026-08-13): oilTemp, fuelLevel, ambientTemp, accelPedal, ---------
+    // --- demandTorque, actualTorque -------------------------------------------------------
+
+    @Test
+    fun `the OBD-50 PIDs carry their SAE wire facts and all poll SLOW`() {
+        assertEquals("015C", PidRegistry.oilTemp.command)
+        assertEquals("012F", PidRegistry.fuelLevel.command)
+        assertEquals("0146", PidRegistry.ambientTemp.command)
+        assertEquals("0149", PidRegistry.accelPedal.command)
+        assertEquals("0161", PidRegistry.demandTorque.command)
+        assertEquals("0162", PidRegistry.actualTorque.command)
+
+        for (spec in listOf(
+            PidRegistry.oilTemp,
+            PidRegistry.fuelLevel,
+            PidRegistry.ambientTemp,
+            PidRegistry.accelPedal,
+            PidRegistry.demandTorque,
+            PidRegistry.actualTorque,
+        )) {
+            assertEquals(PollPriority.SLOW, spec.definition.pollPriority)
+            assertTrue("OBD-50 additions are live-verified: ${spec.definition.id}", spec.definition.verified)
+        }
+    }
+
+    @Test
+    fun `the OBD-50 parse lambdas reproduce the session's van anchors exactly`() {
+        // docs/hardware/session-2026-08-13.md §5, each written-down value re-derived from the
+        // raw byte the definition's own parse lambda receives — not recomputed by hand.
+        assertEquals(89.0, PidRegistry.oilTemp.definition.parse(byteArrayOf(0x81.toByte())), 0.0)
+        assertEquals(20.0, PidRegistry.ambientTemp.definition.parse(byteArrayOf(0x3C)), 0.0)
+        assertEquals(5.0, PidRegistry.demandTorque.definition.parse(byteArrayOf(0x82.toByte())), 0.0)
+        assertEquals(11.0, PidRegistry.actualTorque.definition.parse(byteArrayOf(0x88.toByte())), 0.0)
+
+        // Fuel level and accel pedal were written down to one decimal (42.7 %, 5.1 %); assert
+        // the full-precision quotient so the rounding cannot hide a wrong divisor.
+        assertEquals(10900.0 / 255.0, PidRegistry.fuelLevel.definition.parse(byteArrayOf(0x6D)), 0.0)
+        assertEquals(1300.0 / 255.0, PidRegistry.accelPedal.definition.parse(byteArrayOf(0x0D)), 0.0)
+    }
+
+    @Test
+    fun `demand and actual torque are signed, unlike the OBD-43 full-scale percentages`() {
+        // The /255 trap doesn't apply here — this is A - 125, not A * 100 / 255 — but the sign
+        // is the equivalent footgun: a raw byte below 125 must not be clamped to zero.
+        assertEquals(-125.0, PidRegistry.demandTorque.definition.parse(byteArrayOf(0x00)), 0.0)
+        assertEquals(-125.0, PidRegistry.actualTorque.definition.parse(byteArrayOf(0x00)), 0.0)
+        assertEquals(130.0, PidRegistry.demandTorque.definition.parse(byteArrayOf(0xFF.toByte())), 0.0)
     }
 }

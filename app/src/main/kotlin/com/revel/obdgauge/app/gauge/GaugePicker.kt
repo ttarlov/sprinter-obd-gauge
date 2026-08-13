@@ -672,8 +672,9 @@ private fun PickerCandidateCarousel(
  * flag rather than layering `clearAndSetSemantics {}` over this function's own internal tags.
  *
  * ### B11 MINOR, deferred (round-1 review, reviews/OBD-24-round1.md)
- * This mini-card carries no [UnverifiedBadge], so swapping to an unverified gauge (e.g. oil/trans
- * temp) means the badge only appears once the tile has actually settled into its slot, not while
+ * This mini-card carries no [UnverifiedBadge], so swapping to an unverified gauge (e.g. trans
+ * temp — oil temp is verified as of OBD-50) means the badge only appears once the tile has
+ * actually settled into its slot, not while
  * still browsing candidates. Deferred rather than fixed this round: `GaugePickerChrome`'s
  * carousel geometry (border/shrink math, OBD-42/44/46/47's multi-round-reviewed shrink/grow
  * stack) is dense and heavily pinned already, and a badge here would need its own hit-target

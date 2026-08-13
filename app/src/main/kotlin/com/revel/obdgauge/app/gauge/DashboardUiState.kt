@@ -26,8 +26,9 @@ data class GaugeTileUiState(
     val rawValue: Double,
     /**
      * OBD-27: mirrors [PidDefinition.verified] — `false` means this PID's request/parse is a
-     * hypothesis, unconfirmed against real hardware (today: [PidIds.OIL_TEMP]/
-     * [PidIds.TRANS_TEMP] — see `DashboardPids.kt`). Drives the tile's unverified badge. A
+     * hypothesis, unconfirmed against real hardware (today: [PidIds.TRANS_TEMP] — see
+     * `DashboardPids.kt`; [PidIds.OIL_TEMP] was the other one until OBD-50 wired it to the
+     * live-verified standard PID `015C`). Drives the tile's unverified badge. A
      * property of the *definition*, not the [Reading] — true even before any reading has
      * arrived, which is why [placeholder] takes it too, and why [DashboardUiState.Loading]
      * below sets it explicitly per-id rather than relying on this default for any of them.
@@ -98,7 +99,9 @@ data class DashboardUiState(
             DashboardUiState(
                 coolant = GaugeTileUiState.placeholder(PidIds.COOLANT, "Coolant", verified = true),
                 transTemp = GaugeTileUiState.placeholder(PidIds.TRANS_TEMP, "Trans", verified = false),
-                oilTemp = GaugeTileUiState.placeholder(PidIds.OIL_TEMP, "Oil", verified = false),
+                // OBD-50: oilTemp is now backed by the standard, live-verified 015C — see
+                // DashboardPids.kt.
+                oilTemp = GaugeTileUiState.placeholder(PidIds.OIL_TEMP, "Oil", verified = true),
                 boost = GaugeTileUiState.placeholder(PidIds.BOOST, "Boost", verified = true),
                 connection = LinkState.Disconnected,
             )

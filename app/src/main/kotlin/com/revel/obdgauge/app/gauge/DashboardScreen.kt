@@ -657,7 +657,7 @@ private fun previewUiState() =
                 isStale = false,
                 staleText = null,
                 rawValue = 240.0,
-                verified = false,
+                verified = true,
             ),
         boost =
             GaugeTileUiState(

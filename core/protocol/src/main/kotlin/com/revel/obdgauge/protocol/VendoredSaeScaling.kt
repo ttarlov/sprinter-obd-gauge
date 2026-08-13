@@ -49,6 +49,14 @@ package com.revel.obdgauge.protocol
  * vendored formulas only — nothing in [percent] is derived from that project, and the licence
  * obligation is unchanged either way.
  *
+ * **Session-2 note (OBD-50).** [fuelRateLitersPerHour], [moduleVoltageVolts] and [torquePercent]
+ * are likewise **not** vendored — they are the SAE J1979 definitions of PID `5E` (engine fuel
+ * rate), PID `42` (control module voltage) and PIDs `61`/`62` (demand/actual engine torque),
+ * transcribed directly and live-verified 2026-08-13 (`docs/hardware/session-2026-08-13.md` §5).
+ * [temperatureCelsius] and [percent] are reused as-is for `015C` (oil temp), `0146` (ambient),
+ * `012F` (fuel level) and `0149` (accelerator pedal) — same formulas, new PIDs, nothing new to
+ * pin here.
+ *
  * **RPM note (the one divergence, deliberate and documented rather than silent).** The
  * *formula and the constant* agree with SAE — `(256·A + B)` scaled by ¼. The *arithmetic* does
  * not: kotlin-obd-api computes `Long / Int`, which is **integer division in Kotlin**, so its
@@ -131,6 +139,54 @@ object VendoredSaeScaling {
     }
 
     /**
+     * Engine fuel rate (`015E`): `(256·A + B) / 20`, litres per hour.
+     *
+     * Not vendored — see the session-2 note on [VendoredSaeScaling]. **No [PidRegistry] entry
+     * uses this yet**: the natural unit is L/h, which has no [com.revel.obdgauge.model.MeasurementUnit]
+     * member in the frozen `:core:model` contract (OBD-50). The formula and its van anchor
+     * (`00 17` → 1.15 L/h idle, 2026-08-13) are pinned here so the arithmetic is proven ahead of
+     * the unit landing.
+     */
+    fun fuelRateLitersPerHour(
+        a: Int,
+        b: Int,
+    ): Double {
+        requireDataByte(a, "A")
+        requireDataByte(b, "B")
+        return (HIGH_BYTE_WEIGHT * a + b) / FUEL_RATE_DIVISOR
+    }
+
+    /**
+     * Control module voltage (`0142`): `(256·A + B) / 1000`, volts.
+     *
+     * Not vendored — see the session-2 note on [VendoredSaeScaling]. **No [PidRegistry] entry
+     * uses this yet**: the natural unit is volts, which has no
+     * [com.revel.obdgauge.model.MeasurementUnit] member in the frozen `:core:model` contract
+     * (OBD-50). The formula and its van anchor (`36 E2` → 14.05 V, 2026-08-13, matched the ATRV's
+     * own 14.1 V) are pinned here so the arithmetic is proven ahead of the unit landing.
+     */
+    fun moduleVoltageVolts(
+        a: Int,
+        b: Int,
+    ): Double {
+        requireDataByte(a, "A")
+        requireDataByte(b, "B")
+        return (HIGH_BYTE_WEIGHT * a + b) / MODULE_VOLTAGE_DIVISOR
+    }
+
+    /**
+     * Demand/actual engine torque (`0161`/`0162`): `A − 125`, percent of the engine's reference
+     * torque. Signed: raw `0x00` is −125 % (maximum engine braking) and raw `0xFF` is 130 %.
+     *
+     * Not vendored — see the session-2 note on [VendoredSaeScaling]. Live-verified 2026-08-13:
+     * `82` → 5 % (demand), `88` → 11 % (actual).
+     */
+    fun torquePercent(a: Int): Double {
+        requireDataByte(a, "A")
+        return a - TORQUE_OFFSET
+    }
+
+    /**
      * Reads [index] of [data] as an unsigned OBD data byte (`0..255`).
      *
      * Kotlin's `Byte` is signed, so a raw `0xBE` arrives as `-66`; every scaling call must mask
@@ -166,6 +222,15 @@ object VendoredSaeScaling {
 
     /** SAE J1979 full-scale percentage numerator: raw `0xFF` maps to exactly 100 %. */
     private const val PERCENT_FULL_SCALE = 100.0
+
+    /** SAE J1979 `015E` fuel-rate divisor: `(256A + B) / 20` litres per hour. */
+    private const val FUEL_RATE_DIVISOR = 20.0
+
+    /** SAE J1979 `0142` module-voltage divisor: `(256A + B) / 1000` volts. */
+    private const val MODULE_VOLTAGE_DIVISOR = 1000.0
+
+    /** SAE J1979 `0161`/`0162` torque offset: raw `0x00` is −125 % of reference torque. */
+    private const val TORQUE_OFFSET = 125.0
 
     private const val MAX_BYTE = 255
     private const val BYTE_MASK = 0xFF

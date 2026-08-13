@@ -77,6 +77,29 @@ data class StandardPidSpec(
  * the computed boost channel degrade to a *typed unavailable state* instead of a silent zero.
  * Conflating the two would have meant flipping a correct SAE decode to "unverified" and leaving
  * the boost gauge with no way to say why it has nothing to show.
+ *
+ * ## Hardware status after session 2 (2026-08-13, OM642, cold-start + commercial packet capture — OBD-50)
+ *
+ * Six more standard PIDs, live-verified via a full Bluetooth HCI capture of a commercial scan
+ * tool (`docs/hardware/session-2026-08-13.md` §5) polling this same van's dongle:
+ *
+ * | PID | Channel | 2026-08-13 result |
+ * |---|---|---|
+ * | `015C` | [oilTemp] | ✓ `81` = 89 °C — **closes OBD-35**, the dashboard's oil tile now reads a real value |
+ * | `012F` | [fuelLevel] | ✓ `6D` ≈ 42.7 % |
+ * | `0146` | [ambientTemp] | ✓ `3C` = 20 °C, matched the ATRV's 65 °F |
+ * | `0149` | [accelPedal] | ✓ `0D` ≈ 5.1 % |
+ * | `0161` | [demandTorque] | ✓ `82` = 5 % |
+ * | `0162` | [actualTorque] | ✓ `88` = 11 % |
+ *
+ * **Two PIDs from the same capture are *not* here.** `015E` (engine fuel rate, `(256A+B)/20`
+ * L/h, anchored `00 17` → 1.15 L/h) and `0142` (module voltage, `(256A+B)/1000` V, anchored
+ * `36 E2` → 14.05 V) are both live-verified and both scaled — [VendoredSaeScaling.fuelRateLitersPerHour]
+ * and [VendoredSaeScaling.moduleVoltageVolts] carry the formula and the anchor test — but neither
+ * L/h nor V exists as a [com.revel.obdgauge.model.MeasurementUnit] in the frozen `:core:model`
+ * contract, and this module does not add to that contract on its own authority (see
+ * `MODULE.md`). They wait for a reviewed contract change before they can become
+ * [StandardPidSpec] entries.
  */
 object PidRegistry {
     /** Engine coolant temperature, `0105`, `A − 40` °C. */
@@ -206,9 +229,110 @@ object PidRegistry {
             parse = { data -> VendoredSaeScaling.percent(VendoredSaeScaling.dataByte(data, 0)) },
         )
 
+    /**
+     * Engine oil temperature, `015C`, `A − 40` °C. **Closes OBD-35**: this is the id
+     * `:app`'s `DashboardPids.kt` dashboard oil tile already requests, so wiring it here is the
+     * whole fix — no `:app` change beyond that catalog's `verified` flag. Live-verified
+     * 2026-08-13 (`81` → 89 °C).
+     */
+    val oilTemp: StandardPidSpec =
+        spec(
+            id = PidIds.OIL_TEMP,
+            label = "Oil",
+            unit = MeasurementUnit.CELSIUS,
+            pid = OIL_TEMP_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.temperatureCelsius(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /** Fuel level input, `012F`, `A × 100 / 255` %. Live-verified 2026-08-13 (`6D` ≈ 42.7 %). */
+    val fuelLevel: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.FUEL_LEVEL,
+            label = "Fuel Level",
+            unit = MeasurementUnit.PERCENT,
+            pid = FUEL_LEVEL_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.percent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /** Ambient air temperature, `0146`, `A − 40` °C. Live-verified 2026-08-13 (`3C` = 20 °C). */
+    val ambientTemp: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.AMBIENT_TEMP,
+            label = "Ambient",
+            unit = MeasurementUnit.CELSIUS,
+            pid = AMBIENT_TEMP_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.temperatureCelsius(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /**
+     * Accelerator pedal position D, `0149`, `A × 100 / 255` %. Live-verified 2026-08-13 (`0D` ≈
+     * 5.1 %).
+     */
+    val accelPedal: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.ACCEL_PEDAL,
+            label = "Accel Pedal",
+            unit = MeasurementUnit.PERCENT,
+            pid = ACCEL_PEDAL_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.percent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /**
+     * Engine's demand (driver's intended) percent torque, `0161`, `A − 125` %, signed. Live-verified
+     * 2026-08-13 (`82` = 5 %).
+     */
+    val demandTorque: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.DEMAND_TORQUE,
+            label = "Demand Torque",
+            unit = MeasurementUnit.PERCENT,
+            pid = DEMAND_TORQUE_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.torquePercent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /**
+     * Engine's actual percent torque, `0162`, `A − 125` %, signed. Live-verified 2026-08-13
+     * (`88` = 11 %).
+     */
+    val actualTorque: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.ACTUAL_TORQUE,
+            label = "Actual Torque",
+            unit = MeasurementUnit.PERCENT,
+            pid = ACTUAL_TORQUE_PID,
+            dataByteCount = ONE_DATA_BYTE,
+            pollPriority = PollPriority.SLOW,
+            parse = { data -> VendoredSaeScaling.torquePercent(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
     /** Every standard PID in the registry, in a stable declaration order. */
     val all: List<StandardPidSpec> =
-        listOf(coolant, rpm, map, baro, intakeAirTemp, speed, engineLoad, throttlePosition)
+        listOf(
+            coolant,
+            rpm,
+            map,
+            baro,
+            intakeAirTemp,
+            speed,
+            engineLoad,
+            throttlePosition,
+            oilTemp,
+            fuelLevel,
+            ambientTemp,
+            accelPedal,
+            demandTorque,
+            actualTorque,
+        )
 
     /** The [PidDefinition]s of [all], for handing to a `VehicleDataSource`. */
     val definitions: List<PidDefinition> get() = all.map(StandardPidSpec::definition)
@@ -256,6 +380,12 @@ object PidRegistry {
     private const val SPEED_PID = 0x0D
     private const val ENGINE_LOAD_PID = 0x04
     private const val THROTTLE_PID = 0x11
+    private const val OIL_TEMP_PID = 0x5C
+    private const val FUEL_LEVEL_PID = 0x2F
+    private const val AMBIENT_TEMP_PID = 0x46
+    private const val ACCEL_PEDAL_PID = 0x49
+    private const val DEMAND_TORQUE_PID = 0x61
+    private const val ACTUAL_TORQUE_PID = 0x62
 
     private const val ONE_DATA_BYTE = 1
     private const val TWO_DATA_BYTES = 2

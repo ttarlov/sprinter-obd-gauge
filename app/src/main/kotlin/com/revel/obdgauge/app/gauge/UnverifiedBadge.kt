@@ -40,8 +40,9 @@ private const val BADGE_A11Y_LABEL = "Unverified reading — tap for raw respons
 /**
  * OBD-27's truth marker: a small, subtle-but-unambiguous badge shown on a gauge tile whose
  * backing [com.revel.obdgauge.model.PidDefinition] is `verified == false` — a hypothesis number,
- * not one confirmed against real hardware (see `docs/hardware/session-2026-08-12.md`: oil/trans
- * temp ship unverified). Tapping it opens [RawResponseDialog].
+ * not one confirmed against real hardware (trans temp ships unverified; oil temp shipped
+ * unverified too until OBD-50 wired it to the live-verified standard PID `015C`, per
+ * `docs/hardware/session-2026-08-13.md`). Tapping it opens [RawResponseDialog].
  *
  * ### UX decision: its own tap target, not the tile's existing tap/long-press
  * `GaugeTileInteraction.kt`/`GaugePicker.kt` already give every tile a plain tap (dismiss-picker

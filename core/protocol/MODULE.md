@@ -43,16 +43,23 @@ Behaviour worth knowing before you use it:
 ### `com.revel.obdgauge.protocol` — registry + parser (OBD-14)
 
 - `ProtocolPidIds` — `MAP = "map"`, `IAT = "iat"`, `SPEED = "speed"`, `ENGINE_LOAD =
-  "engineLoad"`, `THROTTLE = "throttle"`, `TRANS_TEMP_RECORD = "transTempRecord"`: ids for the
-  channels the frozen `PidIds` contract does not name, following its naming convention exactly.
+  "engineLoad"`, `THROTTLE = "throttle"`, `TRANS_TEMP_RECORD = "transTempRecord"`,
+  `FUEL_LEVEL = "fuelLevel"`, `AMBIENT_TEMP = "ambientTemp"`, `ACCEL_PEDAL = "accelPedal"`,
+  `DEMAND_TORQUE = "demandTorque"`, `ACTUAL_TORQUE = "actualTorque"` (the last four from OBD-50):
+  ids for the channels the frozen `PidIds` contract does not name, following its naming
+  convention exactly.
 - `StandardPidSpec(definition, mode, pid, dataByteCount)` with `command` (`"0105"`),
   `responseMode` (`0x41`) and `responseHeader` (`"4105"`). `PidDefinition` carries no byte
   count — it is the frozen UI-facing contract — so the wire facts live here beside it.
 - `PidRegistry` — `coolant` `0105`, `rpm` `010C`, `map` `010B`, `baro` `0133`,
   `intakeAirTemp` `010F`, `speed` `010D`, `engineLoad` `0104`, `throttlePosition` `0111`
-  (the last two from OBD-43); plus `all`, `definitions`, `byId(id)`, `byPid(mode, pid)`.
+  (the last two from OBD-43), `oilTemp` `015C`, `fuelLevel` `012F`, `ambientTemp` `0146`,
+  `accelPedal` `0149`, `demandTorque` `0161`, `actualTorque` `0162` (the last six from OBD-50);
+  plus `all`, `definitions`, `byId(id)`, `byPid(mode, pid)`.
 - `VendoredSaeScaling` — `temperatureCelsius(a)`, `engineRpm(a, b)`, `pressureKpa(a)`,
-  `speedKmh(a)`, `percent(a)`, `dataByte(data, index)`.
+  `speedKmh(a)`, `percent(a)`, `fuelRateLitersPerHour(a, b)`, `moduleVoltageVolts(a, b)`,
+  `torquePercent(a)`, `dataByte(data, index)`. The fuel-rate and module-voltage formulas are
+  proven but currently orphaned — no `PidRegistry` entry uses them; see OBD-50 below.
 - `ParseFailure` — sealed: `NoData`, `Stopped`, `UnableToConnect`, `UnknownCommand`, `Empty`,
   `BusError(raw)`, `NegativeResponse(requestMode, code)`, `NoMatchingFrame(expectedHeader, raw)`,
   `MalformedHex(raw)`, `UnexpectedDataLength(expected, actual)`,
@@ -196,10 +203,15 @@ headers stay **off**, which is what keeps `ResponseParser`'s framing assumptions
 (`TXD 07DF018670`, `MTH 00910BB8____`) is not implemented: OBD-16 computes boost from the
 standard `010B`/`0133` pair, which is altitude-correct and SAE-verified, and that code's
 transcription is visibly incomplete (the literal `____`) with an RXD that does not decode
-consistently. Oil temp is unscheduled (OBD-35). Note also that `:app`'s placeholder
-`DASHBOARD_PIDS` and `:core:testing`'s shipped fixture carry a *different* trans-temp
-hypothesis (`22 05 43` → `62 05 43 XX`); this module implements the X-Gauge code the build plan
-§2B specifies. OBD-22 decides which, if either, the van answers.
+consistently. **Oil temp needed no mode-22 hypothesis at all — OBD-35 is solved by a standard
+PID.** Session 2 (2026-08-13)'s commercial packet capture found `015C` answering directly:
+`41 5C 81` → 89 °C, coolant-minus-one at hot idle. `PidRegistry.oilTemp` wires it under
+`PidIds.OIL_TEMP`, the id `:app`'s `DashboardPids.kt` dashboard oil tile already requests, so the
+tile reads a real value with no `:app` change beyond that catalog's `verified` flag. See "What
+real hardware changed (session 2..." below. Note also that `:core:testing`'s shipped fixture
+still carries a *different* trans-temp hypothesis (`22 05 43` → `62 05 43 XX`); this module
+implements the X-Gauge code the build plan §2B specifies. OBD-22 decides which, if either, the
+van answers.
 
 ## What real hardware changed (session 1, 2026-08-12 — OBD-43 / OBD-49)
 
@@ -315,6 +327,45 @@ discarded; a shortfall is refused, never zero-filled), a `61 30` head, and `7F` 
 reporting the service byte **as received**, so the captured `7F 22 11` reads as "service 22 was
 rejected" rather than being rewritten as a rejection of the `21` we sent.
 
+## What real hardware changed (session 2, 2026-08-13 — OBD-50)
+
+`docs/hardware/session-2026-08-13.md` §5 is the ground truth: a full Bluetooth HCI capture of a
+commercial scan tool (Car Scanner) polling this van's dongle, which answered eight standard PIDs
+this module's own survey had missed — `015C` sits past the `0120` bitmap window `PidRegistry`'s
+session-1 KDoc audited, so it was never tried.
+
+| PID | Verdict | Consequence here |
+|---|---|---|
+| `015C` `012F` `0146` `0149` `0161` `0162` | answered | six new `PidRegistry` entries, all `verified = true`, all `SLOW` |
+| `015E` `0142` | answered, but no landing spot | scaling proven ([VendoredSaeScaling.fuelRateLitersPerHour], [VendoredSaeScaling.moduleVoltageVolts]), no registry entry — see below |
+
+**The most consequential line: `015C` closes OBD-35.** The mode-22 oil-temp hypothesis this
+module's KDoc long described as "unscheduled" never needed to exist — `015C` is a *standard*
+PID, and it answers this van directly (`41 5C 81` → 89 °C). `PidRegistry.oilTemp` is wired to
+`PidIds.OIL_TEMP`, the frozen id `:app`'s dashboard oil tile already requests
+(`DashboardPids.kt`), and every value on the wire — request, header match, scaling — comes from
+`PidCatalog` regardless of what `:app`'s own placeholder `PidDefinition` declares (see
+`RealVehicleDataSource.planFor`). The tile therefore starts reading a real number the moment this
+registry entry exists; the only `:app`-side change is flipping that catalog's `verified` flag so
+the badge stops claiming a hypothesis that is no longer one.
+
+**Two live-verified PIDs are proven but not registered.** `015E` (fuel rate, L/h) and `0142`
+(module voltage, V) both answered and both have a correct, tested scaling function — but neither
+unit exists on the frozen `:core:model` `MeasurementUnit` enum (`CELSIUS`, `FAHRENHEIT`, `PSI`,
+`KPA`, `RPM`, `KMH`, `MPH`, `PERCENT`), and this module does not extend that contract on its own
+authority. Adding `LITERS_PER_HOUR`/`VOLTS` is a reviewed `:core:model` change, out of scope for
+OBD-50. Until then `VendoredSaeScaling.fuelRateLitersPerHour`/`moduleVoltageVolts` exist,
+tested and anchored against the session's captures, waiting for a `StandardPidSpec` to ride on.
+
+**Demand/actual torque (`0161`/`0162`) are the one signed percentage in the registry.** Unlike
+`engineLoad`/`throttle`'s `A × 100 / 255` (OBD-43's `/255`-not-`/256` trap), torque is `A − 125`
+— the equivalent footgun is the *sign*, not the divisor: raw bytes below `0x7D` are negative
+(engine braking), and clamping them to zero would hide exactly the readings a driver descending a
+grade cares about. `PidRegistryTest` pins both directions.
+
+`0163` (reference torque, a static per-engine constant rather than a live reading) was captured
+(`440 Nm`, matching the OM642) but is catalog-only — not a gauge candidate, so not registered.
+
 ## Scheduler semantics (OBD-16)
 
 `RealVehicleDataSource` runs **one coroutine per session**: initialize once, then repeat — poll
@@ -378,6 +429,14 @@ current. No boost reading exists at all until both inputs do.
 | transTemp | `2130` (mode-22) | `CELSIUS` | `A − 50` at record byte 0, **unverified** — X-Gauge decode, contradicted by the capture |
 | transTempRecord | `2130` (KWP record) | `CELSIUS` | `A − 50` at record byte **18**, **unverified** — the capture's decode |
 | boost | computed | `KPA` | `MAP − baro`, gauge (signed); **unavailable on this vehicle** |
+| oilTemp | `015C` | `CELSIUS` | `A − 40` — closes OBD-35 (session 2) |
+| fuelLevel | `012F` | `PERCENT` | `A × 100 / 255` (session 2) |
+| ambientTemp | `0146` | `CELSIUS` | `A − 40` (session 2) |
+| accelPedal | `0149` | `PERCENT` | `A × 100 / 255` (session 2) |
+| demandTorque | `0161` | `PERCENT` | `A − 125`, signed (session 2) |
+| actualTorque | `0162` | `PERCENT` | `A − 125`, signed (session 2) |
+| *(no entry)* | `015E` fuel rate | *(no `MeasurementUnit`)* | `(256A + B) / 20` L/h — proven, unregistered (session 2, OBD-50) |
+| *(no entry)* | `0142` module voltage | *(no `MeasurementUnit`)* | `(256A + B) / 1000` V — proven, unregistered (session 2, OBD-50) |
 
 Display conversion to °F, PSI, or mph is the **UI's** job. Two reasons: protocol math stays in
 one unit system, and boost (`MAP − baro`, OBD-16) subtracts two quantities that are already
@@ -422,13 +481,19 @@ throws or returns a non-finite number.
 
 ## Test inventory
 
-247 JVM tests, `./gradlew :core:protocol:test`:
+262 JVM tests, `./gradlew :core:protocol:test`:
 
-- `VendoredSaeScalingTest` — 20, exact-value boundary checks written against SAE, not against
+- `VendoredSaeScalingTest` — 32, exact-value boundary checks written against SAE, not against
   the vendored source. The OBD-43 percentage additions pin exact `0`/`100` endpoints (the /255
   vs /256 trap), whole-number quotients, monotonicity over all 256 raws, and the van's own
-  captured readings via their independently written-down rounded values.
-- `PidRegistryTest` — 18.
+  captured readings via their independently written-down rounded values. OBD-50 adds the same
+  discipline for `fuelRateLitersPerHour`/`moduleVoltageVolts` (endpoints plus the session's
+  written-down 1.15 L/h / 14.05 V anchors) and `torquePercent` (the signed floor/ceiling and the
+  `A = 125` zero-crossing, the divisor-free formula's equivalent of the /255 trap).
+- `PidRegistryTest` — 21, OBD-50 adding: wire facts + SLOW priority + `verified = true` for all
+  six new PIDs in one table-driven test, the session's van anchors re-derived through each
+  definition's own `parse` lambda, and a dedicated pin that demand/actual torque are signed
+  rather than clamped at zero.
 - `ResponseParserTest` — 30, values + tolerance + every typed failure.
 - `ResponseParserPropertyTest` — 3 tests, 4500 seeded pseudo-random cases: the parser never
   throws, and never returns a value outside the range its PID's formula can physically produce.

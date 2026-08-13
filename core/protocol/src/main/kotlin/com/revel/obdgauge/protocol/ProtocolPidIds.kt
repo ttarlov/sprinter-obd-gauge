@@ -41,4 +41,21 @@ object ProtocolPidIds {
      * why this branch does not silently swap them.
      */
     const val TRANS_TEMP_RECORD: String = "transTempRecord"
+
+    // --- OBD-50 (session 2, 2026-08-13): live-verified standard PIDs with no dashboard gauge ---
+
+    /** Fuel level input (standard PID `012F`), percent. */
+    const val FUEL_LEVEL: String = "fuelLevel"
+
+    /** Ambient air temperature (standard PID `0146`), °C. */
+    const val AMBIENT_TEMP: String = "ambientTemp"
+
+    /** Accelerator pedal position D (standard PID `0149`), percent. */
+    const val ACCEL_PEDAL: String = "accelPedal"
+
+    /** Engine's demand (driver's intended) percent torque (standard PID `0161`), percent. */
+    const val DEMAND_TORQUE: String = "demandTorque"
+
+    /** Engine's actual percent torque (standard PID `0162`), percent. */
+    const val ACTUAL_TORQUE: String = "actualTorque"
 }

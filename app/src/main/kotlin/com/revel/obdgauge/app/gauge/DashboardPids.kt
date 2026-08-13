@@ -24,6 +24,13 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             parse = { UNUSED_PARSE_RESULT },
             pollPriority = PollPriority.SLOW,
         ),
+        // OBD-50: `:core:protocol`'s PidRegistry.oilTemp now wires this id to the standard,
+        // live-verified 015C (89 C on this van) instead of a mode-22 hypothesis — RealVehicleDataSource
+        // resolves the actual request/scaling from PidCatalog by id regardless of what's declared
+        // here (see DashboardPids' class KDoc), so `verified = true` is the only change this
+        // catalog needs to make the badge match reality. `request` below is therefore stale
+        // (nothing dereferences it in prod) but left as documentation of the pre-OBD-50 hypothesis
+        // until this placeholder list is itself retired at Phase-4 integration.
         PidDefinition(
             id = PidIds.OIL_TEMP,
             label = "Oil",
@@ -31,7 +38,6 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             request = ObdRequest.Mode22(header = OIL_HEADER, rxFilter = OIL_RX_FILTER, request = OIL_REQUEST),
             parse = { UNUSED_PARSE_RESULT },
             pollPriority = PollPriority.SLOW,
-            verified = false,
         ),
         PidDefinition(
             id = PidIds.TRANS_TEMP,

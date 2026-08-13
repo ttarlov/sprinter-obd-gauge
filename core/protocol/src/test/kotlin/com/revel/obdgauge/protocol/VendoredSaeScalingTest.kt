@@ -163,6 +163,96 @@ class VendoredSaeScalingTest {
         }
     }
 
+    // --- OBD-50 (session 2, 2026-08-13): fuel rate, module voltage, torque ------------------
+
+    @Test
+    fun `fuel rate at raw 0x0000 is zero`() {
+        assertEquals(0.0, VendoredSaeScaling.fuelRateLitersPerHour(0x00, 0x00), 0.0)
+    }
+
+    @Test
+    fun `fuel rate at raw 0xFFFF is the SAE ceiling of 3276_75 L per h`() {
+        assertEquals(3276.75, VendoredSaeScaling.fuelRateLitersPerHour(0xFF, 0xFF), 0.0)
+    }
+
+    @Test
+    fun `fuel rate reproduces the van's captured idle value from session 2`() {
+        // docs/hardware/session-2026-08-13.md §5: `41 5E 00 17` -> 1.15 L/h idle, the
+        // independently written-down anchor.
+        assertEquals(1.15, VendoredSaeScaling.fuelRateLitersPerHour(0x00, 0x17), 0.0)
+        // Full-precision form behind it, so a truncating divide or a /256 slip cannot hide
+        // inside a rounding that happens to also read "1.15".
+        assertEquals(23.0 / 20.0, VendoredSaeScaling.fuelRateLitersPerHour(0x00, 0x17), 0.0)
+    }
+
+    // --- 0142 module voltage: (256A + B) / 1000 volts (OBD-50) ------------------------------
+
+    @Test
+    fun `module voltage at raw 0x0000 is zero`() {
+        assertEquals(0.0, VendoredSaeScaling.moduleVoltageVolts(0x00, 0x00), 0.0)
+    }
+
+    @Test
+    fun `module voltage at raw 0xFFFF is the SAE ceiling of 65_535 V`() {
+        assertEquals(65.535, VendoredSaeScaling.moduleVoltageVolts(0xFF, 0xFF), 0.0)
+    }
+
+    @Test
+    fun `module voltage reproduces the van's captured value from session 2`() {
+        // `41 42 36 E2` -> 14.05 V, matched against the ATRV's own 14.1 V.
+        assertEquals(14.05, VendoredSaeScaling.moduleVoltageVolts(0x36, 0xE2), 0.0)
+        assertEquals(14050.0 / 1000.0, VendoredSaeScaling.moduleVoltageVolts(0x36, 0xE2), 0.0)
+    }
+
+    // --- 0161/0162 demand/actual torque: A - 125 percent, signed (OBD-50) -------------------
+
+    @Test
+    fun `torque percent at raw 0x00 is the SAE floor of -125 percent`() {
+        assertEquals(-125.0, VendoredSaeScaling.torquePercent(0x00), 0.0)
+    }
+
+    @Test
+    fun `torque percent at raw 0xFF is the SAE ceiling of 130 percent`() {
+        assertEquals(130.0, VendoredSaeScaling.torquePercent(0xFF), 0.0)
+    }
+
+    @Test
+    fun `torque percent at raw 0x7D is exactly 0, the reference-torque baseline`() {
+        assertEquals(0.0, VendoredSaeScaling.torquePercent(0x7D), 0.0)
+    }
+
+    @Test
+    fun `torque percent reproduces the van's captured demand and actual values from session 2`() {
+        // `41 61 82` (demand) -> 5 %, `41 62 88` (actual) -> 11 %.
+        assertEquals(5.0, VendoredSaeScaling.torquePercent(0x82), 0.0)
+        assertEquals(11.0, VendoredSaeScaling.torquePercent(0x88), 0.0)
+    }
+
+    // --- OBD-50: oil temp / ambient temp reuse temperatureCelsius; fuel level / accel pedal --
+    // --- reuse percent. Their own van anchors, since the formula tests above only pin the ----
+    // --- formula, not this session's specific bytes. -----------------------------------------
+
+    @Test
+    fun `temperatureCelsius reproduces the van's captured oil and ambient temps from session 2`() {
+        // `41 5C 81` (oil) -> 89 C, `41 46 3C` (ambient) -> 20 C.
+        assertEquals(89.0, VendoredSaeScaling.temperatureCelsius(0x81), 0.0)
+        assertEquals(20.0, VendoredSaeScaling.temperatureCelsius(0x3C), 0.0)
+    }
+
+    @Test
+    fun `percent reproduces the van's captured fuel level and accel pedal from session 2`() {
+        // `41 2F 6D` -> 42.7 % fuel level, `41 49 0D` -> 5.1 % accel pedal — the session's own
+        // written-down one-decimal readings.
+        assertEquals(42.7, roundToOneDecimal(VendoredSaeScaling.percent(0x6D)), 0.0)
+        assertEquals(5.1, roundToOneDecimal(VendoredSaeScaling.percent(0x0D)), 0.0)
+
+        // Full-precision values behind those roundings.
+        assertEquals(10900.0 / 255.0, VendoredSaeScaling.percent(0x6D), 0.0)
+        assertEquals(1300.0 / 255.0, VendoredSaeScaling.percent(0x0D), 0.0)
+    }
+
+    private fun roundToOneDecimal(value: Double): Double = Math.round(value * 10.0) / 10.0
+
     @Test
     fun `scaling rejects values outside one unsigned byte`() {
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.temperatureCelsius(256) }
@@ -171,5 +261,11 @@ class VendoredSaeScalingTest {
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.speedKmh(-1) }
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.engineRpm(0x00, 256) }
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.engineRpm(-1, 0x00) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.fuelRateLitersPerHour(256, 0x00) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.fuelRateLitersPerHour(0x00, -1) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.moduleVoltageVolts(256, 0x00) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.moduleVoltageVolts(0x00, -1) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.torquePercent(256) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.torquePercent(-1) }
     }
 }

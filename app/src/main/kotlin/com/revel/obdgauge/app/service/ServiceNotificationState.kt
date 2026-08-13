@@ -23,8 +23,8 @@ data class ServiceNotificationState(
  * OBD-24 AC: "Persistent notification shows a live headline reading (e.g. coolant temp) and
  * updates as data changes." Coolant is the headline channel — it's the one gauge every scenario
  * and every real cold-start reliably has a fresh value for (unlike boost, which needs a load
- * event, or the still-unverified trans/oil channels this notification shouldn't be the one
- * place a driver learns to trust a hypothesis number from).
+ * event, or the still-unverified trans channel — oil is verified as of OBD-50 — this
+ * notification shouldn't be the one place a driver learns to trust a hypothesis number from).
  *
  * @param connection current [LinkState] — drives which message shows; reuses this codebase's
  *   established per-state copy style (`gauge/ConnectionBanner.kt`'s `connectionBannerMessage`),
