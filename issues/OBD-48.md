@@ -5,7 +5,7 @@ module: core/ble
 owner: ble-agent
 sprint: 3
 track: small
-status: changes-requested
+status: in-progress
 type: feature
 hardware-verify: false
 blocked-by: []
