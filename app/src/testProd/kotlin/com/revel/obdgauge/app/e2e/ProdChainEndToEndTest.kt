@@ -113,27 +113,28 @@ class ProdChainEndToEndTest {
         runTest(testDispatcher) {
             val source = startVanSession(CAPTURED_CHANNELS)
 
-            // `010B` answered NO DATA, so there is no MAP and therefore no boost. The identity
-            // element of a subtraction is 0, which on a boost gauge reads as "engine not
-            // pulling" and is indistinguishable from a real measurement — so nothing is
-            // published at all. Absence, not a value, is the honest answer.
+            // OBD-57: boost is now the speed-density estimate, and its mass-airflow input has no
+            // channel yet (0166 answers, but g/s has no frozen unit — OBD-58), so there is no MAP
+            // and therefore no boost. The identity element of a subtraction is 0, which on a boost
+            // gauge reads as "engine not pulling" and is indistinguishable from a real measurement
+            // — so nothing is published at all. Absence, not a value, is the honest answer.
             assertNull(source.readings.value[PidIds.BOOST])
-            assertNull(source.readings.value[ProtocolPidIds.MAP])
+            assertNull(source.readings.value[ProtocolPidIds.MAF])
 
-            // ...and the reason is announced, typed, once per session and before a single
-            // command goes out: the consequence (boost) and the cause (map) as separate events.
+            // ...and the reason is announced, typed, once per session and before a single command
+            // goes out: the consequence (boost) and the cause (maf) as separate events.
             val availability = events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>()
             assertEquals(
-                ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAP)),
+                ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF)),
                 availability.first { it.id == PidIds.BOOST }.availability,
             )
             assertTrue(
-                availability.first { it.id == ProtocolPidIds.MAP }.availability
-                    is ChannelAvailability.UnsupportedByVehicle,
+                availability.first { it.id == ProtocolPidIds.MAF }.availability
+                    is ChannelAvailability.PendingUnitContract,
             )
-            // The unsupported PID is still polled — a falsification table that silenced requests
-            // could never discover its own wrong entries.
-            assertTrue(MAP_COMMAND in link.commands)
+            // MAF cannot be put on the wire — it has no channel until OBD-58 lands the g/s unit —
+            // but the pollable inputs are: IAT (0168) is attempted this session.
+            assertTrue(IAT_SENSOR_COMMAND in link.commands)
         }
 
     @Test
@@ -312,7 +313,7 @@ class ProdChainEndToEndTest {
 
         val INIT_COMMANDS = listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATSP0", "0100")
 
-        const val MAP_COMMAND = "010B"
+        const val IAT_SENSOR_COMMAND = "0168"
         const val KWP_RECORD_COMMAND = "2130"
         const val HEADER_SET_TCU = "ATSH7E1"
 

@@ -251,6 +251,30 @@ class VendoredSaeScalingTest {
         assertEquals(1300.0 / 255.0, VendoredSaeScaling.percent(0x0D), 0.0)
     }
 
+    // --- 0166 mass air flow (dual-bank, sensor A): (256B + C) / 32 g/s (OBD-56) --------------
+
+    @Test
+    fun `mass air flow at raw 0x0000 is zero`() {
+        assertEquals(0.0, VendoredSaeScaling.massAirFlowGramsPerSecond(0x00, 0x00), 0.0)
+    }
+
+    @Test
+    fun `mass air flow at raw 0xFFFF is the SAE ceiling of 2047_96875 g per s`() {
+        assertEquals(0xFFFF / 32.0, VendoredSaeScaling.massAirFlowGramsPerSecond(0xFF, 0xFF), 0.0)
+        assertEquals(2047.96875, VendoredSaeScaling.massAirFlowGramsPerSecond(0xFF, 0xFF), 0.0)
+    }
+
+    @Test
+    fun `mass air flow reproduces the van's captured sensor-A idle value from the 0166 capture`() {
+        // docs/hardware/research-2026-08-13-boost-inference.md: `41 66 01 01 C7 00 00` — sensor A
+        // B=0x01, C=0xC7 -> (256 + 199) / 32 = 14.21875 g/s, the doc's written-down "14.2 g/s".
+        assertEquals(14.21875, VendoredSaeScaling.massAirFlowGramsPerSecond(0x01, 0xC7), 0.0)
+        // Full-precision form behind the rounded 14.2, so a /16 or /64 slip or a reordered add
+        // cannot hide inside a rounding that still reads "14.2".
+        assertEquals(455.0 / 32.0, VendoredSaeScaling.massAirFlowGramsPerSecond(0x01, 0xC7), 0.0)
+        assertEquals(14.2, roundToOneDecimal(VendoredSaeScaling.massAirFlowGramsPerSecond(0x01, 0xC7)), 0.0)
+    }
+
     private fun roundToOneDecimal(value: Double): Double = Math.round(value * 10.0) / 10.0
 
     @Test
@@ -267,5 +291,7 @@ class VendoredSaeScalingTest {
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.moduleVoltageVolts(0x00, -1) }
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.torquePercent(256) }
         assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.torquePercent(-1) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.massAirFlowGramsPerSecond(256, 0x00) }
+        assertThrows(IllegalArgumentException::class.java) { VendoredSaeScaling.massAirFlowGramsPerSecond(0x00, -1) }
     }
 }

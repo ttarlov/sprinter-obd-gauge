@@ -77,6 +77,7 @@ package com.revel.obdgauge.protocol
  * converts it into a typed [ParseFailure.ScalingError], so the parser's never-throws guarantee
  * holds regardless).
  */
+@Suppress("TooManyFunctions") // One function per SAE PID scaling; splitting them would scatter the vendored table.
 object VendoredSaeScaling {
     /**
      * Temperature PIDs (`0105` coolant, `010F` intake air): `A − 40`, degrees Celsius.
@@ -187,6 +188,39 @@ object VendoredSaeScaling {
     }
 
     /**
+     * Mass air flow, extended dual-bank PID `0166`, sensor A: `(256·B + C) / 32`, grams per second.
+     *
+     * The standard MAF PID `0110` is unsupported on this van (the survey missed that `0166` is
+     * *answered* — `docs/hardware/research-2026-08-13-boost-inference.md`). `0166` is the
+     * dual-bank form: a leading support/bank byte A advertises which sensors are present, then two
+     * bytes per sensor. This van reports **sensor A only** — capture `41 66 01 01 C7 00 00`, so
+     * `A = 0x01`, `B = 0x01`, `C = 0xC7`, and `(256·1 + 199) / 32 = 14.21875` g/s at warm idle.
+     * The two trailing `00`s are the absent sensor-B slot; [ResponseParser] reads exactly the
+     * requested byte count and ignores them.
+     *
+     * **No [PidRegistry] channel uses this yet** — same wall as [fuelRateLitersPerHour] and
+     * [moduleVoltageVolts]: the natural unit is g/s, which has no
+     * [com.revel.obdgauge.model.MeasurementUnit] member in the frozen `:core:model` contract, and
+     * this module does not extend that contract on its own authority. The formula and its van
+     * anchor (`01 C7` → 14.21875 g/s, 2026-08-13) are pinned here so the arithmetic is proven
+     * ahead of the unit landing — and, crucially, so [ComputedChannels]' speed-density boost can be
+     * built and tested on the *value* (a `Reading` carries no unit) while the channel waits. The
+     * value is **unverified** against ground truth (a 🖐 throttle sweep — MAF must rise with
+     * load — confirms the decode); the *format* is high-confidence.
+     *
+     * @param b the high byte of sensor A's 16-bit count (data byte index 1 of the `0166` frame).
+     * @param c the low byte of sensor A's 16-bit count (data byte index 2 of the `0166` frame).
+     */
+    fun massAirFlowGramsPerSecond(
+        b: Int,
+        c: Int,
+    ): Double {
+        requireDataByte(b, "B")
+        requireDataByte(c, "C")
+        return (HIGH_BYTE_WEIGHT * b + c) / MAF_DIVISOR
+    }
+
+    /**
      * Reads [index] of [data] as an unsigned OBD data byte (`0..255`).
      *
      * Kotlin's `Byte` is signed, so a raw `0xBE` arrives as `-66`; every scaling call must mask
@@ -231,6 +265,9 @@ object VendoredSaeScaling {
 
     /** SAE J1979 `0161`/`0162` torque offset: raw `0x00` is −125 % of reference torque. */
     private const val TORQUE_OFFSET = 125.0
+
+    /** SAE J1979 `0166` mass-air-flow divisor: sensor A count `(256B + C) / 32` g/s. */
+    private const val MAF_DIVISOR = 32.0
 
     private const val MAX_BYTE = 255
     private const val BYTE_MASK = 0xFF

@@ -62,14 +62,15 @@ class DashboardUiStateTest {
     // exact asymmetry this issue was warned to avoid (a picker filter defaulting to permissive
     // is fine; a badge that only shows for SOME unverified ids is not).
     @Test
-    fun `transTemp is unverified, coolant, boost and oilTemp are verified, with no reading yet`() {
+    fun `transTemp and boost are unverified, coolant and oilTemp are verified, with no reading yet`() {
         // OBD-50: oilTemp moved to the verified side once PidRegistry.oilTemp wired it to the
-        // live-verified standard PID 015C — transTemp remains the sole mode-22 hypothesis.
+        // live-verified standard PID 015C. OBD-57: boost joined the unverified side — it is now the
+        // speed-density estimate ("Est."), not a verified MAP − baro subtraction.
         val state = toDashboardUiState(emptyMap(), LinkState.Ready, Instant.EPOCH)
 
         assertEquals(false, state.transTemp.verified)
+        assertEquals(false, state.boost.verified)
         assertEquals(true, state.coolant.verified)
-        assertEquals(true, state.boost.verified)
         assertEquals(true, state.oilTemp.verified)
     }
 

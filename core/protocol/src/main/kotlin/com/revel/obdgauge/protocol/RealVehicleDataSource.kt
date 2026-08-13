@@ -151,12 +151,14 @@ class RealVehicleDataSource internal constructor(
     }
 
     /**
-     * Announces, before a single command goes out, every channel in the plan that the hardware
-     * survey has already falsified — on this van, `map` and `iat`, and therefore `boost`.
+     * Announces, before a single command goes out, every channel in the plan the hardware survey
+     * (or the frozen-unit gap) already knows is not going to produce a value — on this van, the
+     * mass-airflow input and therefore `boost`.
      *
      * Walks the *expanded* set, so asking for boost reports both halves of the story: `boost` is
-     * [ChannelAvailability.MissingInputs]`(["map"])` — the consequence a gauge has to render —
-     * and `map` is [ChannelAvailability.UnsupportedByVehicle] with its capture — the cause.
+     * [ChannelAvailability.MissingInputs]`(["maf"])` — the consequence a gauge has to render — and
+     * `maf` is [ChannelAvailability.PendingUnitContract] — the cause (`0166` answers, but g/s has
+     * no frozen unit yet, OBD-58).
      *
      * Once per session, at plan time, because that is when the answer is known: it comes from a
      * capture, not from the wire. Deriving it instead from "boost has not been published for a
@@ -332,14 +334,22 @@ class RealVehicleDataSource internal constructor(
             }
         val boost =
             if (plan.computeBoost) {
-                ComputedChannels.boost(map = polled[ProtocolPidIds.MAP], baro = polled[PidIds.BARO])
+                // OBD-57: MAP is computed from speed density, not read from 010B. On this van MAF
+                // has no channel yet (PendingUnitContract, g/s unit — OBD-58), so `polled[MAF]` is
+                // absent and this returns null; when MAF lands the same call goes live unchanged.
+                ComputedChannels.speedDensityBoost(
+                    maf = polled[ProtocolPidIds.MAF],
+                    iat = polled[ProtocolPidIds.IAT_SENSOR],
+                    rpm = polled[PidIds.RPM],
+                    baro = polled[PidIds.BARO],
+                )
             } else {
                 null
             }
         // No boost reading rather than a substituted one: `boost == null` means an input is
-        // absent, and the identity element of a subtraction is 0 — which on a boost gauge reads
-        // as "engine not pulling" and is indistinguishable from a real measurement. See
-        // [ChannelAvailability]; [reportUnavailable] is what tells a consumer why.
+        // absent (or airflow/rpm are degenerate), and the identity element of a subtraction is 0 —
+        // which on a boost gauge reads as "engine not pulling" and is indistinguishable from a real
+        // measurement. See [ChannelAvailability]; [reportUnavailable] is what tells a consumer why.
         mutableReadings.value = if (boost == null) polled else polled + (boost.id to boost)
     }
 }

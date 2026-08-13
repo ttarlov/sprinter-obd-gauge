@@ -49,8 +49,10 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `computed boost is verified, since both of its inputs are SAE standard`() {
-        assertTrue(PidCatalog.isVerified(PidIds.BOOST))
+    fun `computed boost is unverified since OBD-57 - it is a speed-density estimate, not a measurement`() {
+        // Was verified while boost = 010B MAP − baro (a subtraction of SAE-standard PIDs). Now MAP
+        // is computed from an uncalibrated VE model, so boost is an "Est." until the 🖐 VE drive.
+        assertFalse(PidCatalog.isVerified(PidIds.BOOST))
     }
 
     @Test
@@ -59,8 +61,13 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `boost declares the raw channels it is derived from`() {
-        assertEquals(listOf(ProtocolPidIds.MAP, PidIds.BARO), PidCatalog.dependenciesOf(PidIds.BOOST))
+    fun `boost declares the speed-density channels it is derived from`() {
+        // OBD-57: MAP is computed from airflow, not read from 010B — so boost's inputs are the
+        // four speed-density terms, in dependency order.
+        assertEquals(
+            listOf(ProtocolPidIds.MAF, ProtocolPidIds.IAT_SENSOR, PidIds.RPM, PidIds.BARO),
+            PidCatalog.dependenciesOf(PidIds.BOOST),
+        )
         assertEquals(emptyList<String>(), PidCatalog.dependenciesOf(PidIds.COOLANT))
     }
 
@@ -83,18 +90,31 @@ class PidCatalogTest {
     fun `boost degrades to a typed unavailable naming the input it lost, never to a number`() {
         val boost = PidCatalog.availabilityOf(PidIds.BOOST)
 
-        assertEquals(ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAP)), boost)
-        // The baro half survives — it was captured working — so the missing list must be exactly
-        // MAP. A blanket "boost is unavailable" would lose the fact that half the input exists.
+        // OBD-57: the one input still ungrounded is mass airflow — IAT (0168), rpm and baro all
+        // answer. A blanket "boost is unavailable" would lose the fact that three of four exist.
+        assertEquals(ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF)), boost)
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.IAT_SENSOR))
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.RPM))
         assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BARO))
     }
 
     @Test
-    fun `boost stays verified while being unavailable, because they are different questions`() {
-        // The subtraction is still SAE-correct; it just has nothing to subtract on this van.
-        // Collapsing the two axes would either brand a correct decode a hypothesis or leave the
-        // gauge unable to say why it is empty.
-        assertTrue(PidCatalog.isVerified(PidIds.BOOST))
+    fun `mass airflow answers but cannot be published yet - it is pending the g_s unit contract`() {
+        // 0166 IS answered by this van (not UnsupportedByVehicle, not falsified); the only thing
+        // missing is a frozen MeasurementUnit for g/s (OBD-58). Its scaling is proven in
+        // VendoredSaeScaling. This is the seam OBD-58 flips: remove MAF from the pending set and it
+        // becomes an ordinary channel, and boost auto-flips to Available.
+        val maf = PidCatalog.availabilityOf(ProtocolPidIds.MAF)
+        assertTrue(maf is ChannelAvailability.PendingUnitContract)
+        assertEquals("g/s", (maf as ChannelAvailability.PendingUnitContract).quantity)
+    }
+
+    @Test
+    fun `boost is both unverified and unavailable, two different questions with the same answer today`() {
+        // Since OBD-57 boost is an estimate (unverified) AND missing an input (unavailable). The
+        // axes stay independent: MAP's own decode is still SAE-correct, so isVerified(MAP) is true
+        // even though MAP is not read on this van.
+        assertFalse(PidCatalog.isVerified(PidIds.BOOST))
         assertTrue(PidCatalog.availabilityOf(PidIds.BOOST) != ChannelAvailability.Available)
         assertTrue(PidCatalog.isVerified(ProtocolPidIds.MAP))
     }

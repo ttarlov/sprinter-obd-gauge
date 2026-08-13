@@ -68,4 +68,30 @@ sealed interface ChannelAvailability {
     data class DecodeFalsified(
         val evidence: String,
     ) : ChannelAvailability
+
+    /**
+     * The vehicle answers the channel and its decode is known, but the value **cannot be
+     * published yet** because the frozen `:core:model`
+     * [com.revel.obdgauge.model.MeasurementUnit] enum has no member for its quantity — so no
+     * [com.revel.obdgauge.model.PidDefinition] can carry it and no [StandardPidSpec] can poll it.
+     *
+     * Distinct from every other verdict, and the distinction matters: this is not "the van won't
+     * answer" ([UnsupportedByVehicle]) nor "we read it wrong" ([DecodeFalsified]) nor "an input is
+     * absent" ([MissingInputs]) — the van answers and the arithmetic is proven (its anchor test is
+     * green in [VendoredSaeScaling]). The only thing missing is a *unit contract*, an additive
+     * `:core:model` change that this module will not make on its own authority.
+     *
+     * The mass-airflow channel ([ProtocolPidIds.MAF], g/s) is the live case: it is a dependency of
+     * the speed-density boost estimate, so boost degrades to [MissingInputs]`(["maf"])` until the
+     * unit lands. When it does (a scoped `:core:model` + `:app` change), MAF becomes an ordinary
+     * polled channel and boost auto-flips to [Available] with no change here — the clean seam this
+     * verdict exists to hold open. `015E` fuel-rate (L/h) and `0142` module-voltage (V) sit in the
+     * same waiting room.
+     *
+     * @param quantity the unit the frozen enum is missing, e.g. `"g/s"` — auditable, so the seam
+     *   names exactly what it is waiting on.
+     */
+    data class PendingUnitContract(
+        val quantity: String,
+    ) : ChannelAvailability
 }

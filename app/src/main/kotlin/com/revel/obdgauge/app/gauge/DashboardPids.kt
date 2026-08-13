@@ -48,6 +48,10 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             pollPriority = PollPriority.SLOW,
             verified = false,
         ),
+        // OBD-57: boost is now the speed-density estimate ("Est."), not a verified MAP − baro
+        // subtraction — its MAP is computed from an uncalibrated VE model. Mirrors
+        // PidCatalog.isVerified(BOOST) = false so the tile badges it unverified. (The app/protocol
+        // verified-flag duplication this mirrors by hand is filed for removal as OBD-53.)
         PidDefinition(
             id = PidIds.BOOST,
             label = "Boost",
@@ -55,6 +59,7 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             request = ObdRequest.StandardPid(mode = STANDARD_MODE, pid = MAP_PID),
             parse = { UNUSED_PARSE_RESULT },
             pollPriority = PollPriority.FAST,
+            verified = false,
         ),
     )
 

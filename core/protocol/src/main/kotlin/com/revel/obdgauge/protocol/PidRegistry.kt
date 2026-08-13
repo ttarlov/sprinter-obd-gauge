@@ -100,6 +100,17 @@ data class StandardPidSpec(
  * contract, and this module does not add to that contract on its own authority (see
  * `MODULE.md`). They wait for a reviewed contract change before they can become
  * [StandardPidSpec] entries.
+ *
+ * ## Boost-wave (OBD-56, 2026-08-13): the extended sensor PIDs the survey missed
+ *
+ * Standard MAF (`0110`) and IAT (`010F`) are unsupported on this van, but the extended dual-bank
+ * forms are answered (`docs/hardware/research-2026-08-13-boost-inference.md`). [intakeAirTempSensor]
+ * (`0168` sensor 1, `54` → 44 °C) lands here as a real CELSIUS channel, `verified = false`. MAF
+ * (`0166` sensor A, `01 C7` → 14.21875 g/s) **does not get a channel**: g/s joins L/h and V as a
+ * quantity the frozen enum cannot name, so its decode lives in
+ * [VendoredSaeScaling.massAirFlowGramsPerSecond] and it is referenced by id ([ProtocolPidIds.MAF])
+ * as a boost dependency that [PidCatalog.availabilityOf] reports
+ * [ChannelAvailability.PendingUnitContract]. Both feed OBD-57's speed-density boost.
  */
 object PidRegistry {
     /** Engine coolant temperature, `0105`, `A − 40` °C. */
@@ -158,7 +169,7 @@ object PidRegistry {
             parse = { data -> VendoredSaeScaling.pressureKpa(VendoredSaeScaling.dataByte(data, 0)) },
         )
 
-    /** Intake air temperature, `010F`, `A − 40` °C. */
+    /** Intake air temperature, `010F`, `A − 40` °C. **Unsupported on this van** — see [intakeAirTempSensor]. */
     val intakeAirTemp: StandardPidSpec =
         spec(
             id = ProtocolPidIds.IAT,
@@ -168,6 +179,34 @@ object PidRegistry {
             dataByteCount = ONE_DATA_BYTE,
             pollPriority = PollPriority.SLOW,
             parse = { data -> VendoredSaeScaling.temperatureCelsius(VendoredSaeScaling.dataByte(data, 0)) },
+        )
+
+    /**
+     * Intake air temperature, extended dual-bank PID `0168` sensor 1, `A2 − 40` °C — the IAT this
+     * van actually answers (OBD-56). Standard `010F` ([intakeAirTemp]) returns `NO DATA`; `0168`
+     * fills the gap and is the charge-air temperature the speed-density boost model reads.
+     *
+     * **Framing.** `0168` is the dual-bank form: a leading support/bank byte (data index 0)
+     * then one temperature byte per sensor. Sensor 1 is the **second** data byte (index 1), so
+     * `A2 − 40`. Capture `41 68 01 54 00 00 21 …`: index 0 `0x01` (support), index 1 `0x54` → 84 −
+     * 40 = **44 °C**. The van pads the frame with non-standard trailing bytes (possibly
+     * multi-frame); [dataByteCount] asks for exactly the two bytes through sensor 1 and
+     * [ResponseParser] ignores the padding — the parse cannot be broken by however many extra
+     * bytes follow.
+     *
+     * `verified = false`: the decode *format* is high-confidence but the *value* is unconfirmed
+     * against ground truth until a 🖐 throttle sweep (IAT ≈ ambient + soak, rising under load).
+     */
+    val intakeAirTempSensor: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.IAT_SENSOR,
+            label = "Intake Air",
+            unit = MeasurementUnit.CELSIUS,
+            pid = IAT_SENSOR_PID,
+            dataByteCount = TWO_DATA_BYTES,
+            pollPriority = PollPriority.SLOW,
+            verified = false,
+            parse = { data -> VendoredSaeScaling.temperatureCelsius(VendoredSaeScaling.dataByte(data, 1)) },
         )
 
     /** Vehicle speed, `010D`, `A` km/h. */
@@ -323,6 +362,7 @@ object PidRegistry {
             map,
             baro,
             intakeAirTemp,
+            intakeAirTempSensor,
             speed,
             engineLoad,
             throttlePosition,
@@ -355,6 +395,7 @@ object PidRegistry {
         dataByteCount: Int,
         pollPriority: PollPriority,
         parse: (ByteArray) -> Double,
+        verified: Boolean = true,
     ): StandardPidSpec =
         StandardPidSpec(
             definition =
@@ -365,6 +406,7 @@ object PidRegistry {
                     request = ObdRequest.StandardPid(mode = STANDARD_MODE, pid = pid),
                     parse = parse,
                     pollPriority = pollPriority,
+                    verified = verified,
                 ),
             mode = STANDARD_MODE,
             pid = pid,
@@ -377,6 +419,7 @@ object PidRegistry {
     private const val MAP_PID = 0x0B
     private const val BARO_PID = 0x33
     private const val IAT_PID = 0x0F
+    private const val IAT_SENSOR_PID = 0x68
     private const val SPEED_PID = 0x0D
     private const val ENGINE_LOAD_PID = 0x04
     private const val THROTTLE_PID = 0x11

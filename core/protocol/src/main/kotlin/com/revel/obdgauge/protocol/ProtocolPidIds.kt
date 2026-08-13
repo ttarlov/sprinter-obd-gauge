@@ -20,8 +20,35 @@ object ProtocolPidIds {
     /** Intake manifold absolute pressure (standard PID `010B`), kPa absolute. */
     const val MAP: String = "map"
 
-    /** Intake air temperature (standard PID `010F`), °C. */
+    /** Intake air temperature (standard PID `010F`), °C. **Unsupported on this van** — see [IAT_SENSOR]. */
     const val IAT: String = "iat"
+
+    /**
+     * Intake air temperature from the extended dual-bank PID `0168`, sensor 1, °C — the IAT that
+     * this van actually answers (standard `010F`/[IAT] returns `NO DATA`; `0168` fills the gap,
+     * `docs/hardware/research-2026-08-13-boost-inference.md`). A distinct id from [IAT] because it
+     * is a distinct PID with a distinct availability verdict: `010F` is
+     * [ChannelAvailability.UnsupportedByVehicle], `0168` is a live channel. This is the charge-air
+     * temperature the speed-density boost model (OBD-57) reads. Value unverified pending a 🖐
+     * throttle sweep; decode format high-confidence.
+     */
+    const val IAT_SENSOR: String = "iatSensor"
+
+    /**
+     * Mass air flow from the extended dual-bank PID `0166`, sensor A, g/s — the airflow input to
+     * the speed-density boost model (OBD-57). Standard MAF `0110` is unsupported; `0166` is
+     * answered.
+     *
+     * **No polled channel resolves this id yet.** Its natural unit is grams-per-second, which the
+     * frozen `:core:model` [com.revel.obdgauge.model.MeasurementUnit] enum does not name, so — like
+     * `015E` fuel-rate (L/h) and `0142` module-voltage (V) — MAF cannot become a
+     * [StandardPidSpec] without an additive contract change this module will not make on its own
+     * authority. The decode lives in [VendoredSaeScaling.massAirFlowGramsPerSecond]; boost declares
+     * this id as a dependency and [PidCatalog.availabilityOf] reports it
+     * [ChannelAvailability.PendingUnitContract] until the unit lands, so boost reads
+     * `MissingInputs(["maf"])` rather than silently claiming it can spool.
+     */
+    const val MAF: String = "maf"
 
     /** Vehicle speed (standard PID `010D`), km/h. */
     const val SPEED: String = "speed"

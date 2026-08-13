@@ -75,15 +75,21 @@ sealed interface PolledPid {
  * - **`010F` IAT → `NO DATA`. Not supported either**, and the bitmap agrees.
  * - Coolant, rpm, engine load, throttle and baro all answered; speed is bitmap-advertised.
  *
- * MAP being absent is not a cosmetic loss: it is one of the two inputs to [computedBoost], the
- * channel this whole app was built around. The altitude-true `MAP − baro` arithmetic is still
- * correct and still SAE-verified — it simply has nothing to chew on until a Mercedes mode-22 MAP
- * DID is discovered (an OBD-41-style parked discovery session). Baro, the other half, works.
+ * MAP being absent was the whole reason boost had nothing to chew on. **OBD-57 changed the model:**
+ * MAP is no longer read from `010B`, it is *computed* from speed density
+ * ([ComputedChannels.speedDensityBoost]) out of mass airflow (`0166`), charge temp (`0168`), rpm
+ * and baro — the extended sensor PIDs the survey missed but this van answers. Boost's inputs are
+ * therefore [ProtocolPidIds.MAF], [ProtocolPidIds.IAT_SENSOR], [PidIds.RPM] and [PidIds.BARO], and
+ * boost is now an estimate ([isVerified] `= false`, "Est."), not a verified subtraction.
  *
- * So [availabilityOf] reports MAP and IAT as [ChannelAvailability.UnsupportedByVehicle] and
- * boost as [ChannelAvailability.MissingInputs]`(["map"])`, [RealVehicleDataSource] emits that as
- * a [PollEvent.ChannelAvailabilityChanged], and nothing anywhere substitutes a zero. See
- * [ChannelAvailability] for why "show 0 PSI" is the outcome being engineered against.
+ * So [availabilityOf] reports the old `010B`/`010F` MAP and IAT as
+ * [ChannelAvailability.UnsupportedByVehicle] (kept for the survey record), mass airflow as
+ * [ChannelAvailability.PendingUnitContract] (`0166` answers, but g/s has no frozen unit yet —
+ * OBD-58), and boost as [ChannelAvailability.MissingInputs]`(["maf"])` — the one input still
+ * ungrounded. [RealVehicleDataSource] emits that as a [PollEvent.ChannelAvailabilityChanged], and
+ * nothing anywhere substitutes a zero. See [ChannelAvailability] for why "show 0 PSI" is the
+ * outcome being engineered against. When the g/s unit lands, MAF becomes a channel and boost
+ * auto-flips to [ChannelAvailability.Available] with no change here.
  *
  * These verdicts are about **this van**. They are recorded here, next to the registry, rather
  * than in a UI-side allow-list, because "which PIDs does the vehicle implement" is protocol
@@ -105,7 +111,8 @@ object PidCatalog {
             listOf(PolledPid.Record(TcuRecordRegistry.transTempRecord))
 
     /**
-     * The computed boost channel, `MAP − baro` in kPa. See [ComputedChannels.boost].
+     * The computed boost channel, kPa. Since OBD-57 its MAP half is the speed-density estimate
+     * ([ComputedChannels.speedDensityBoost]), so `verified = false` ("Est.") — see [isVerified].
      *
      * `PidDefinition.request` and `parse` are structurally required by the frozen contract but
      * meaningless here — boost is never requested and never parsed. Rather than point them at
@@ -120,8 +127,9 @@ object PidCatalog {
             label = "Boost",
             unit = MeasurementUnit.KPA,
             request = ObdRequest.StandardPid(mode = BOOST_PLACEHOLDER_MODE, pid = BOOST_PLACEHOLDER_PID),
-            parse = { throw UnsupportedOperationException("boost is computed from map − baro, never parsed") },
+            parse = { throw UnsupportedOperationException("boost is computed from speed density, never parsed") },
             pollPriority = PollPriority.FAST,
+            verified = false,
         )
 
     /** Every definition this catalog knows, polled and computed, for handing to a data source. */
@@ -135,16 +143,23 @@ object PidCatalog {
      *
      * Unknown ids answer `false` — an id this module cannot vouch for is not verified, and the
      * conservative answer is the one that makes the UI show a caveat rather than hide one.
-     * Computed boost answers `true`: both of its inputs are SAE-standard PIDs and the subtraction
-     * introduces no hypothesis.
      *
-     * **This is not the same as "will produce a value here"** — boost is `verified` and, on this
-     * van, [ChannelAvailability.MissingInputs]. Ask [availabilityOf] for that. A UI that badges
-     * only on this flag will render an unavailable channel as trustworthy-but-silent.
+     * **Computed boost answers `false` since OBD-57.** It used to answer `true`: `010B` MAP − baro
+     * is a subtraction of two SAE-standard PIDs that introduces no hypothesis. But `010B` is
+     * absent on this van, so boost is now the *speed-density estimate* — a thermodynamic model
+     * whose volumetric-efficiency curve ([VolumetricEfficiency]) is uncalibrated and whose charge
+     * temperature may be pre-turbo. That is a hypothesis by construction, so it is badged "Est."
+     * and stays `verified = false` until a 🖐 VE-calibration drive fits the curve. This is the
+     * honest half of shipping a computed boost gauge at all.
+     *
+     * **This is not the same as "will produce a value here"** — boost is unverified *and*, on this
+     * van, [ChannelAvailability.MissingInputs]`(["maf"])` pending the g/s unit. Ask [availabilityOf]
+     * for that. A UI that badges only on this flag will render an unavailable channel as
+     * caveated-but-silent.
      */
     fun isVerified(id: String): Boolean =
         when (id) {
-            PidIds.BOOST -> true
+            PidIds.BOOST -> false
             else -> byId(id)?.definition?.verified ?: false
         }
 
@@ -164,6 +179,7 @@ object PidCatalog {
         val unsupportedInputs = dependenciesOf(id).filter { availabilityOf(it) != ChannelAvailability.Available }
         return when {
             unsupportedInputs.isNotEmpty() -> ChannelAvailability.MissingInputs(unsupportedInputs)
+            id in PENDING_UNIT_CONTRACT -> ChannelAvailability.PendingUnitContract(PENDING_UNITS.getValue(id))
             id in UNSUPPORTED_BY_THIS_VEHICLE -> ChannelAvailability.UnsupportedByVehicle(NO_DATA_EVIDENCE)
             id in FALSIFIED_DECODES -> ChannelAvailability.DecodeFalsified(FALSIFIED_EVIDENCE)
             else -> ChannelAvailability.Available
@@ -172,13 +188,25 @@ object PidCatalog {
 
     /**
      * The channels [id] needs polled in order to be produced. Empty for anything directly polled;
-     * `map` + `baro` for computed boost.
+     * the four speed-density inputs for computed boost.
      *
      * [RealVehicleDataSource] uses this to expand a requested set: a screen asks for `boost` and
      * gets it, without having to know which raw PIDs feed it.
+     *
+     * **OBD-57 rewired this.** Boost is no longer `010B` MAP − baro (that PID answers `NO DATA`
+     * here); MAP is now *computed* from speed density, so boost's real inputs are mass airflow
+     * ([ProtocolPidIds.MAF]), charge-air temperature ([ProtocolPidIds.IAT_SENSOR]), engine speed
+     * ([PidIds.RPM]) and barometric pressure ([PidIds.BARO]) — the arguments of
+     * [ComputedChannels.speedDensityBoost]. On this van three of the four are live; MAF is
+     * [ChannelAvailability.PendingUnitContract] (see [availabilityOf]), so boost reports
+     * `MissingInputs(["maf"])` until the g/s unit lands (OBD-58).
      */
     fun dependenciesOf(id: String): List<String> =
-        if (id == PidIds.BOOST) listOf(ProtocolPidIds.MAP, PidIds.BARO) else emptyList()
+        if (id == PidIds.BOOST) {
+            listOf(ProtocolPidIds.MAF, ProtocolPidIds.IAT_SENSOR, PidIds.RPM, PidIds.BARO)
+        } else {
+            emptyList()
+        }
 
     /**
      * The channels the 2026-08-12 survey found this vehicle does **not** implement.
@@ -188,6 +216,22 @@ object PidCatalog {
      * belongs in `docs/hardware/` before the id belongs here.
      */
     private val UNSUPPORTED_BY_THIS_VEHICLE: Set<String> = setOf(ProtocolPidIds.MAP, ProtocolPidIds.IAT)
+
+    /**
+     * Channels whose decode is proven but which cannot be published because the frozen
+     * `:core:model` [com.revel.obdgauge.model.MeasurementUnit] enum names no unit for their
+     * quantity — see [ChannelAvailability.PendingUnitContract]. Mass airflow ([ProtocolPidIds.MAF],
+     * g/s) is the live entry: it is a speed-density boost input ([dependenciesOf]), so boost
+     * degrades to `MissingInputs(["maf"])` rather than falsely claiming it can spool.
+     *
+     * The unit is APPROVED (DECISIONS.md D9) but lands as a separate scoped change (OBD-58) that
+     * touches `:core:model`; when it does, MAF gets a [PidRegistry] channel, leaves this set, and
+     * boost auto-flips to [ChannelAvailability.Available] with no other change here.
+     */
+    private val PENDING_UNIT_CONTRACT: Set<String> = setOf(ProtocolPidIds.MAF)
+
+    /** The frozen-enum-missing unit each [PENDING_UNIT_CONTRACT] channel is waiting on. */
+    private val PENDING_UNITS: Map<String, String> = mapOf(ProtocolPidIds.MAF to "g/s")
 
     private const val NO_DATA_EVIDENCE =
         "captured NO DATA from the OM642, engine running, 2026-08-12 " +

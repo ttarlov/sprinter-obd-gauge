@@ -5,6 +5,7 @@ import com.revel.obdgauge.model.ObdRequest
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.PollPriority
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,21 +13,22 @@ import org.junit.Test
 /** Registry completeness, wire addresses, response lengths, units, and per-PID scaling. */
 class PidRegistryTest {
     @Test
-    fun `registry defines exactly the fourteen standard PIDs OBD-14, OBD-43 and OBD-50 require`() {
-        // OBD-50 grows this from 8 to 14: oilTemp, fuelLevel, ambientTemp, accelPedal,
-        // demandTorque, actualTorque — six of the eight session-2 live-verified PIDs (fuelRate
-        // and moduleVoltage are blocked on a missing MeasurementUnit; see PidRegistry's KDoc).
-        assertEquals(14, PidRegistry.all.size)
+    fun `registry defines exactly the fifteen standard PIDs OBD-14, OBD-43, OBD-50 and OBD-56 require`() {
+        // OBD-50 grew this from 8 to 14; OBD-56 adds the fifteenth, intakeAirTempSensor (0168 — the
+        // IAT this van actually answers, standard 010F being NO DATA). fuelRate, moduleVoltage and
+        // MAF (0166) stay blocked on a missing MeasurementUnit; see PidRegistry's KDoc.
+        assertEquals(15, PidRegistry.all.size)
         assertEquals(
-            // OBD-14's six, then OBD-43's two, then OBD-50's six appended — declaration order is
-            // stable and new entries go on the end, so an existing caller's poll order never
-            // shifts under it.
+            // OBD-14's six, then OBD-43's two, then OBD-50's six, then OBD-56's one appended. New
+            // entries go on the end (0168 slots after 010F, its unsupported standard sibling), so
+            // an existing caller's poll order never shifts under it.
             listOf(
                 "0105",
                 "010C",
                 "010B",
                 "0133",
                 "010F",
+                "0168",
                 "010D",
                 "0104",
                 "0111",
@@ -75,6 +77,7 @@ class PidRegistryTest {
                 ProtocolPidIds.MAP to 0x0B,
                 PidIds.BARO to 0x33,
                 ProtocolPidIds.IAT to 0x0F,
+                ProtocolPidIds.IAT_SENSOR to 0x68,
                 ProtocolPidIds.SPEED to 0x0D,
                 ProtocolPidIds.ENGINE_LOAD to 0x04,
                 ProtocolPidIds.THROTTLE to 0x11,
@@ -159,8 +162,12 @@ class PidRegistryTest {
     }
 
     @Test
-    fun `standard PIDs are verified by the SAE standard, unlike the mode-22 hypotheses`() {
-        assertTrue(PidRegistry.all.all { it.definition.verified })
+    fun `standard PIDs are SAE-verified, except the extended sensor whose value is unconfirmed`() {
+        // Every SAE-standard decode is verified — except intakeAirTempSensor (0168, OBD-56): its
+        // decode FORMAT is high-confidence but its VALUE is unconfirmed against ground truth until
+        // a 🖐 throttle sweep, so it ships verified = false like a mode-22 hypothesis.
+        assertFalse(PidRegistry.intakeAirTempSensor.definition.verified)
+        assertTrue(PidRegistry.all.filterNot { it == PidRegistry.intakeAirTempSensor }.all { it.definition.verified })
     }
 
     @Test
@@ -289,6 +296,31 @@ class PidRegistryTest {
         // the full-precision quotient so the rounding cannot hide a wrong divisor.
         assertEquals(10900.0 / 255.0, PidRegistry.fuelLevel.definition.parse(byteArrayOf(0x6D)), 0.0)
         assertEquals(1300.0 / 255.0, PidRegistry.accelPedal.definition.parse(byteArrayOf(0x0D)), 0.0)
+    }
+
+    // --- OBD-56 (2026-08-13): the extended IAT the survey missed, 0168 sensor 1 -----------------
+
+    @Test
+    fun `the IAT sensor channel carries the 0168 wire facts and ships unverified`() {
+        assertEquals(ProtocolPidIds.IAT_SENSOR, PidRegistry.intakeAirTempSensor.definition.id)
+        assertEquals("0168", PidRegistry.intakeAirTempSensor.command)
+        assertEquals("4168", PidRegistry.intakeAirTempSensor.responseHeader)
+        assertEquals(MeasurementUnit.CELSIUS, PidRegistry.intakeAirTempSensor.definition.unit)
+        assertEquals(PollPriority.SLOW, PidRegistry.intakeAirTempSensor.definition.pollPriority)
+        // Two data bytes: the support/bank byte then sensor 1. Asking for exactly two lets the
+        // parser ignore the van's non-standard trailing padding without it breaking the read.
+        assertEquals(2, PidRegistry.intakeAirTempSensor.dataByteCount)
+        assertFalse(PidRegistry.intakeAirTempSensor.definition.verified)
+    }
+
+    @Test
+    fun `the IAT sensor decode reads sensor 1 from the second data byte and ignores padding`() {
+        // Capture `41 68 01 54 …`: byte 0 = 0x01 (support), byte 1 = 0x54 → 84 − 40 = 44 °C. The
+        // parse lambda receives the two requested bytes; the padding beyond them never reaches it.
+        assertEquals(44.0, PidRegistry.intakeAirTempSensor.definition.parse(byteArrayOf(0x01, 0x54)), 0.0)
+        // Sensor 1 is byte 1, NOT byte 0 — reading the support byte would give 0x01 → −39 °C, an
+        // alarming wrong number. Pin that the right field is read.
+        assertEquals(-39.0, VendoredSaeScaling.temperatureCelsius(0x01), 0.0)
     }
 
     @Test

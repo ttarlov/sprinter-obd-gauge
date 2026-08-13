@@ -47,11 +47,11 @@ class UnverifiedBadgeTest {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
         // OBD-50: oilTemp moved to the verified side once PidRegistry.oilTemp wired it to the
-        // live-verified standard PID 015C — transTemp is now the dashboard's only mode-22
-        // hypothesis, so it carries this suite's "unverified" examples alone.
+        // live-verified standard PID 015C. OBD-57: boost joined transTemp on the unverified side —
+        // it is now the speed-density estimate ("Est."), so its badge shows too.
         composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertIsDisplayed()
         composeTestRule.onNodeWithTag("gauge-coolant-unverified-badge").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertDoesNotExist()
         composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertDoesNotExist()
     }
 

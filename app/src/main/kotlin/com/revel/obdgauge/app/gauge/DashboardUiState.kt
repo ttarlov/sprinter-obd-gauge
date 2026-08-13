@@ -102,7 +102,8 @@ data class DashboardUiState(
                 // OBD-50: oilTemp is now backed by the standard, live-verified 015C — see
                 // DashboardPids.kt.
                 oilTemp = GaugeTileUiState.placeholder(PidIds.OIL_TEMP, "Oil", verified = true),
-                boost = GaugeTileUiState.placeholder(PidIds.BOOST, "Boost", verified = true),
+                // OBD-57: boost is the speed-density estimate ("Est."), so it badges unverified.
+                boost = GaugeTileUiState.placeholder(PidIds.BOOST, "Boost", verified = false),
                 connection = LinkState.Disconnected,
             )
     }
