@@ -4,7 +4,7 @@ title: Boost/MAP discovery — extended-session UDS sweep at engine ECU (charter
 module: core/protocol
 owner: orchestrator
 sprint: backlog
-status: in-progress
+status: closed
 type: process
 hardware-verify: true
 blocked-by: []
@@ -49,3 +49,10 @@ service-21 sweep at 7E0 in default session (community never tried it; no charter
 next van minute). (2) 10 03 decision de-prioritized — likely insufficient alone.
 (3) If 21 fails: Xentry-session sniff (big adventure, new decision) or aftermarket
 sensor; boost tile stays honestly unavailable meanwhile.
+
+## RESOLUTION (2026-08-13, on-vehicle — terminal)
+Direct boost is DEAD, confirmed on the van: `10 03`→`50 03` (extended session entered),
+then `22 20 C4` inside a confirmed-live session → still `7F 22 31` (requestOutOfRange).
+Service 21 at 7E0 → `7F 21 11` (not supported). ScanGauge's DID doesn't exist; no native
+boost over OBD on this OM642. SUPERSEDED by OBD-56/57/58 — boost now shipped as a
+speed-density ESTIMATE from MAF+IAT+RPM+baro. This direct-DID path is closed.

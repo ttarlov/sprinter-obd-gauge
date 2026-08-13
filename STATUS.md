@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (OBD-25 MERGED — SPRINT 3 SOFTWARE 100% COMPLETE. The van build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **39 merged / 54 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-12 (OBD-25 MERGED — SPRINT 3 SOFTWARE 100% COMPLETE. The van build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **38 merged / 54 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
