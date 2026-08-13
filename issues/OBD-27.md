@@ -4,7 +4,7 @@ title: Unverified-PID UX
 module: app
 owner: ui-agent
 sprint: 3
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
