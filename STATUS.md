@@ -15,7 +15,7 @@
 | Current phase | **SPRINT 3 SOFTWARE COMPLETE** — prod wiring merged; the app reads a real engine the moment it meets one. Remaining: 🖐 van session (OBD-26 live milestone + device ACs), Sprint 4, backlog |
 | Repo | Gate green @ `58c0f8e`; develop synced; no open branches. VAN BUILD: builds/van/app-prod-debug.apk (prod DI: BleObdLink → RealVehicleDataSource → DisplayUnitDataSource seam → dashboard; restart-on-Ready ownership; connect UX + runtime perms). Demo/master APK @ 58c0f8e in builds/main/ |
 | Blockers | None in software. 🖐 Taras: (1) cold-start capture (trans verify + id swap), (2) next van session device checks: fresh-install FGS start, 10-min screen-off polling |
-| Next action | 🖐 VAN SESSION: sideload builds/van/app-prod-debug.apk → fresh-install permission flow → tap Connect → LIVE GAUGES (coolant/RPM; boost —, trans blank, both honest). Plus screen-off 10-min check + cold-start capture. Software-only options: Sprint 4, load/TPS tiles (small track), OBD-41 discovery tooling |
+| Next action | Session 2 done (2026-08-13): OIL TEMP SOLVED (015C standard); trans byte-1 hypothesis one drive-test from proof (OBD-51 🖐); boost needs extended-session decision (OBD-52 🖐 BLOCKED ON TARAS). Software: OBD-50 registry additions ready to build; live-gauges app demo still pending (session ran console+Car Scanner) |
 
 ## Wave board
 
