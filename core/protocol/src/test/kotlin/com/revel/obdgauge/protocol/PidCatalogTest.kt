@@ -28,7 +28,9 @@ class PidCatalogTest {
 
         assertTrue(coolant is PolledPid.Standard)
         assertEquals("0105", (coolant as PolledPid.Standard).spec.command)
-        // OBD-55: TRANS_TEMP now resolves to the byte-1 KWP record, not the retired X-Gauge spec.
+        // TRANS_TEMP resolves to the `21 30` KWP record — kept in the catalog for OBD-51's re-ID
+        // even though OBD-59 re-gated it to unavailable (its byte-1 decode was falsified). The
+        // channel resolving is what lets the gate keep it off the wire rather than dropping it silently.
         assertTrue(transTemp is PolledPid.Record)
         assertEquals("2130", (transTemp as PolledPid.Record).spec.requestBytes)
     }
@@ -44,7 +46,7 @@ class PidCatalogTest {
         assertTrue(PidCatalog.isVerified(PidIds.COOLANT))
         assertTrue(PidCatalog.isVerified(PidIds.RPM))
         assertFalse(
-            "the record decode ships unverified — the slope is provisional (OBD-55)",
+            "the record channel is unverified — its byte-1 decode was falsified and retired (OBD-59)",
             PidCatalog.isVerified(PidIds.TRANS_TEMP),
         )
     }
@@ -123,20 +125,26 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `the identified trans decode is available, no longer falsified`() {
-        // OBD-55: the 2026-08-13 drive test identified the field (record byte 1, 63 − raw), so
-        // TRANS_TEMP left FALSIFIED_DECODES and is a live, pollable channel again. It is
-        // unverified (slope provisional), which availabilityOf does not speak to — see isVerified.
-        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.TRANS_TEMP))
+    fun `the trans decode is re-gated to DecodeFalsified, with the field-falsified evidence`() {
+        // OBD-59: the 2026-08-13 on-vehicle look falsified the byte-1 63 − raw decode (it jumps at
+        // operating RPM — a dynamic signal, not a temperature), so TRANS_TEMP is back on
+        // FALSIFIED_DECODES and the tile blanks to "—". This is the catalog-level guard the OBD-59
+        // gate rests on: drop TRANS_TEMP from FALSIFIED_DECODES and this flips to Available.
+        val availability = PidCatalog.availabilityOf(PidIds.TRANS_TEMP)
+
+        assertTrue("expected DecodeFalsified, was $availability", availability is ChannelAvailability.DecodeFalsified)
+        val evidence = (availability as ChannelAvailability.DecodeFalsified).evidence
+        assertTrue("the evidence must name the on-vehicle falsification date", evidence.contains("2026-08-13"))
+        assertTrue("the evidence must point at OBD-51 for the re-ID", evidence.contains("OBD-51"))
     }
 
     @Test
-    fun `an unsupported channel and an identified one are distinct verdicts`() {
+    fun `an unsupported channel and a falsified one are distinct verdicts`() {
         // 010B MAP: the van says nothing (unsupported, but still polled for discoverability).
-        // 2130: the van answers and OBD-55 identified the field, so it is Available and polled —
-        // no longer the DecodeFalsified it was while the byte-0 decode stood.
+        // 2130: the van answers, but the byte-1 decode was falsified on-vehicle (OBD-59), so the
+        // channel is DecodeFalsified — resolvable and announced, but gated off the wire.
         assertTrue(PidCatalog.availabilityOf(ProtocolPidIds.MAP) is ChannelAvailability.UnsupportedByVehicle)
-        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.TRANS_TEMP))
+        assertTrue(PidCatalog.availabilityOf(PidIds.TRANS_TEMP) is ChannelAvailability.DecodeFalsified)
     }
 
     @Test

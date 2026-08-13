@@ -329,13 +329,15 @@ class RealVehicleDataSourceTest {
         }
 
     @Test
-    fun `the trans-temp record channel is polled as its framed sequence and shows its value`() =
+    fun `the trans-temp record channel is gated off the wire and stores no value`() =
         runTest {
-            // OBD-55: PidIds.TRANS_TEMP now resolves to the KWP `21 30` record channel. It runs the
-            // same five-command framed sequence a mode-22 poll does, and its byte-1 value lands on
-            // the gauge — the inverse of the falsified-gate test above. The shared fixture answers
-            // 2130 as a single frame; the record channel needs a real multi-frame block, so swap in
-            // the session-3 post-drive record (byte 1 = 0x12 → 63 − 18 = 45 °C).
+            // OBD-59: PidIds.TRANS_TEMP resolves to the KWP `21 30` record channel, but its byte-1
+            // 63 − raw decode was FALSIFIED on-vehicle (it jumps at operating RPM), so it is back in
+            // FALSIFIED_DECODES. The real-channel counterpart of the synthetic-probe gate test above:
+            // even though the record resolves and the fixture would answer 2130, the gate keeps the
+            // framed sequence off the wire and stores nothing — the tile blanks to "—". This is the
+            // mutation guard: drop TRANS_TEMP from FALSIFIED_DECODES and the sequence goes on the wire
+            // and a (refused) poll runs, breaking this test.
             val recordScript =
                 transcript.filterNot { it.command == "2130" } +
                     TranscriptEntry("2130", TcuRecordCaptures.S3_POST_DRIVE)
@@ -344,17 +346,19 @@ class RealVehicleDataSourceTest {
 
             source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
             runCurrent()
+            runCycles(5)
 
-            assertEquals(
-                listOf("010C", "ATSH7E1", "ATCRA7E9", "2130", "ATCRA", "ATSH7DF"),
-                link.commands.drop(INIT_COMMANDS.size),
-            )
-            assertEquals(
-                45.0,
-                source.readings.value
-                    .getValue(PidIds.TRANS_TEMP)
-                    .value,
-                TOLERANCE,
+            val polls = link.commands.drop(INIT_COMMANDS.size)
+            assertFalse("the TCU header must never be set for the gated channel: $polls", "ATSH7E1" in polls)
+            assertFalse("and the record request must never go out: $polls", "2130" in polls)
+            assertNull("nothing may be stored under a falsified channel", source.readings.value[PidIds.TRANS_TEMP])
+            assertTrue(
+                "the DecodeFalsified verdict is announced once, at plan time",
+                events.any {
+                    it is PollEvent.ChannelAvailabilityChanged &&
+                        it.id == PidIds.TRANS_TEMP &&
+                        it.availability is ChannelAvailability.DecodeFalsified
+                },
             )
         }
 

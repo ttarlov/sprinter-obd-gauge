@@ -6,12 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The `21 30` reassembly, against the records the van actually sent (OBD-49 framing captures, plus
- * the OBD-55 session-3 records that identified the trans-temp field).
+ * The `21 30` reassembly, against the records the van actually sent (OBD-49 framing captures).
  *
- * Values are asserted exactly (`delta = 0.0`): both laws are exact on an integer byte — trans temp
- * is `63 − raw` at record byte 1, coolant is `raw − 50` at record byte 11 — so any drift means the
- * arithmetic or the byte position changed.
+ * This suite is about the **reassembly machinery** — kept for OBD-51 to re-identify the real
+ * transmission-temperature byte, since the OBD-55 byte-1 `63 − raw` decode was falsified on-vehicle
+ * (OBD-59, `docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md`) and retired. So the
+ * assertions here read **raw bytes** and the byte-11 coolant probe (`raw − 50`, exact on an integer
+ * byte), never a trans-temp value: what must hold is that the reassembly lands on the right offsets,
+ * which is exactly what the re-identification will depend on.
  */
 class KwpRecordParserTest {
     private val spec = TcuRecordRegistry.transTempRecord
@@ -53,40 +55,15 @@ class KwpRecordParserTest {
         )
     }
 
-    @Test
-    fun `trans temp is record byte 1 under 63 minus raw, at the session-3 anchors`() {
-        // OBD-55: the 2026-08-13 drive test identified byte 1 (not the old byte-18 candidate) and
-        // the inverse law 63 − raw. Warm idle 0x23 → 28, post-drive 0x12 → 45.
-        assertEquals(28.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.S3_WARM_IDLE)), 0.0)
-        assertEquals(45.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.S3_POST_DRIVE)), 0.0)
-    }
-
-    @Test
-    fun `trans temp stays put while coolant moves - the decoupling that identified the field`() {
-        // The decisive frame pair: across the drive→heat-soak transition byte 1 holds at 0x12
-        // (45 °C) while byte 11 falls 95 → 93 °C. A coolant echo could not do that, which is what
-        // rules byte 1 out of being one. This is the OBD-55 identification, pinned.
-        val postDrive = recordFrom(TcuRecordCaptures.S3_POST_DRIVE)
-        val heatSoak = recordFrom(TcuRecordCaptures.S3_HEAT_SOAK)
-
-        assertEquals(45.0, TcuRecordRegistry.transTempCelsius(postDrive), 0.0)
-        assertEquals(45.0, TcuRecordRegistry.transTempCelsius(heatSoak), 0.0)
-        assertEquals(95.0, TcuRecordRegistry.tcuCoolantCelsius(postDrive), 0.0)
-        assertEquals(93.0, TcuRecordRegistry.tcuCoolantCelsius(heatSoak), 0.0)
-    }
-
-    @Test
-    fun `the inverse law is exact at the cold anchor and the raw-63 boundary`() {
-        // Offset check, independent of any single fixture: cold soak 0x2D → 18 °C (ambient, the
-        // one independent ground-truth point), and raw 0x3F (63) → 0 °C by construction.
-        assertEquals(18.0, TcuRecordRegistry.transTempCelsius(recordAtByte1(0x2D)), 0.0)
-        assertEquals(0.0, TcuRecordRegistry.transTempCelsius(recordAtByte1(0x3F)), 0.0)
-        assertEquals(45.0, TcuRecordRegistry.transTempCelsius(recordAtByte1(0x12)), 0.0)
-    }
+    // OBD-59: the byte-1 `63 − raw` decode was FALSIFIED on-vehicle (byte 1 jumps at operating RPM;
+    // docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md) and retired, so the byte-1 anchor,
+    // the coolant-decoupling identification, and the inverse-law tests that pinned it are gone with
+    // it — there is no trans-temp decode left to assert. The reassembly-correctness checks below
+    // (raw bytes and the byte-11 coolant probe) are what OBD-51 re-identifies the real byte on top of.
 
     @Test
     fun `the byte-11 coolant anchor holds at 92, 91 and 97 C across the session`() {
-        // The framing consistency probe, not a channel: engine coolant read out of the TCU's own
+        // The reassembly-correctness probe, not a channel: engine coolant read out of the TCU's own
         // record. It moved +6 C over a 15-minute drive, so it is live data rather than a
         // constant — and a reassembly off by one byte cannot land on all three of these.
         assertEquals(92.0, TcuRecordRegistry.tcuCoolantCelsius(recordFrom(TcuRecordCaptures.WARM_IDLE)), 0.0)
@@ -96,23 +73,26 @@ class KwpRecordParserTest {
 
     @Test
     fun `the byte offsets hold across the 2026-08-12 records the session wrote down`() {
-        // byte 1 (now the trans-temp field) 13 -> 13 -> 12 and byte 19 (uncatalogued status)
-        // 18 -> 10 -> 00, as the field notes recorded — pinned as evidence the reassembly lands on
-        // the right offsets, since two independent fields agreeing with the notes is not something
-        // a shifted reassembly can fake.
+        // byte 1 (the falsified trans-temp candidate) 13 -> 13 -> 12 and byte 19 (uncatalogued
+        // status) 18 -> 10 -> 00, as the field notes recorded — pinned as evidence the reassembly
+        // lands on the right offsets, since two independent fields agreeing with the notes is not
+        // something a shifted reassembly can fake. These are raw bytes, not a decode.
         assertEquals(listOf(0x13, 0x13, 0x12), TcuRecordCaptures.ALL_RECORDS.map { recordFrom(it.second).byteAt(1) })
         assertEquals(listOf(0x18, 0x10, 0x00), TcuRecordCaptures.ALL_RECORDS.map { recordFrom(it.second).byteAt(19) })
     }
 
     @Test
-    fun `the definition's own parse lambda reads the same byte the decoder does`() {
-        // The lambda is what the scheduler runs; the decoder is what tests read. They must not
-        // be free to drift apart.
-        for ((name, capture) in TcuRecordCaptures.ALL_RECORDS) {
-            val record = recordFrom(capture)
-            val viaLambda = spec.definition.parse(ByteArray(record.bytes.size) { record.bytes[it].toByte() })
+    fun `the definition's parse refuses because the byte-1 decode was falsified`() {
+        // OBD-59: no field is identified, so the definition scales nothing — a poll of it skips on a
+        // ScalingError rather than publishing a number. This is what keeps the gate honest even if a
+        // caller reached past PidCatalog straight to the spec.
+        val record = recordFrom(TcuRecordCaptures.WARM_IDLE)
 
-            assertEquals(name, TcuRecordRegistry.transTempCelsius(record), viaLambda, 0.0)
+        try {
+            spec.definition.parse(ByteArray(record.bytes.size) { record.bytes[it].toByte() })
+            throw AssertionError("expected the falsified decode to refuse")
+        } catch (expected: UnsupportedOperationException) {
+            assertTrue(expected.message.orEmpty().contains("falsified"))
         }
     }
 
@@ -132,8 +112,8 @@ class KwpRecordParserTest {
         val lineFeeds = TcuRecordCaptures.WARM_IDLE.replace("\r", "\n")
         val both = TcuRecordCaptures.WARM_IDLE.replace("\r", "\r\n") + "\r\n>"
 
-        assertEquals(WARM_IDLE_TRANS_C, TcuRecordRegistry.transTempCelsius(recordFrom(lineFeeds)), 0.0)
-        assertEquals(WARM_IDLE_TRANS_C, TcuRecordRegistry.transTempCelsius(recordFrom(both)), 0.0)
+        assertEquals(warmIdleBytes, recordFrom(lineFeeds).bytes)
+        assertEquals(warmIdleBytes, recordFrom(both).bytes)
     }
 
     @Test
@@ -149,16 +129,12 @@ class KwpRecordParserTest {
     fun `a command echo ahead of the record does not shift it`() {
         val echoed = "2130\r" + TcuRecordCaptures.WARM_IDLE
 
-        assertEquals(WARM_IDLE_TRANS_C, TcuRecordRegistry.transTempCelsius(recordFrom(echoed)), 0.0)
+        assertEquals(warmIdleBytes, recordFrom(echoed).bytes)
     }
 
     @Test
     fun `SEARCHING noise ahead of the record is ignored`() {
-        assertEquals(
-            WARM_IDLE_TRANS_C,
-            TcuRecordRegistry.transTempCelsius(recordFrom("SEARCHING...\r" + TcuRecordCaptures.WARM_IDLE)),
-            0.0,
-        )
+        assertEquals(warmIdleBytes, recordFrom("SEARCHING...\r" + TcuRecordCaptures.WARM_IDLE).bytes)
     }
 
     @Test
@@ -171,7 +147,7 @@ class KwpRecordParserTest {
                 TcuRecordCaptures.WARM_IDLE +
                 "7EC 03 41 05 86 00 00 00\r"
 
-        assertEquals(WARM_IDLE_TRANS_C, TcuRecordRegistry.transTempCelsius(recordFrom(interleaved)), 0.0)
+        assertEquals(warmIdleBytes, recordFrom(interleaved).bytes)
     }
 
     @Test
@@ -334,23 +310,6 @@ class KwpRecordParserTest {
         return outcome.valueOrNull() ?: throw AssertionError("expected a record, got ${outcome.failureOrNull()}")
     }
 
-    /** A synthetic 24-byte record carrying [byte1] at the trans-temp offset and 0 elsewhere. */
-    private fun recordAtByte1(byte1: Int): KwpRecord =
-        KwpRecord(
-            List(TcuRecordRegistry.RECORD_DATA_BYTES) {
-                if (it ==
-                    TcuRecordRegistry.TRANS_TEMP_BYTE
-                ) {
-                    byte1
-                } else {
-                    0
-                }
-            },
-        )
-
-    private companion object {
-        // The 2026-08-12 warm-idle capture's byte 1 is 0x13 → 63 − 19 = 44 °C. The framing-tolerance
-        // tests below probe reassembly invariance through the trans-temp decoder, using this value.
-        const val WARM_IDLE_TRANS_C = 44.0
-    }
+    /** The 24 reassembled bytes of the warm-idle capture; the reassembly-invariance reference. */
+    private val warmIdleBytes: List<Int> get() = recordFrom(TcuRecordCaptures.WARM_IDLE).bytes
 }

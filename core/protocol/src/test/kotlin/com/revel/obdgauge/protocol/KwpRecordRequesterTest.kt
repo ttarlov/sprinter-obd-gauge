@@ -32,41 +32,26 @@ class KwpRecordRequesterTest {
             val outcome = requester.request(spec)
 
             assertTrue("expected a record, got $outcome", outcome is RecordOutcome.Received)
-            assertEquals(
-                // 2026-08-12 warm idle: byte 1 = 0x13 → 63 − 19 = 44 °C (OBD-55 inverse law).
-                44.0,
-                TcuRecordRegistry.transTempCelsius((outcome as RecordOutcome.Received).record),
-                0.0,
-            )
+            // The record reassembles (byte 1 raw = 0x13); OBD-59 retired the 63 − raw decode, so the
+            // point here is the framed exchange and the record, not any temperature.
+            assertEquals(0x13, (outcome as RecordOutcome.Received).record.byteAt(1))
             assertEquals(listOf("ATSH7E1", "ATCRA7E9", "2130", "ATCRA", "ATSH7DF"), link.commands)
             assertFalse("a clean restore leaves nothing pending", requester.restorePending)
         }
 
     @Test
-    fun `poll scales the record through the definition and answers as an ordinary PollOutcome`() =
+    fun `poll refuses because the byte-1 decode was falsified, without a value reaching a gauge`() =
         runTest {
-            // Session-3 post-drive: byte 1 = 0x12 → 45 °C under 63 − raw.
+            // OBD-59: the field is unidentified, so the definition's parse refuses. poll routes that
+            // through scaleReading into a typed Skipped(ScalingError) — never a number on a gauge —
+            // exactly as the never-poisoned-value guarantee requires. (PidCatalog's gate keeps this
+            // channel off the wire entirely in production; this proves poll is safe even bypassing it.)
             val link = FakeObdLink(answering(TcuRecordCaptures.S3_POST_DRIVE))
 
-            assertEquals(PollOutcome.Value(45.0), KwpRecordRequester(link).poll(spec))
-        }
+            val outcome = KwpRecordRequester(link).poll(spec)
 
-    @Test
-    fun `the session-3 anchors each survive a full framed exchange`() =
-        runTest {
-            // 63 − raw at byte 1: warm idle 0x23 → 28, post-drive and heat-soak 0x12 → 45.
-            val anchors =
-                listOf(
-                    "warm idle" to (TcuRecordCaptures.S3_WARM_IDLE to 28.0),
-                    "post-drive" to (TcuRecordCaptures.S3_POST_DRIVE to 45.0),
-                    "heat-soak" to (TcuRecordCaptures.S3_HEAT_SOAK to 45.0),
-                )
-            for ((name, cap012) in anchors) {
-                val (capture, expected) = cap012
-                val link = FakeObdLink(answering(capture))
-
-                assertEquals(name, PollOutcome.Value(expected), KwpRecordRequester(link).poll(spec))
-            }
+            assertTrue("expected a skip, got $outcome", outcome is PollOutcome.Skipped)
+            assertTrue((outcome as PollOutcome.Skipped).reason is ParseFailure.ScalingError)
         }
 
     @Test
@@ -151,12 +136,15 @@ class KwpRecordRequesterTest {
     @Test
     fun `disabling the receive filter drops ATCRA and the record still parses`() =
         runTest {
-            // Without ATCRA the reassembler is what keeps other ECUs out, by CAN id. The value
+            // Without ATCRA the reassembler is what keeps other ECUs out, by CAN id. The record
             // must be unaffected — the filter is a noise reduction, never a correctness guard.
             val link = RecordingObdLink(FakeObdLink(answering(TcuRecordCaptures.WARM_IDLE)))
             val requester = KwpRecordRequester(link, Mode22Config(rxFilterEnabled = false))
 
-            assertEquals(PollOutcome.Value(44.0), requester.poll(spec))
+            val outcome = requester.request(spec)
+
+            assertTrue("expected a record, got $outcome", outcome is RecordOutcome.Received)
+            assertEquals(0x13, (outcome as RecordOutcome.Received).record.byteAt(1))
             assertEquals(listOf("ATSH7E1", "2130", "ATSH7DF"), link.commands)
         }
 
@@ -183,13 +171,12 @@ class KwpRecordRequesterTest {
     }
 
     @Test
-    fun `the channel ships unverified because the slope is provisional`() {
-        // The one assertion in this file about restraint rather than capability. OBD-55 identified
-        // byte 1 and pinned the offset (cold soak = ambient), but the 1 °C/count slope is assumed,
-        // not measured — the drive only reached ~45 °C — so the channel ships unverified until a
-        // hot cross-checked sample lands (OBD-51).
-        assertFalse("the slope above ~60 °C is untested", spec.definition.verified)
-        assertEquals(TcuRecordRegistry.TRANS_TEMP_BYTE, spec.dataByteIndex)
+    fun `the channel is unverified and its field is unidentified since the byte-1 decode was falsified`() {
+        // The one assertion in this file about restraint rather than capability. OBD-59: the byte-1
+        // 63 − raw decode was falsified on-vehicle, so there is no field to scale — dataByteIndex is
+        // the unidentified sentinel and the channel stays unverified until OBD-51 re-identifies it.
+        assertFalse("a decode that was falsified is not verified", spec.definition.verified)
+        assertEquals(TcuRecordRegistry.TRANS_TEMP_BYTE_UNIDENTIFIED, spec.dataByteIndex)
     }
 
     /** The branch transcript with its predicted `2130` answer replaced by [capture]. */

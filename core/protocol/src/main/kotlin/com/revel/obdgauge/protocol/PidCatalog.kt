@@ -100,10 +100,12 @@ object PidCatalog {
      * Every channel that is actually polled: standard PIDs, then manufacturer PIDs, then KWP
      * record channels.
      *
-     * The trans-temp channel is [TcuRecordRegistry.transTempRecord] (OBD-55): the on-vehicle
-     * identification of record byte 1 retired the falsified X-Gauge byte-0 decode, so
-     * [MercedesPidRegistry.all] no longer contributes a manufacturer channel and `PidIds.TRANS_TEMP`
-     * resolves here to the record arm.
+     * The trans-temp channel is [TcuRecordRegistry.transTempRecord] — the `21 30` record — but it is
+     * in [FALSIFIED_DECODES] (OBD-59): its byte-1 `63 − raw` decode was falsified on-vehicle, so the
+     * channel is resolvable and announced but [RealVehicleDataSource]'s gate keeps it off the wire
+     * and stores no value. It stays in this list, rather than being dropped, so the record machinery
+     * is wired for OBD-51's re-identification and so removing it from the gate would visibly resurrect
+     * a wire poll — the gate is load-bearing, not decorative.
      */
     val polled: List<PolledPid> =
         PidRegistry.all.map(PolledPid::Standard) +
@@ -244,16 +246,20 @@ object PidCatalog {
      * capture in `docs/hardware/`, and the [applyPoll][RealVehicleDataSource] gate keeps a listed
      * channel off the wire entirely so a decode known to be wrong cannot render a plausible number.
      *
-     * **Empty since OBD-55.** `TRANS_TEMP` was the sole entry: the X-Gauge spec read record byte 0
-     * (`0x00` → −50 °C on this van). The 2026-08-13 drive test identified the true field at record
-     * byte 1 (`63 − raw`, [TcuRecordRegistry]), so the id was reassigned to that live channel and
-     * the falsified entry removed. The gate stays — it is the mechanism the next falsified decode
-     * (if one is ever found) plugs into — but nothing populates it today.
+     * **`TRANS_TEMP` (OBD-59).** OBD-55 briefly emptied this set when it thought it had identified
+     * transmission temperature at record byte 1 (`63 − raw`). A live look at operating RPM on
+     * 2026-08-13 falsified that in seconds — byte 1 jumps frame-to-frame, it is a dynamic signal not
+     * a temperature (`docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md`). So `TRANS_TEMP` is
+     * back on the gate and the tile blanks to "—". The `21 30` record itself is kept
+     * ([TcuRecordRegistry.transTempRecord]) for OBD-51 to re-identify the real byte; only the value
+     * is withheld.
      */
-    private val FALSIFIED_DECODES: Set<String> = emptySet()
+    private val FALSIFIED_DECODES: Set<String> = setOf(PidIds.TRANS_TEMP)
 
     private const val FALSIFIED_EVIDENCE =
-        "decode falsified against a docs/hardware/ capture; the true field was not identified"
+        "byte-1 63−raw decode FALSIFIED on-vehicle 2026-08-13 (jumps at operating RPM, " +
+            "docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md); real trans-temp byte " +
+            "not yet identified — OBD-51"
 
     private const val BOOST_PLACEHOLDER_MODE = 0x01
     private const val BOOST_PLACEHOLDER_PID = 0x0B

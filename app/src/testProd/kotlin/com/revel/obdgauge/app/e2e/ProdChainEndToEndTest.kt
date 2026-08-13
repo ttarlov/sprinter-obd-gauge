@@ -12,6 +12,7 @@ import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.VehicleDataSource
+import com.revel.obdgauge.protocol.ChannelAvailability
 import com.revel.obdgauge.protocol.PidCatalog
 import com.revel.obdgauge.protocol.PollConfig
 import com.revel.obdgauge.protocol.PollEvent
@@ -134,30 +135,26 @@ class ProdChainEndToEndTest {
         }
 
     @Test
-    fun `the trans-temp record is polled and its 63-raw value reaches the readings map`() =
+    fun `the trans-temp record is gated off the wire and reaches the readings map with no value`() =
         runTest(testDispatcher) {
             val source = startVanSession(CAPTURED_CHANNELS)
 
-            // OBD-55: the crown-jewel decode is live. The 2026-08-13 drive test identified record
-            // byte 1 under °C = 63 − raw; the scripted post-drive record has byte 1 = 0x12 → 45 °C,
-            // re-expressed in the FAHRENHEIT the app's catalog declares.
-            assertEquals(
-                TRANS_F,
-                source.readings.value
-                    .getValue(PidIds.TRANS_TEMP)
-                    .value,
-                TOLERANCE,
-            )
+            // OBD-59: the byte-1 63 − raw decode was FALSIFIED on-vehicle (byte 1 jumps at operating
+            // RPM — a dynamic signal, not a temperature), so TRANS_TEMP is back in FALSIFIED_DECODES.
+            // Nothing is stored under it — the tile blanks to "—", honest beats a jumping wrong number.
+            assertNull(source.readings.value[PidIds.TRANS_TEMP])
 
-            // The framed record sequence actually went on the wire — the DecodeFalsified gate that
-            // used to hold it back is gone (TRANS_TEMP left FALSIFIED_DECODES), so it is polled.
-            assertTrue(HEADER_SET_TCU in link.commands)
-            assertTrue(KWP_RECORD_COMMAND in link.commands)
+            // The framed record sequence never goes on the wire — the gate holds it back before any
+            // ATSH/2130 is sent, exactly as for any other falsified decode.
+            assertFalse(HEADER_SET_TCU in link.commands)
+            assertFalse(KWP_RECORD_COMMAND in link.commands)
 
-            // And there is no availability complaint for trans any more: it is a live channel, not
-            // an unsupported or falsified one.
+            // And the DecodeFalsified verdict is announced once, at plan time, so a consumer knows
+            // WHY the tile is blank (re-gated decode, not a missing reading).
             assertTrue(
-                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().none { it.id == PidIds.TRANS_TEMP },
+                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().any {
+                    it.id == PidIds.TRANS_TEMP && it.availability is ChannelAvailability.DecodeFalsified
+                },
             )
         }
 
@@ -175,7 +172,7 @@ class ProdChainEndToEndTest {
     // ---- half 2: the same chain, through the real ViewModel, into rendered state ----
 
     @Test
-    fun `the dashboard renders the van's coolant, rpm and now the live trans temp`() =
+    fun `the dashboard renders the van's coolant and rpm, and blanks the re-gated trans temp`() =
         runTest(testDispatcher) {
             val state = renderDashboard(UnitPreferences())
 
@@ -193,12 +190,11 @@ class ProdChainEndToEndTest {
             // returns null instead of a difference-of-absent-inputs.
             assertEquals(NO_READING_TEXT, state.boost.valueText)
             assertFalse(state.boost.valueText.contains("0"))
-            // Trans (OBD-55): the byte-1 record decode is live, so the tile now shows a real value
-            // — 45 °C in the default Fahrenheit. Oil (OBD-50: PidRegistry.oilTemp, standard 015C)
-            // still renders "no reading" here — not because the channel is unavailable, but because
-            // this session's fixture never scripted a 015C response and CAPTURED_CHANNELS below
-            // only requests channels this fixture actually has bytes for.
-            assertEquals(TRANS_DISPLAY, state.transTemp.valueText)
+            // Trans (OBD-59): the byte-1 record decode was falsified on-vehicle and re-gated, so the
+            // tile blanks to "—" rather than showing a jumping wrong number. Oil (OBD-50:
+            // PidRegistry.oilTemp, standard 015C) also renders "no reading" here — but for a
+            // different reason: this session's fixture never scripted a 015C response.
+            assertEquals(NO_READING_TEXT, state.transTemp.valueText)
             assertEquals(NO_READING_TEXT, state.oilTemp.valueText)
 
             assertFalse(state.coolant.isStale)
@@ -317,11 +313,8 @@ class ProdChainEndToEndTest {
         /** `86` → 94 °C, converted to the FAHRENHEIT `:app`'s catalog declares for coolant. */
         const val COOLANT_F = 201.2
 
-        /** Record byte 1 `0x12` → 45 °C (63 − 18), converted to the app's declared FAHRENHEIT. */
-        const val TRANS_F = 113.0
-
-        /** 45 °C in the default Fahrenheit, as the tile renders it. */
-        const val TRANS_DISPLAY = "113°F"
+        // OBD-59: no TRANS_F / TRANS_DISPLAY constants — the byte-1 decode was falsified on-vehicle
+        // and the tile blanks to "—" (NO_READING_TEXT), so there is no trans temperature to expect.
 
         /** `0B54`..`0B64` at warm idle. */
         val RPM_IDLE_RANGE = 725.0..729.0
