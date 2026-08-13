@@ -4,7 +4,7 @@ title: High-quality speed-density boost estimation (MAF+IAT+RPM+baro)
 module: core/protocol
 owner: protocol-agent
 sprint: backlog
-status: approved
+status: in-progress
 type: feature
 hardware-verify: true
 blocked-by: [OBD-56]
