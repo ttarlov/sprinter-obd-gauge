@@ -4,7 +4,7 @@ title: Reconnect state machine
 module: core/ble
 owner: ble-agent
 sprint: 3
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
