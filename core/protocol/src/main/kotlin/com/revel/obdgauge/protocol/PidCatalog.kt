@@ -83,13 +83,13 @@ sealed interface PolledPid {
  * boost is now an estimate ([isVerified] `= false`, "Est."), not a verified subtraction.
  *
  * So [availabilityOf] reports the old `010B`/`010F` MAP and IAT as
- * [ChannelAvailability.UnsupportedByVehicle] (kept for the survey record), mass airflow as
- * [ChannelAvailability.PendingUnitContract] (`0166` answers, but g/s has no frozen unit yet —
- * OBD-58), and boost as [ChannelAvailability.MissingInputs]`(["maf"])` — the one input still
- * ungrounded. [RealVehicleDataSource] emits that as a [PollEvent.ChannelAvailabilityChanged], and
- * nothing anywhere substitutes a zero. See [ChannelAvailability] for why "show 0 PSI" is the
- * outcome being engineered against. When the g/s unit lands, MAF becomes a channel and boost
- * auto-flips to [ChannelAvailability.Available] with no change here.
+ * [ChannelAvailability.UnsupportedByVehicle] (kept for the survey record). Mass airflow *was*
+ * [ChannelAvailability.PendingUnitContract] (`0166` answered, but g/s had no frozen unit) and boost
+ * *was* [ChannelAvailability.MissingInputs]`(["maf"])`. **OBD-58 landed the g/s unit** (DECISIONS.md
+ * D9): MAF is now a live [PidRegistry] channel, so [availabilityOf] reports it — and, all four
+ * inputs being available, boost — as [ChannelAvailability.Available]. Nothing anywhere substitutes a
+ * zero; when an input simply does not answer at runtime, boost is absent, not zeroed. See
+ * [ChannelAvailability] for why "show 0 PSI" is the outcome being engineered against.
  *
  * These verdicts are about **this van**. They are recorded here, next to the registry, rather
  * than in a UI-side allow-list, because "which PIDs does the vehicle implement" is protocol
@@ -197,9 +197,8 @@ object PidCatalog {
      * here); MAP is now *computed* from speed density, so boost's real inputs are mass airflow
      * ([ProtocolPidIds.MAF]), charge-air temperature ([ProtocolPidIds.IAT_SENSOR]), engine speed
      * ([PidIds.RPM]) and barometric pressure ([PidIds.BARO]) — the arguments of
-     * [ComputedChannels.speedDensityBoost]. On this van three of the four are live; MAF is
-     * [ChannelAvailability.PendingUnitContract] (see [availabilityOf]), so boost reports
-     * `MissingInputs(["maf"])` until the g/s unit lands (OBD-58).
+     * [ComputedChannels.speedDensityBoost]. Since OBD-58 landed the g/s unit all four are live
+     * channels, so boost is [ChannelAvailability.Available] (see [availabilityOf]).
      */
     fun dependenciesOf(id: String): List<String> =
         if (id == PidIds.BOOST) {
@@ -220,18 +219,20 @@ object PidCatalog {
     /**
      * Channels whose decode is proven but which cannot be published because the frozen
      * `:core:model` [com.revel.obdgauge.model.MeasurementUnit] enum names no unit for their
-     * quantity — see [ChannelAvailability.PendingUnitContract]. Mass airflow ([ProtocolPidIds.MAF],
-     * g/s) is the live entry: it is a speed-density boost input ([dependenciesOf]), so boost
-     * degrades to `MissingInputs(["maf"])` rather than falsely claiming it can spool.
+     * quantity — see [ChannelAvailability.PendingUnitContract].
      *
-     * The unit is APPROVED (DECISIONS.md D9) but lands as a separate scoped change (OBD-58) that
-     * touches `:core:model`; when it does, MAF gets a [PidRegistry] channel, leaves this set, and
-     * boost auto-flips to [ChannelAvailability.Available] with no other change here.
+     * **Empty since OBD-58.** Mass airflow ([ProtocolPidIds.MAF], g/s) was the sole entry: `0166`
+     * answered but the frozen enum named no g/s unit, so boost degraded to `MissingInputs(["maf"])`.
+     * DECISIONS.md D9 approved the additive units and OBD-58 landed `GRAMS_PER_SECOND`, so MAF got a
+     * [PidRegistry] channel ([PidRegistry.maf]), left this set, and boost auto-flipped to
+     * [ChannelAvailability.Available] — exactly as this KDoc predicted, with no logic change here.
+     * The set (and [availabilityOf]'s branch) stays as the mechanism the next scaling-only channel
+     * plugs into, the same way [FALSIFIED_DECODES] does.
      */
-    private val PENDING_UNIT_CONTRACT: Set<String> = setOf(ProtocolPidIds.MAF)
+    private val PENDING_UNIT_CONTRACT: Set<String> = emptySet()
 
     /** The frozen-enum-missing unit each [PENDING_UNIT_CONTRACT] channel is waiting on. */
-    private val PENDING_UNITS: Map<String, String> = mapOf(ProtocolPidIds.MAF to "g/s")
+    private val PENDING_UNITS: Map<String, String> = emptyMap()
 
     private const val NO_DATA_EVIDENCE =
         "captured NO DATA from the OM642, engine running, 2026-08-12 " +

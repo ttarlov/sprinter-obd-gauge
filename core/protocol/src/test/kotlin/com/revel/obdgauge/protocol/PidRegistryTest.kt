@@ -13,15 +13,17 @@ import org.junit.Test
 /** Registry completeness, wire addresses, response lengths, units, and per-PID scaling. */
 class PidRegistryTest {
     @Test
-    fun `registry defines exactly the fifteen standard PIDs OBD-14, OBD-43, OBD-50 and OBD-56 require`() {
-        // OBD-50 grew this from 8 to 14; OBD-56 adds the fifteenth, intakeAirTempSensor (0168 — the
-        // IAT this van actually answers, standard 010F being NO DATA). fuelRate, moduleVoltage and
-        // MAF (0166) stay blocked on a missing MeasurementUnit; see PidRegistry's KDoc.
-        assertEquals(15, PidRegistry.all.size)
+    fun `registry defines exactly the eighteen standard PIDs OBD-14, OBD-43, OBD-50, OBD-56 and OBD-58 require`() {
+        // OBD-50 grew this from 8 to 14; OBD-56 added the fifteenth, intakeAirTempSensor (0168 — the
+        // IAT this van actually answers, standard 010F being NO DATA). OBD-58 adds the last three:
+        // MAF (0166), fuelRate (015E) and moduleVoltage (0142), unblocked once the frozen enum
+        // gained GRAMS_PER_SECOND, LITERS_PER_HOUR and VOLTS (DECISIONS.md D9).
+        assertEquals(18, PidRegistry.all.size)
         assertEquals(
-            // OBD-14's six, then OBD-43's two, then OBD-50's six, then OBD-56's one appended. New
-            // entries go on the end (0168 slots after 010F, its unsupported standard sibling), so
-            // an existing caller's poll order never shifts under it.
+            // OBD-14's six, then OBD-43's two, then OBD-50's six, then OBD-56's one, then OBD-58's
+            // three appended. MAF (0166) slots after 0168, its boost-input sibling; fuelRate and
+            // moduleVoltage go on the very end. New entries append, so an existing caller's poll
+            // order never shifts under it.
             listOf(
                 "0105",
                 "010C",
@@ -29,6 +31,7 @@ class PidRegistryTest {
                 "0133",
                 "010F",
                 "0168",
+                "0166",
                 "010D",
                 "0104",
                 "0111",
@@ -38,6 +41,8 @@ class PidRegistryTest {
                 "0149",
                 "0161",
                 "0162",
+                "015E",
+                "0142",
             ),
             PidRegistry.all.map { it.command },
         )
@@ -87,6 +92,9 @@ class PidRegistryTest {
                 ProtocolPidIds.ACCEL_PEDAL to 0x49,
                 ProtocolPidIds.DEMAND_TORQUE to 0x61,
                 ProtocolPidIds.ACTUAL_TORQUE to 0x62,
+                ProtocolPidIds.MAF to 0x66,
+                ProtocolPidIds.FUEL_RATE to 0x5E,
+                ProtocolPidIds.MODULE_VOLTAGE to 0x42,
             )
         for (spec in PidRegistry.all) {
             assertEquals(0x01, spec.mode)
@@ -162,12 +170,16 @@ class PidRegistryTest {
     }
 
     @Test
-    fun `standard PIDs are SAE-verified, except the extended sensor whose value is unconfirmed`() {
-        // Every SAE-standard decode is verified — except intakeAirTempSensor (0168, OBD-56): its
-        // decode FORMAT is high-confidence but its VALUE is unconfirmed against ground truth until
-        // a 🖐 throttle sweep, so it ships verified = false like a mode-22 hypothesis.
+    fun `standard PIDs are SAE-verified, except the two extended sensors whose values are unconfirmed`() {
+        // Every SAE-standard decode is verified — except the two extended dual-bank boost inputs,
+        // intakeAirTempSensor (0168, OBD-56) and maf (0166, OBD-58): their decode FORMAT is
+        // high-confidence but their VALUE is unconfirmed against ground truth until a 🖐 throttle
+        // sweep, so they ship verified = false like a mode-22 hypothesis. fuelRate/moduleVoltage
+        // (OBD-58) ARE verified — they were live-captured from a commercial scan in OBD-50.
+        val unconfirmed = setOf(PidRegistry.intakeAirTempSensor, PidRegistry.maf)
         assertFalse(PidRegistry.intakeAirTempSensor.definition.verified)
-        assertTrue(PidRegistry.all.filterNot { it == PidRegistry.intakeAirTempSensor }.all { it.definition.verified })
+        assertFalse(PidRegistry.maf.definition.verified)
+        assertTrue(PidRegistry.all.filterNot { it in unconfirmed }.all { it.definition.verified })
     }
 
     @Test
@@ -330,5 +342,55 @@ class PidRegistryTest {
         assertEquals(-125.0, PidRegistry.demandTorque.definition.parse(byteArrayOf(0x00)), 0.0)
         assertEquals(-125.0, PidRegistry.actualTorque.definition.parse(byteArrayOf(0x00)), 0.0)
         assertEquals(130.0, PidRegistry.demandTorque.definition.parse(byteArrayOf(0xFF.toByte())), 0.0)
+    }
+
+    // --- OBD-58 (2026-08-13): the three channels the additive g/s, L/h, V units unblocked ------
+
+    @Test
+    fun `the MAF channel carries the 0166 wire facts, g_s unit, and ships unverified`() {
+        assertEquals(ProtocolPidIds.MAF, PidRegistry.maf.definition.id)
+        assertEquals("0166", PidRegistry.maf.command)
+        assertEquals("4166", PidRegistry.maf.responseHeader)
+        assertEquals(MeasurementUnit.GRAMS_PER_SECOND, PidRegistry.maf.definition.unit)
+        // Airflow is a boost input, and boost is FAST: it must not lag behind the needle it feeds.
+        assertEquals(PollPriority.FAST, PidRegistry.maf.definition.pollPriority)
+        // Three data bytes: the support/bank byte, then sensor A's two count bytes. The van pads
+        // the frame with the absent sensor-B slot; asking for exactly three lets the parser drop it.
+        assertEquals(3, PidRegistry.maf.dataByteCount)
+        assertFalse("value unconfirmed until a throttle sweep", PidRegistry.maf.definition.verified)
+    }
+
+    @Test
+    fun `the MAF decode reads sensor A from bytes 1 and 2, ignoring the support byte and padding`() {
+        // Capture `41 66 01 01 C7 00 00`: byte 0 = 0x01 (support), byte 1 = 0x01, byte 2 = 0xC7 →
+        // (256·1 + 199) / 32 = 14.21875 g/s at warm idle. The two trailing 00s never reach the parse.
+        assertEquals(14.21875, PidRegistry.maf.definition.parse(byteArrayOf(0x01, 0x01, 0xC7.toByte())), 0.0)
+    }
+
+    @Test
+    fun `fuelRate and moduleVoltage carry their wire facts, units, and are live-verified`() {
+        assertEquals(ProtocolPidIds.FUEL_RATE, PidRegistry.fuelRate.definition.id)
+        assertEquals("015E", PidRegistry.fuelRate.command)
+        assertEquals("415E", PidRegistry.fuelRate.responseHeader)
+        assertEquals(MeasurementUnit.LITERS_PER_HOUR, PidRegistry.fuelRate.definition.unit)
+        assertEquals(2, PidRegistry.fuelRate.dataByteCount)
+        assertEquals(PollPriority.SLOW, PidRegistry.fuelRate.definition.pollPriority)
+        assertTrue("live-captured 2026-08-13", PidRegistry.fuelRate.definition.verified)
+
+        assertEquals(ProtocolPidIds.MODULE_VOLTAGE, PidRegistry.moduleVoltage.definition.id)
+        assertEquals("0142", PidRegistry.moduleVoltage.command)
+        assertEquals("4142", PidRegistry.moduleVoltage.responseHeader)
+        assertEquals(MeasurementUnit.VOLTS, PidRegistry.moduleVoltage.definition.unit)
+        assertEquals(2, PidRegistry.moduleVoltage.dataByteCount)
+        assertEquals(PollPriority.SLOW, PidRegistry.moduleVoltage.definition.pollPriority)
+        assertTrue("live-captured 2026-08-13", PidRegistry.moduleVoltage.definition.verified)
+    }
+
+    @Test
+    fun `the OBD-58 parse lambdas reproduce the session-2 van anchors exactly`() {
+        // fuelRate 015E `00 17` → 1.15 L/h idle; moduleVoltage 0142 `36 E2` → 14.05 V. Re-derived
+        // from the raw bytes each definition's own parse lambda receives.
+        assertEquals(1.15, PidRegistry.fuelRate.definition.parse(byteArrayOf(0x00, 0x17)), 0.0)
+        assertEquals(14.05, PidRegistry.moduleVoltage.definition.parse(byteArrayOf(0x36, 0xE2.toByte())), 0.0)
     }
 }

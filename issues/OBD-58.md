@@ -4,7 +4,7 @@ title: MeasurementUnit +GRAMS_PER_SECOND/LITERS_PER_HOUR/VOLTS — live MAF/fuel
 module: core/model
 owner: orchestrator
 sprint: boost-wave
-status: in-review
+status: merged
 type: contract-change
 hardware-verify: false
 blocked-by: [OBD-56]

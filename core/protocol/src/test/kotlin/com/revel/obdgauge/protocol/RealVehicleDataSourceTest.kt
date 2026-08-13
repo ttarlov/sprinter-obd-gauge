@@ -124,20 +124,21 @@ class RealVehicleDataSourceTest {
         }
 
     @Test
-    fun `asking for boost pulls in the speed-density inputs it can poll`() =
+    fun `asking for boost pulls in all four speed-density inputs, MAF now among them`() =
         runTest {
-            // OBD-57: boost expands to [maf, iatSensor, rpm, baro]. MAF has no channel yet
-            // (PendingUnitContract, g/s unit — OBD-58), so it is not put on the wire; the three
-            // pollable inputs are, in dependency order.
+            // OBD-57/58: boost expands to [maf, iatSensor, rpm, baro], all four now live channels —
+            // MAF (0166) joined PidRegistry when the g/s unit landed, so it goes on the wire too, in
+            // dependency order.
             val link = RecordingObdLink(FakeObdLink(transcript))
             val source = sourceFor(link)
 
             source.start(listOf(def(PidIds.BOOST)))
             runCurrent()
 
-            assertEquals(listOf("0168", "010C", "0133"), link.commands.drop(INIT_COMMANDS.size))
-            // And no boost value: MAF is the one input that cannot land, so the subtraction never
-            // runs and nothing (not a zero) is published. See the availability test below for why.
+            assertEquals(listOf("0166", "0168", "010C", "0133"), link.commands.drop(INIT_COMMANDS.size))
+            // Still no boost value on THIS fixture: it scripts no reply for 0166/0168, so those two
+            // reads are skipped at runtime and the subtraction never runs — nothing (not a zero) is
+            // published. The live-flip path, with a fixture that answers all four, is the test below.
             assertNull(source.readings.value[PidIds.BOOST])
         }
 
@@ -150,121 +151,123 @@ class RealVehicleDataSourceTest {
         }
 
     @Test
-    fun `the wired speed-density path computes a real boost once MAF lands - the OBD-58 flip preview`() =
+    fun `the wired speed-density path computes a real boost from the live MAF channel - OBD-58 flip`() =
         runTest {
-            // A preview of the auto-flip: inject MAF as a resolvable channel (exactly what OBD-58
-            // does when the g/s unit lands and MAF joins PidRegistry) and answer all four inputs.
-            // No production code changes — publish() already routes boost through
-            // ComputedChannels.speedDensityBoost — so a real boost value appears.
+            // The flip, through the REAL channel: MAF resolves from PidRegistry now (no probe), so a
+            // plain sourceFor() with a fixture answering all four inputs produces a live boost. No
+            // production code changed — publish() already routes boost through
+            // ComputedChannels.speedDensityBoost — so wiring MAF into the registry is the whole flip.
             val script =
                 transcript.filterNot { it.command in setOf("0166", "0168") } +
                     TranscriptEntry("0166", "41 66 01 01 C7 00 00") + // MAF sensor A → 14.21875 g/s
                     TranscriptEntry("0168", "41 68 01 54 00 00 21 00") // IAT sensor 1 → 44 °C
             val link = FakeObdLink(script)
-            val source = sourceWithMaf(link)
+            val source = sourceFor(link)
+
+            // The catalog agrees boost is now Available (all four inputs are live channels).
+            assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BOOST))
+            assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.MAF))
 
             source.start(listOf(def(PidIds.BOOST)))
             runCurrent()
 
             val boost = source.readings.value[PidIds.BOOST]
-            assertTrue("boost goes live the moment MAF is pollable", boost != null)
+            assertTrue("boost goes live now that MAF is a real polled channel", boost != null)
             // The wired path must agree exactly with the pure function on the same four inputs.
             val expected =
                 ComputedChannels.speedDensityBoost(
-                    maf = Reading("maf", 14.21875, clock.now, stale = false),
+                    maf = Reading(ProtocolPidIds.MAF, 14.21875, clock.now, stale = false),
                     iat = Reading(ProtocolPidIds.IAT_SENSOR, 44.0, clock.now, stale = false),
                     rpm = Reading(PidIds.RPM, RPM, clock.now, stale = false),
                     baro = Reading(PidIds.BARO, BARO_KPA, clock.now, stale = false),
                 )!!
             assertEquals(expected.value, boost!!.value, TOLERANCE)
+            // Idle-sanity anchor through the full live poll path: a plausible near-idle boost is a
+            // real (here negative, i.e. vacuum) number, never the 0.0 placeholder a missing input
+            // would otherwise masquerade as.
             assertFalse("a computed idle boost is not a zero placeholder", boost.value == 0.0)
+            assertTrue("near-idle manifold pressure sits below ambient (vacuum)", boost.value < 0.0)
         }
 
     // ---- OBD-43: explicit degradation when the vehicle cannot feed a channel ----
 
     @Test
-    fun `asking for boost on this van announces the missing MAF before any command goes out`() =
+    fun `asking for boost on this van announces nothing now that MAF is live - OBD-58 flip`() =
         runTest {
             val link = RecordingObdLink(FakeObdLink(transcript))
             val source = sourceFor(link)
 
             source.start(listOf(def(PidIds.BOOST)))
 
-            // Before runCurrent(): nothing has been sent yet, and the verdict is already known —
-            // from the frozen-unit gap, not inferred from a gauge that never moves.
+            // Nothing sent yet, and — post-OBD-58 — nothing to complain about: MAF is a live channel
+            // and all four boost inputs are Available, so availabilityOf(boost) is Available and
+            // reportUnavailable emits no event. Before the flip this announced
+            // MissingInputs(["maf"]) + PendingUnitContract; the flip is the disappearance of both.
             assertEquals(emptyList<String>(), link.commands)
-            // OBD-57: the one ungrounded input is MAF. Consequence first (boost), then each input
-            // that is not Available (MAF), each typed. IAT/rpm/baro are Available and stay silent.
-            assertEquals(
-                listOf(
-                    PidIds.BOOST to ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF)),
-                    ProtocolPidIds.MAF to PidCatalog.availabilityOf(ProtocolPidIds.MAF),
-                ),
-                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().map { it.id to it.availability },
-            )
             assertTrue(
-                PidCatalog.availabilityOf(ProtocolPidIds.MAF) is ChannelAvailability.PendingUnitContract,
+                "Available channels stay silent — no availability event for boost or its inputs",
+                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().isEmpty(),
             )
+            assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BOOST))
+            assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.MAF))
         }
 
     @Test
-    fun `a boost gauge with no MAF reading gets no reading at all, never a zero`() =
+    fun `boost with a MAF that does not answer at runtime gets no reading at all, never a zero`() =
         runTest {
-            // The van's real shape post-OBD-57: IAT/rpm/baro answer, MAF has no channel yet. The
-            // speed-density model has three of four operands, and 0 kPa — "no boost, engine not
-            // pulling" — must never stand in for "MAF is not published on this vehicle yet".
+            // Post-OBD-58 MAF is a live channel, but this fixture scripts no 0166 reply, so the MAF
+            // read is skipped at runtime. The speed-density model is then left with three of four
+            // operands, and 0 kPa — "no boost, engine not pulling" — must never stand in for a
+            // missing input: nothing (not a zero) is published.
             val source = start(def(PidIds.BOOST))
 
             assertNull("no boost reading", source.readings.value[PidIds.BOOST])
-            assertNull("and no MAF to have made a MAP from", source.readings.value[ProtocolPidIds.MAF])
+            assertNull("and no MAF reading to have made a MAP from", source.readings.value[ProtocolPidIds.MAF])
             assertEquals(
-                "baro still reads — three of four inputs are alive and that stays visible",
+                "baro still reads — the inputs that DO answer stay visible",
                 BARO_KPA,
                 source.readings.value
                     .getValue(PidIds.BARO)
                     .value,
                 TOLERANCE,
             )
-            assertTrue(
-                "and the loop said why, in types",
-                events.any {
-                    it is PollEvent.ChannelAvailabilityChanged &&
-                        it.id == PidIds.BOOST &&
-                        it.availability == ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF))
-                },
-            )
         }
 
     @Test
     fun `the verdict is stated once per session, not once per publish`() =
         runTest {
-            val source = start(def(PidIds.BOOST))
+            // Repointed post-OBD-58: boost is Available now and no longer emits a verdict, so the
+            // once-per-session semantics ride an UnsupportedByVehicle channel instead — MAP (010B),
+            // which this van answers NO DATA to. The behaviour is spec-agnostic.
+            val source = start(def(ProtocolPidIds.MAP))
             runCycles(4)
             source.stop()
 
-            // Dozens of publishes, one verdict. Deriving availability from "boost has not been
+            // Dozens of publishes, one verdict. Deriving availability from "map has not been
             // published lately" would emit several times a second for the life of the session and
             // drown the console it is meant to inform.
             assertEquals(
                 1,
-                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == PidIds.BOOST },
+                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == ProtocolPidIds.MAP },
             )
         }
 
     @Test
     fun `a fresh session restates the verdict rather than assuming the consumer remembers`() =
         runTest {
+            // Same repoint as the sibling test above: MAP (UnsupportedByVehicle) is the verdict
+            // subject now that boost is Available.
             val link = FakeObdLink(transcript)
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.BOOST)))
+            source.start(listOf(def(ProtocolPidIds.MAP)))
             runCurrent()
-            source.start(listOf(def(PidIds.BOOST)))
+            source.start(listOf(def(ProtocolPidIds.MAP)))
             runCurrent()
 
             assertEquals(
                 2,
-                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == PidIds.BOOST },
+                events.count { it is PollEvent.ChannelAvailabilityChanged && it.id == ProtocolPidIds.MAP },
             )
         }
 
@@ -640,21 +643,6 @@ class RealVehicleDataSourceTest {
                 ),
         )
 
-    /**
-     * Like [sourceFor], but with a resolvable MAF channel folded in — a stand-in for what OBD-58
-     * does when the g/s unit lands and MAF becomes an ordinary [PidRegistry] channel. Lets the
-     * live speed-density boost path be exercised end-to-end before that contract change ships.
-     */
-    private fun TestScope.sourceWithMaf(link: ObdLink): RealVehicleDataSource =
-        RealVehicleDataSource(
-            link = link,
-            scope = backgroundScope,
-            config = config,
-            clock = clock,
-            onEvent = events::add,
-            overrides = TestOverrides(extraChannels = listOf(PolledPid.Standard(MAF_PROBE))),
-        )
-
     /** Starts a source, runs init plus cycle 0, and hands it back ready to assert on. */
     private fun TestScope.start(
         vararg pids: PidDefinition,
@@ -745,35 +733,6 @@ class RealVehicleDataSourceTest {
             MercedesPidRegistry.transTemp.let { source ->
                 source.copy(definition = source.definition.copy(id = PIPELINE_CHANNEL_ID))
             }
-
-        /**
-         * A resolvable MAF channel for the OBD-58-flip-preview test — id [ProtocolPidIds.MAF] so
-         * `publish()`'s `polled[MAF]` finds it, wire address `0166`, sensor-A g/s decode. Its
-         * declared unit is a placeholder (the whole point of OBD-58 is that g/s has no real
-         * [MeasurementUnit] yet), which is harmless: the boost computation reads the value, never
-         * the unit.
-         */
-        val MAF_PROBE: StandardPidSpec =
-            StandardPidSpec(
-                definition =
-                    PidDefinition(
-                        id = ProtocolPidIds.MAF,
-                        label = "MAF",
-                        unit = MeasurementUnit.KPA,
-                        request = ObdRequest.StandardPid(mode = 1, pid = 0x66),
-                        parse = { data ->
-                            VendoredSaeScaling.massAirFlowGramsPerSecond(
-                                b = VendoredSaeScaling.dataByte(data, 1),
-                                c = VendoredSaeScaling.dataByte(data, 2),
-                            )
-                        },
-                        pollPriority = PollPriority.FAST,
-                        verified = false,
-                    ),
-                mode = 1,
-                pid = 0x66,
-                dataByteCount = 3,
-            )
 
         /** A synthetic id the test marks falsified via `extraFalsified`, to exercise the gate. */
         const val FALSIFIED_PROBE_ID = "falsifiedProbe"

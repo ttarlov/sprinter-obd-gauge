@@ -12,7 +12,6 @@ import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.VehicleDataSource
-import com.revel.obdgauge.protocol.ChannelAvailability
 import com.revel.obdgauge.protocol.PidCatalog
 import com.revel.obdgauge.protocol.PollConfig
 import com.revel.obdgauge.protocol.PollEvent
@@ -109,31 +108,28 @@ class ProdChainEndToEndTest {
         }
 
     @Test
-    fun `boost is typed-unavailable, never a zero`() =
+    fun `boost gets no reading when this capture has no MAF byte, never a zero`() =
         runTest(testDispatcher) {
             val source = startVanSession(CAPTURED_CHANNELS)
 
-            // OBD-57: boost is now the speed-density estimate, and its mass-airflow input has no
-            // channel yet (0166 answers, but g/s has no frozen unit — OBD-58), so there is no MAP
-            // and therefore no boost. The identity element of a subtraction is 0, which on a boost
-            // gauge reads as "engine not pulling" and is indistinguishable from a real measurement
-            // — so nothing is published at all. Absence, not a value, is the honest answer.
+            // OBD-58: MAF is a live channel now (0166, g/s), so boost is Available and all four of
+            // its inputs go on the wire. But this 2026-08-12 capture predates the 0166 MAF discovery
+            // and scripts no reply for it, so the MAF read is skipped at runtime — leaving the
+            // speed-density model without airflow. The identity element of a subtraction is 0, which
+            // on a boost gauge reads as "engine not pulling" and is indistinguishable from a real
+            // measurement — so nothing is published at all. Absence, not a value, is the honest answer.
             assertNull(source.readings.value[PidIds.BOOST])
             assertNull(source.readings.value[ProtocolPidIds.MAF])
 
-            // ...and the reason is announced, typed, once per session and before a single command
-            // goes out: the consequence (boost) and the cause (maf) as separate events.
+            // And because boost is now Available (not MissingInputs / MAF PendingUnitContract any
+            // more), the loop emits no availability complaint for either — Available channels are
+            // silent. The reason boost is empty here is a skipped runtime read, not a typed verdict.
             val availability = events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>()
-            assertEquals(
-                ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF)),
-                availability.first { it.id == PidIds.BOOST }.availability,
-            )
-            assertTrue(
-                availability.first { it.id == ProtocolPidIds.MAF }.availability
-                    is ChannelAvailability.PendingUnitContract,
-            )
-            // MAF cannot be put on the wire — it has no channel until OBD-58 lands the g/s unit —
-            // but the pollable inputs are: IAT (0168) is attempted this session.
+            assertTrue(availability.none { it.id == PidIds.BOOST })
+            assertTrue(availability.none { it.id == ProtocolPidIds.MAF })
+
+            // Both MAF (0166) and its sibling IAT input (0168) are attempted on the wire this session.
+            assertTrue(MAF_COMMAND in link.commands)
             assertTrue(IAT_SENSOR_COMMAND in link.commands)
         }
 
@@ -314,6 +310,7 @@ class ProdChainEndToEndTest {
         val INIT_COMMANDS = listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATSP0", "0100")
 
         const val IAT_SENSOR_COMMAND = "0168"
+        const val MAF_COMMAND = "0166"
         const val KWP_RECORD_COMMAND = "2130"
         const val HEADER_SET_TCU = "ATSH7E1"
 

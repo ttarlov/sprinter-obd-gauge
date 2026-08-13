@@ -39,14 +39,13 @@ object ProtocolPidIds {
      * the speed-density boost model (OBD-57). Standard MAF `0110` is unsupported; `0166` is
      * answered.
      *
-     * **No polled channel resolves this id yet.** Its natural unit is grams-per-second, which the
-     * frozen `:core:model` [com.revel.obdgauge.model.MeasurementUnit] enum does not name, so — like
-     * `015E` fuel-rate (L/h) and `0142` module-voltage (V) — MAF cannot become a
-     * [StandardPidSpec] without an additive contract change this module will not make on its own
-     * authority. The decode lives in [VendoredSaeScaling.massAirFlowGramsPerSecond]; boost declares
-     * this id as a dependency and [PidCatalog.availabilityOf] reports it
-     * [ChannelAvailability.PendingUnitContract] until the unit lands, so boost reads
-     * `MissingInputs(["maf"])` rather than silently claiming it can spool.
+     * **Live since OBD-58.** `GRAMS_PER_SECOND` landed in the frozen
+     * [com.revel.obdgauge.model.MeasurementUnit] (DECISIONS.md D9), so [PidRegistry.maf] now resolves
+     * this id to a polled [StandardPidSpec] with the decode from
+     * [VendoredSaeScaling.massAirFlowGramsPerSecond]. Boost declares this id as a dependency, and
+     * with MAF now [ChannelAvailability.Available] boost auto-flipped from `MissingInputs(["maf"])`
+     * to [ChannelAvailability.Available] — still an "Est." (`verified = false`) until the VE
+     * calibration drive.
      */
     const val MAF: String = "maf"
 
@@ -81,4 +80,20 @@ object ProtocolPidIds {
 
     /** Engine's actual percent torque (standard PID `0162`), percent. */
     const val ACTUAL_TORQUE: String = "actualTorque"
+
+    // --- OBD-58 (2026-08-13): live channels unblocked by the additive g/s, L/h, V units (D9) ---
+
+    /**
+     * Engine fuel rate (standard PID `015E`), L/h. Scaling was proven from the 2026-08-13 commercial
+     * capture ([VendoredSaeScaling.fuelRateLitersPerHour], anchor `00 17` → 1.15 L/h); OBD-58 added
+     * `LITERS_PER_HOUR` to the frozen enum, so [PidRegistry.fuelRate] is now a live channel.
+     */
+    const val FUEL_RATE: String = "fuelRate"
+
+    /**
+     * Control module voltage (standard PID `0142`), V. Scaling was proven from the 2026-08-13
+     * commercial capture ([VendoredSaeScaling.moduleVoltageVolts], anchor `36 E2` → 14.05 V); OBD-58
+     * added `VOLTS` to the frozen enum, so [PidRegistry.moduleVoltage] is now a live channel.
+     */
+    const val MODULE_VOLTAGE: String = "moduleVoltage"
 }

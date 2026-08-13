@@ -92,25 +92,26 @@ data class StandardPidSpec(
  * | `0161` | [demandTorque] | ✓ `82` = 5 % |
  * | `0162` | [actualTorque] | ✓ `88` = 11 % |
  *
- * **Two PIDs from the same capture are *not* here.** `015E` (engine fuel rate, `(256A+B)/20`
+ * **Two PIDs from the same capture went live in OBD-58.** `015E` (engine fuel rate, `(256A+B)/20`
  * L/h, anchored `00 17` → 1.15 L/h) and `0142` (module voltage, `(256A+B)/1000` V, anchored
  * `36 E2` → 14.05 V) are both live-verified and both scaled — [VendoredSaeScaling.fuelRateLitersPerHour]
- * and [VendoredSaeScaling.moduleVoltageVolts] carry the formula and the anchor test — but neither
- * L/h nor V exists as a [com.revel.obdgauge.model.MeasurementUnit] in the frozen `:core:model`
- * contract, and this module does not add to that contract on its own authority (see
- * `MODULE.md`). They wait for a reviewed contract change before they can become
- * [StandardPidSpec] entries.
+ * and [VendoredSaeScaling.moduleVoltageVolts] carry the formula and the anchor test. They were
+ * scaling-only until the frozen `:core:model` [com.revel.obdgauge.model.MeasurementUnit] gained
+ * `LITERS_PER_HOUR` and `VOLTS` (DECISIONS.md D9); OBD-58 then wired them as [fuelRate] and
+ * [moduleVoltage] `StandardPidSpec` entries, `verified = true`. They are live channels, not
+ * dashboard tiles yet.
  *
  * ## Boost-wave (OBD-56, 2026-08-13): the extended sensor PIDs the survey missed
  *
  * Standard MAF (`0110`) and IAT (`010F`) are unsupported on this van, but the extended dual-bank
  * forms are answered (`docs/hardware/research-2026-08-13-boost-inference.md`). [intakeAirTempSensor]
  * (`0168` sensor 1, `54` → 44 °C) lands here as a real CELSIUS channel, `verified = false`. MAF
- * (`0166` sensor A, `01 C7` → 14.21875 g/s) **does not get a channel**: g/s joins L/h and V as a
- * quantity the frozen enum cannot name, so its decode lives in
- * [VendoredSaeScaling.massAirFlowGramsPerSecond] and it is referenced by id ([ProtocolPidIds.MAF])
- * as a boost dependency that [PidCatalog.availabilityOf] reports
- * [ChannelAvailability.PendingUnitContract]. Both feed OBD-57's speed-density boost.
+ * (`0166` sensor A, `01 C7` → 14.21875 g/s) was scaling-only through OBD-56/57 — g/s had no frozen
+ * unit, so its decode lived in [VendoredSaeScaling.massAirFlowGramsPerSecond] and it was referenced
+ * by id as a boost dependency [PidCatalog.availabilityOf] reported
+ * [ChannelAvailability.PendingUnitContract]. OBD-58 landed `GRAMS_PER_SECOND` (D9) and wired [maf]
+ * here as a live channel, so boost auto-flipped to [ChannelAvailability.Available]. Both feed
+ * OBD-57's speed-density boost.
  */
 object PidRegistry {
     /** Engine coolant temperature, `0105`, `A − 40` °C. */
@@ -207,6 +208,39 @@ object PidRegistry {
             pollPriority = PollPriority.SLOW,
             verified = false,
             parse = { data -> VendoredSaeScaling.temperatureCelsius(VendoredSaeScaling.dataByte(data, 1)) },
+        )
+
+    /**
+     * Mass air flow, extended dual-bank PID `0166` sensor A, `(256·B + C) / 32` g/s — the airflow
+     * input to the speed-density boost model (OBD-57). Went live in OBD-58 once
+     * [MeasurementUnit.GRAMS_PER_SECOND] landed (DECISIONS.md D9); before that its decode lived only
+     * in [VendoredSaeScaling.massAirFlowGramsPerSecond] and boost read `MissingInputs(["maf"])`.
+     *
+     * **Framing.** `0166` is the dual-bank form: a leading support/bank byte (data index 0), then two
+     * bytes per sensor. This van reports sensor A only — capture `41 66 01 01 C7 00 00`: index 0
+     * `0x01` (support), index 1 `0x01` (B), index 2 `0xC7` (C) → `(256·1 + 199) / 32 = 14.21875` g/s
+     * at warm idle. [dataByteCount] asks for exactly those three bytes; [ResponseParser] ignores the
+     * absent sensor-B padding.
+     *
+     * `FAST`: airflow tracks the pedal on the same timescale as boost, and boost is derived from it.
+     * `verified = false`: the decode *format* is high-confidence but the *value* is unconfirmed until
+     * a 🖐 throttle sweep (MAF must rise with load) — the same axis as [intakeAirTempSensor].
+     */
+    val maf: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.MAF,
+            label = "MAF",
+            unit = MeasurementUnit.GRAMS_PER_SECOND,
+            pid = MAF_PID,
+            dataByteCount = THREE_DATA_BYTES,
+            pollPriority = PollPriority.FAST,
+            verified = false,
+            parse = { data ->
+                VendoredSaeScaling.massAirFlowGramsPerSecond(
+                    b = VendoredSaeScaling.dataByte(data, 1),
+                    c = VendoredSaeScaling.dataByte(data, 2),
+                )
+            },
         )
 
     /** Vehicle speed, `010D`, `A` km/h. */
@@ -354,6 +388,50 @@ object PidRegistry {
             parse = { data -> VendoredSaeScaling.torquePercent(VendoredSaeScaling.dataByte(data, 0)) },
         )
 
+    /**
+     * Engine fuel rate, `015E`, `(256·A + B) / 20` L/h. Live since OBD-58: the decode was proven in
+     * OBD-50 ([VendoredSaeScaling.fuelRateLitersPerHour], anchor `00 17` → 1.15 L/h at idle,
+     * 2026-08-13) but had to wait for [MeasurementUnit.LITERS_PER_HOUR] (D9). `verified = true` —
+     * live-captured. Not a dashboard tile yet; a real polled channel.
+     */
+    val fuelRate: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.FUEL_RATE,
+            label = "Fuel Rate",
+            unit = MeasurementUnit.LITERS_PER_HOUR,
+            pid = FUEL_RATE_PID,
+            dataByteCount = TWO_DATA_BYTES,
+            pollPriority = PollPriority.SLOW,
+            parse = { data ->
+                VendoredSaeScaling.fuelRateLitersPerHour(
+                    a = VendoredSaeScaling.dataByte(data, 0),
+                    b = VendoredSaeScaling.dataByte(data, 1),
+                )
+            },
+        )
+
+    /**
+     * Control module voltage, `0142`, `(256·A + B) / 1000` V. Live since OBD-58: the decode was
+     * proven in OBD-50 ([VendoredSaeScaling.moduleVoltageVolts], anchor `36 E2` → 14.05 V,
+     * 2026-08-13, matched the ATRV's own reading) but had to wait for [MeasurementUnit.VOLTS] (D9).
+     * `verified = true` — live-captured. Not a dashboard tile yet; a real polled channel.
+     */
+    val moduleVoltage: StandardPidSpec =
+        spec(
+            id = ProtocolPidIds.MODULE_VOLTAGE,
+            label = "Voltage",
+            unit = MeasurementUnit.VOLTS,
+            pid = MODULE_VOLTAGE_PID,
+            dataByteCount = TWO_DATA_BYTES,
+            pollPriority = PollPriority.SLOW,
+            parse = { data ->
+                VendoredSaeScaling.moduleVoltageVolts(
+                    a = VendoredSaeScaling.dataByte(data, 0),
+                    b = VendoredSaeScaling.dataByte(data, 1),
+                )
+            },
+        )
+
     /** Every standard PID in the registry, in a stable declaration order. */
     val all: List<StandardPidSpec> =
         listOf(
@@ -363,6 +441,7 @@ object PidRegistry {
             baro,
             intakeAirTemp,
             intakeAirTempSensor,
+            maf,
             speed,
             engineLoad,
             throttlePosition,
@@ -372,6 +451,8 @@ object PidRegistry {
             accelPedal,
             demandTorque,
             actualTorque,
+            fuelRate,
+            moduleVoltage,
         )
 
     /** The [PidDefinition]s of [all], for handing to a `VehicleDataSource`. */
@@ -420,6 +501,7 @@ object PidRegistry {
     private const val BARO_PID = 0x33
     private const val IAT_PID = 0x0F
     private const val IAT_SENSOR_PID = 0x68
+    private const val MAF_PID = 0x66
     private const val SPEED_PID = 0x0D
     private const val ENGINE_LOAD_PID = 0x04
     private const val THROTTLE_PID = 0x11
@@ -429,9 +511,12 @@ object PidRegistry {
     private const val ACCEL_PEDAL_PID = 0x49
     private const val DEMAND_TORQUE_PID = 0x61
     private const val ACTUAL_TORQUE_PID = 0x62
+    private const val FUEL_RATE_PID = 0x5E
+    private const val MODULE_VOLTAGE_PID = 0x42
 
     private const val ONE_DATA_BYTE = 1
     private const val TWO_DATA_BYTES = 2
+    private const val THREE_DATA_BYTES = 3
 }
 
 /** Positive-response offset applied to the request mode by the ECU: mode `01` answers as `41`. */

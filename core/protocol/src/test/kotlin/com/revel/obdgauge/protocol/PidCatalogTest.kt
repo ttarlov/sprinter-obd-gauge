@@ -1,5 +1,6 @@
 package com.revel.obdgauge.protocol
 
+import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidIds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -87,35 +88,37 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `boost degrades to a typed unavailable naming the input it lost, never to a number`() {
-        val boost = PidCatalog.availabilityOf(PidIds.BOOST)
-
-        // OBD-57: the one input still ungrounded is mass airflow — IAT (0168), rpm and baro all
-        // answer. A blanket "boost is unavailable" would lose the fact that three of four exist.
-        assertEquals(ChannelAvailability.MissingInputs(listOf(ProtocolPidIds.MAF)), boost)
+    fun `boost is available now that mass airflow is a live channel - the OBD-58 flip`() {
+        // Was MissingInputs(["maf"]) while 0166 had no g/s unit. OBD-58 landed GRAMS_PER_SECOND
+        // (DECISIONS.md D9), MAF became a live PidRegistry channel, and all four speed-density
+        // inputs are Available — so boost auto-flipped to Available, with no logic change in the
+        // catalog. It is still an "Est." (verified = false); availability and verification differ.
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BOOST))
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.MAF))
         assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.IAT_SENSOR))
         assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.RPM))
         assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BARO))
     }
 
     @Test
-    fun `mass airflow answers but cannot be published yet - it is pending the g_s unit contract`() {
-        // 0166 IS answered by this van (not UnsupportedByVehicle, not falsified); the only thing
-        // missing is a frozen MeasurementUnit for g/s (OBD-58). Its scaling is proven in
-        // VendoredSaeScaling. This is the seam OBD-58 flips: remove MAF from the pending set and it
-        // becomes an ordinary channel, and boost auto-flips to Available.
-        val maf = PidCatalog.availabilityOf(ProtocolPidIds.MAF)
-        assertTrue(maf is ChannelAvailability.PendingUnitContract)
-        assertEquals("g/s", (maf as ChannelAvailability.PendingUnitContract).quantity)
+    fun `mass airflow is a live polled channel since OBD-58 - the g_s unit landed`() {
+        // 0166 was PendingUnitContract only for want of a frozen g/s unit. OBD-58 added
+        // GRAMS_PER_SECOND (D9), so PidRegistry.maf resolves the id to a real StandardPidSpec with
+        // the scaling proven in VendoredSaeScaling — it is now Available and pollable.
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(ProtocolPidIds.MAF))
+        val maf = PidCatalog.byId(ProtocolPidIds.MAF)
+        assertTrue(maf is PolledPid.Standard)
+        assertEquals("0166", (maf as PolledPid.Standard).spec.command)
+        assertEquals(MeasurementUnit.GRAMS_PER_SECOND, maf.spec.definition.unit)
     }
 
     @Test
-    fun `boost is both unverified and unavailable, two different questions with the same answer today`() {
-        // Since OBD-57 boost is an estimate (unverified) AND missing an input (unavailable). The
-        // axes stay independent: MAP's own decode is still SAE-correct, so isVerified(MAP) is true
-        // even though MAP is not read on this van.
+    fun `boost stays unverified even though it is now available, two different questions`() {
+        // Since OBD-58 boost is Available (MAF is live), but it is still an estimate (unverified)
+        // until the 🖐 VE-calibration drive. The axes stay independent: MAP's own decode is still
+        // SAE-correct, so isVerified(MAP) is true even though MAP is not read on this van.
         assertFalse(PidCatalog.isVerified(PidIds.BOOST))
-        assertTrue(PidCatalog.availabilityOf(PidIds.BOOST) != ChannelAvailability.Available)
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.BOOST))
         assertTrue(PidCatalog.isVerified(ProtocolPidIds.MAP))
     }
 

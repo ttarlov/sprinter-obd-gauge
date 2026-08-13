@@ -22,6 +22,9 @@ fun unitSuffix(unit: MeasurementUnit): String =
         MeasurementUnit.KMH -> " km/h"
         MeasurementUnit.MPH -> " mph"
         MeasurementUnit.PERCENT -> "%"
+        MeasurementUnit.GRAMS_PER_SECOND -> " g/s"
+        MeasurementUnit.LITERS_PER_HOUR -> " L/h"
+        MeasurementUnit.VOLTS -> " V"
     }
 
 /**
