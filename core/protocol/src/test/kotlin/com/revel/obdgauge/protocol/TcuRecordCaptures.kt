@@ -84,4 +84,40 @@ internal object TcuRecordCaptures {
             "post-stall" to POST_STALL,
             "post-drive" to POST_DRIVE,
         )
+
+    // ---- session 3 (2026-08-13): the drive test that IDENTIFIED trans temp at byte 1 ----
+    //
+    // docs/hardware/session-3-2026-08-13-transtemp.md. Under `°C = 63 − raw` at record byte 1,
+    // these track thermal state, monotonically and inversely, and — the identification proof —
+    // decouple from the byte-11 coolant echo. Transcribed byte for byte; nothing tidied.
+
+    /**
+     * Warm idle, 13 min. byte 1 `0x23` → **28 °C** (63 − 35), byte 11 `0x8C` → 90 °C coolant.
+     */
+    const val S3_WARM_IDLE: String =
+        "7E9 10 1A 61 30 00 23 00 FF\r" +
+            "7E9 21 00 00 00 08 04 00 DD\r" +
+            "7E9 22 8C 00 00 00 00 00 00\r" +
+            "7E9 23 86 10 00 08 00 00 FF\r"
+
+    /**
+     * Immediately after a 10-minute drive. byte 1 `0x12` → **45 °C** (63 − 18), byte 11 `0x91` →
+     * 95 °C coolant.
+     */
+    const val S3_POST_DRIVE: String =
+        "7E9 10 1A 61 30 00 12 00 FF\r" +
+            "7E9 21 00 00 00 08 04 00 DD\r" +
+            "7E9 22 91 00 00 00 00 00 00\r" +
+            "7E9 23 86 10 00 08 00 00 FF\r"
+
+    /**
+     * +90 s heat-soak after the drive. byte 1 **still** `0x12` → 45 °C, while byte 11 fell to
+     * `0x8F` → 93 °C. Trans temp steady while coolant drops is the decoupling that proves byte 1
+     * is not a coolant copy — the identification's decisive frame.
+     */
+    const val S3_HEAT_SOAK: String =
+        "7E9 10 1A 61 30 00 12 00 FF\r" +
+            "7E9 21 00 00 00 08 04 00 DD\r" +
+            "7E9 22 8F 00 00 00 00 00 00\r" +
+            "7E9 23 86 10 00 08 00 00 FF\r"
 }

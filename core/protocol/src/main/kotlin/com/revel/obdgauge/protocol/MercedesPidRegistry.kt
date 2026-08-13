@@ -55,6 +55,12 @@ data class Mode22PidSpec(
  * app's ELM327 path, and not proven byte-for-byte. Consumers must surface the flag (OBD-27):
  * see [PidCatalog.isVerified].
  *
+ * > **OBD-55 — this decode is retired as the trans channel.** The 2026-08-13 drive test falsified
+ * > the byte-0 reading below (the van sends byte 0 as `0x00` → −50 °C) and identified transmission
+ * > temperature at record byte 1 under `63 − raw` ([TcuRecordRegistry]). `PidIds.TRANS_TEMP` now
+ * > resolves to that KWP-record channel; [transTemp] is out of [all] and no longer polled. The
+ * > decode below is kept as documented history and because its `MTH`→°C machinery is still tested.
+ *
  * ## Trans temp (722.6 transmission oil), the channel this app exists for
  *
  * X-Gauge code, verbatim: `TXD 07E12130`, `RXF 032200000000`, `RXD 1808`, `MTH 00090005FFC6`.
@@ -140,11 +146,27 @@ object MercedesPidRegistry {
             mth = "00090005FFC6",
         )
 
-    /** Transmission oil temperature (722.6), °C, **unverified**. See the class KDoc. */
+    /**
+     * Transmission oil temperature (722.6), °C, decoded from the X-Gauge code — **retired as the
+     * trans channel by OBD-55** and therefore no longer in [all].
+     *
+     * The 2026-08-13 drive test falsified this decode (it reads record byte 0, which the van sends
+     * as `0x00` → −50 °C) and identified the true field at record byte 1
+     * ([TcuRecordRegistry.transTempRecord]), which now owns `PidIds.TRANS_TEMP`. The spec is kept
+     * because its X-Gauge decode machinery is still exercised — the `MTH`→°C algebra tests, and the
+     * scheduler-pipeline probe in `RealVehicleDataSourceTest` — but it is never polled.
+     */
     val transTemp: Mode22PidSpec = spec(PidIds.TRANS_TEMP, "Trans", TRANS_TEMP_CODE)
 
-    /** Every manufacturer PID in the registry, in a stable declaration order. */
-    val all: List<Mode22PidSpec> = listOf(transTemp)
+    /**
+     * Every manufacturer PID that is actually polled, in a stable declaration order.
+     *
+     * **Empty since OBD-55.** [transTemp] was the only entry; its decode was falsified on-vehicle
+     * and the trans channel moved to [TcuRecordRegistry.transTempRecord] (a KWP record, not a
+     * mode-22 single-frame read). The registry keeps [transTemp] and its X-Gauge machinery for the
+     * tests that still lean on them; nothing here rides the poll loop.
+     */
+    val all: List<Mode22PidSpec> = emptyList()
 
     /** The [PidDefinition]s of [all], for handing to a `VehicleDataSource`. */
     val definitions: List<PidDefinition> get() = all.map(Mode22PidSpec::definition)

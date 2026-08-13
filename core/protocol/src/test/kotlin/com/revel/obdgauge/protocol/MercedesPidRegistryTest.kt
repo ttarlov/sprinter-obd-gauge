@@ -6,7 +6,6 @@ import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.PollPriority
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,9 +35,12 @@ class MercedesPidRegistryTest {
     }
 
     @Test
-    fun `every mode-22 definition is unverified by default, not just trans temp`() {
-        // The "hypothesis until hardware" rule must survive the second registry entry.
-        org.junit.Assert.assertTrue(MercedesPidRegistry.all.none { it.definition.verified })
+    fun `the polled mode-22 registry is empty since the trans decode was retired`() {
+        // OBD-55: transTemp's X-Gauge decode was falsified on-vehicle and the trans channel moved
+        // to TcuRecordRegistry.transTempRecord, so nothing here rides the poll loop any more. The
+        // "hypothesis until hardware" rule is preserved on the retained (out-of-catalog) spec.
+        org.junit.Assert.assertEquals(emptyList<Mode22PidSpec>(), MercedesPidRegistry.all)
+        assertFalse("the retained X-Gauge decode is still a hypothesis", transTemp.definition.verified)
     }
 
     @Test
@@ -88,11 +90,14 @@ class MercedesPidRegistryTest {
     }
 
     @Test
-    fun `lookup by id works and unknown ids are null`() {
-        assertNotNull(MercedesPidRegistry.byId(PidIds.TRANS_TEMP))
+    fun `lookup and definitions are empty now that the only entry is retired`() {
+        // OBD-55: byId/definitions are views over `all`, which is now empty. transTemp is retired
+        // from the catalog (its decode was falsified), so it no longer resolves here even though
+        // the spec object is retained for the X-Gauge machinery tests above.
+        assertNull(MercedesPidRegistry.byId(PidIds.TRANS_TEMP))
         assertNull(MercedesPidRegistry.byId(PidIds.COOLANT))
         assertNull(MercedesPidRegistry.byId("nope"))
-        assertEquals(listOf(transTemp.definition), MercedesPidRegistry.definitions)
+        assertEquals(emptyList<com.revel.obdgauge.model.PidDefinition>(), MercedesPidRegistry.definitions)
     }
 
     @Test

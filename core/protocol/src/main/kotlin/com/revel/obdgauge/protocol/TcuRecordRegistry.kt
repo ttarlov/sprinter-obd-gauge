@@ -3,91 +3,98 @@ package com.revel.obdgauge.protocol
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.ObdRequest
 import com.revel.obdgauge.model.PidDefinition
+import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.PollPriority
 
 /**
- * The 722.9 transmission controller's KWP `21 30` record, as the 2026-08-12 session found it
- * (OBD-49).
+ * The 722.9 transmission controller's KWP `21 30` record, and the transmission-fluid-temperature
+ * channel decoded out of it — **identified on-vehicle 2026-08-13** (OBD-55).
  *
- * ## What the van actually answered
+ * ## What the drive test settled (`docs/hardware/session-3-2026-08-13-transtemp.md`)
  *
- * Two hypotheses went to the vehicle; the session settled both
- * (`docs/hardware/session-2026-08-12.md`):
+ * The 2026-08-12 session (OBD-49) confirmed the *record* — `ATSH7E1` + `21 30` → positive `61 30`,
+ * a 26-byte block over four CAN frames — but not where the transmission temperature lived in it. A
+ * cold-start-through-drive test on 2026-08-13 answered that: **record data byte 1** tracked thermal
+ * state, inversely and monotonically, across four states, and stayed **decoupled** from engine
+ * coolant (byte 11) — the discriminator that kills the coolant-echo confusion the earlier
+ * byte-18 candidate could not rule out.
  *
- * - `ATSH7E1` + `22 05 43` (UDS `readDataByIdentifier`) → `7F 22 11`. **Falsified**: no UDS `22`
- *   in the default session, and this project does not change diagnostic sessions — it is
- *   read-only by charter.
- * - `ATSH7E1` + `21 30` (KWP `readDataByLocalIdentifier`) → **confirmed**: positive `61 30`, a
- *   26-byte record over four CAN frames.
+ * | State | byte 1 raw | °C = 63 − raw | byte 11 (coolant) |
+ * |---|---|---|---|
+ * | Cold engine-off | `0x2D` (45) | **18** ≈ ambient (65 °F day) | — |
+ * | Warm idle (13 min) | `0x23` (35) | **28** | `0x8C` → 90 °C |
+ * | Post 10-min drive | `0x12` (18) | **45** | `0x91` → 95 °C |
+ * | +90 s heat-soak | `0x12` (18) | **45** (steady) | `0x8F` → 93 °C (dropping) |
  *
- * The 24 record bytes at warm idle:
- * ```
- *   00 13 00 00 | 00 00 00 08 04 00 DD | 8E FF F3 FF F3 00 00 | 86 18 00 08 00 00
- *    0  1  2  3    4  5  6  7  8  9 10   11 12 13 14 15 16 17   18 19 20 21 22 23
- * ```
+ * The last two rows are the identification proof: byte 1 held at `0x12` while byte 11 fell 95 → 93,
+ * so byte 1 is *not* a copy of coolant — it is the fluid temperature the app exists to show.
  *
- * ## Byte 11 — the anchor that makes the encoding believable
+ * ## Why the model is `°C = 63 − raw`, and why it still ships **unverified**
  *
- * Byte 11 read `8E → 8D → 93` across the session: **92 → 91 → 97 °C** under `raw − 50`, tracking
- * engine coolant and rising ~6 °C over a 15-minute drive. That matters twice over. It is an
- * independent field confirmation of the `−50` offset that OBD-15 derived *algebraically* from the
- * ScanGauge `MTH` field, arrived at from a completely different direction — and `−50` is the only
- * offset that makes both temperature fields in this record land somewhere sane at once (`−40`
- * leaves no self-consistent assignment).
+ * - **Offset SOLID.** Anchored on the one independent ground-truth point: a cold soak reads ambient.
+ *   `raw 0x2D (45)` at ambient `18 °C` fixes the offset at `45 + 18 = 63` exactly.
+ * - **Slope PROVISIONAL.** Only that single anchor exists. The `1 °C/count` slope is *assumed* —
+ *   the Mercedes convention, matching the magnitude of coolant's own `raw − 50` byte in this same
+ *   record — not measured, because the gentle drive only reached ~45 °C. High-temp behaviour
+ *   (wrap / saturation above ~63 °C) is **untested**. So [transTempRecord] carries
+ *   `verified = false`: the number is right where it has been seen and honestly caveated where it
+ *   has not. A single reading with ATF > 60 °C (a sustained grade / tow), ideally cross-checked
+ *   against a STAR/Xentry ATF value for a second anchor, is what promotes it (OBD-51 residual).
  *
- * It is **not a displayed channel**: the app already reads engine coolant from SAE `0105`, and
- * publishing a second, TCU-side copy of it would put two subtly different coolant numbers on one
- * dashboard. It exists as [tcuCoolantCelsius], `internal`, purely as a test-time consistency
- * probe on the record's framing — if reassembly ever shifts, this anchor moves off 92/91/97 and
- * says so before a *transmission* temperature does.
+ * This retires the falsified X-Gauge hypothesis. [MercedesPidRegistry.transTemp] decoded record
+ * byte 0 (`raw − 50`), which the capture shows is `0x00` → −50 °C; it is removed from the polled
+ * catalog and `PidIds.TRANS_TEMP` now resolves to this record channel (OBD-55).
  *
- * ## Byte 18 — the channel, and why it ships unverified
+ * ## Byte 11 — the coolant anchor that keeps the framing honest
  *
- * Byte 18 read `86` = **84 °C** under the same `raw − 50`. Plausible for a warm 722.9, and
- * consistent with its thermostatic cooler regulation (~85 °C setpoint). But it did not move:
- * `0x86` through idle, through a 90-second converter stall, and through a 15-minute drive.
- *
- * Rock-steady is exactly what a correctly-regulated warm transmission looks like — and also
- * exactly what a **hard-coded setpoint constant** looks like. The capture cannot tell those apart,
- * so [transTempRecord]'s definition carries `verified = false` and this module says so rather
- * than shipping a confident 84 °C.
- *
- * 🖐 **The proof is one cold-start capture** (`issues/OBD-49.md`): a single `2130` poll on a cold
- * morning, before driving. Byte 18 near ambient `+ 50` and then climbing toward `0x86` proves the
- * field, the offset and the encoding in one shot. Byte 18 still reading `0x86` stone cold proves
- * it is a constant, and the search moves on.
- *
- * ## Why this does not replace [MercedesPidRegistry.transTemp]
- *
- * Both decode the same `21 30` request, and they disagree about where the temperature is: the
- * X-Gauge `RXD 1808` says the byte immediately after `61 30` (record byte 0), this capture says
- * record byte 18. The capture is the better evidence — record byte 0 is `0x00`, i.e. −50 °C — but
- * the two definitions are kept apart under different ids, and this one is **not** in
- * [PidCatalog.polled], because promoting it is a change to a displayed channel that should follow
- * the cold-start proof rather than precede it. See `MODULE.md`'s known limitations, which records
- * the consequence of leaving the older decode wired up.
+ * Byte 11 read `raw − 50` = engine coolant, rising with the drive and matching SAE `0105`. It is
+ * **not a displayed channel** — the app already shows coolant from `0105`, and a second, subtly
+ * different TCU-side copy on one dashboard is a defect, not a feature. It exists as
+ * [tcuCoolantCelsius], `internal`, purely as a test-time consistency probe on the record's framing:
+ * across the captured records it must read its known coolant values, and a reassembly that shifts
+ * by a byte cannot keep them all — it would move byte 1 off the transmission temperature at the
+ * same time, so this anchor is the tripwire.
  */
 object TcuRecordRegistry {
     /** Record byte 11: TCU-side engine coolant. Test-only anchor — see the class KDoc. */
     internal const val TCU_COOLANT_BYTE = 11
 
-    /** Record byte 18: the transmission-temperature candidate. */
-    const val TRANS_TEMP_BYTE = 18
+    /**
+     * Record byte 1: transmission fluid temperature (OBD-55, identified on-vehicle 2026-08-13).
+     *
+     * Repointed from byte 18 by the drive test: byte 18 was a rock-steady status byte, byte 1
+     * tracked thermal state and decoupled from coolant.
+     */
+    const val TRANS_TEMP_BYTE = 1
 
     /** Record bytes that follow `61 30`: 26 service bytes less the 2-byte response header. */
     const val RECORD_DATA_BYTES = 24
 
     /**
-     * The Mercedes temperature offset: `°C = raw − 50`.
+     * The Mercedes coolant temperature offset: `°C = raw − 50`.
      *
      * Not a fresh guess — it is the constant OBD-15 solved for out of the ScanGauge `MTH` field
      * (`raw × 9/5 − 58` is the °F conversion of a `raw − 50` °C byte, exactly, on integers), and
-     * that byte 11 independently corroborates against engine coolant in this very record.
+     * that byte 11 independently corroborates against engine coolant in this very record. Applies
+     * to the coolant anchor ([tcuCoolantCelsius]); the transmission channel uses
+     * [TRANS_TEMP_OFFSET] under an **inverse** law — see the class KDoc.
      */
     const val CELSIUS_OFFSET = 50.0
 
     /**
-     * Transmission fluid temperature from the `21 30` record, °C, **unverified**.
+     * The transmission-fluid inverse offset: `°C = 63 − raw` (OBD-55).
+     *
+     * Solid, unlike the slope: anchored on the cold-soak = ambient reading (`raw 0x2D → 18 °C`, so
+     * `45 + 18 = 63`). The `1 °C/count` slope of `63 − raw` is provisional — see the class KDoc.
+     */
+    const val TRANS_TEMP_OFFSET = 63.0
+
+    /**
+     * Transmission fluid temperature from the `21 30` record, °C, **unverified** (slope
+     * provisional — see the class KDoc).
+     *
+     * Owns [PidIds.TRANS_TEMP] (OBD-55): this is the polled, displayed trans-temp channel now that
+     * the X-Gauge byte-0 decode is retired.
      *
      * `SLOW`: transmission fluid has minutes of thermal inertia, and this is a five-command
      * header-scoped sequence — spending one every cycle would crowd out the channels that
@@ -97,7 +104,7 @@ object TcuRecordRegistry {
         KwpRecordSpec(
             definition =
                 PidDefinition(
-                    id = ProtocolPidIds.TRANS_TEMP_RECORD,
+                    id = PidIds.TRANS_TEMP,
                     label = "Trans",
                     unit = MeasurementUnit.CELSIUS,
                     request =
@@ -106,9 +113,10 @@ object TcuRecordRegistry {
                             rxFilter = TCU_RESPONSE_ID,
                             request = REQUEST_BYTES,
                         ),
-                    parse = { data -> VendoredSaeScaling.dataByte(data, TRANS_TEMP_BYTE) - CELSIUS_OFFSET },
+                    parse = { data -> TRANS_TEMP_OFFSET - VendoredSaeScaling.dataByte(data, TRANS_TEMP_BYTE) },
                     pollPriority = PollPriority.SLOW,
-                    // The cold-start capture (🖐 OBD-49) flips this, and nothing else may.
+                    // Slope is assumed, not measured (offset anchored on cold=ambient; >60 °C
+                    // untested). A hot cross-checked sample flips this (🖐 OBD-51), nothing else may.
                     verified = false,
                 ),
             canId = TCU_CAN_ID,
@@ -118,16 +126,19 @@ object TcuRecordRegistry {
             dataByteIndex = TRANS_TEMP_BYTE,
         )
 
-    /** Transmission temperature from [record], °C. The value [transTempRecord] publishes. */
-    fun transTempCelsius(record: KwpRecord): Double = record.byteAt(TRANS_TEMP_BYTE) - CELSIUS_OFFSET
+    /**
+     * Transmission temperature from [record], °C — the inverse law `63 − raw` at byte 1. The value
+     * [transTempRecord] publishes.
+     */
+    fun transTempCelsius(record: KwpRecord): Double = TRANS_TEMP_OFFSET - record.byteAt(TRANS_TEMP_BYTE)
 
     /**
      * TCU-side engine coolant from [record], °C.
      *
      * **Not a displayed channel and deliberately `internal`** — engine coolant comes from SAE
-     * `0105`. This is the framing consistency probe described in the class KDoc: across the three
-     * captured records it must read 92, 91 and 97 °C, and a reassembly that shifts by a byte
-     * cannot keep all three.
+     * `0105`. This is the framing consistency probe described in the class KDoc: across the captured
+     * records it must read the coolant values the session wrote down, and a reassembly that shifts
+     * by a byte cannot keep all of them.
      */
     internal fun tcuCoolantCelsius(record: KwpRecord): Double = record.byteAt(TCU_COOLANT_BYTE) - CELSIUS_OFFSET
 

@@ -33,7 +33,8 @@ class KwpRecordRequesterTest {
 
             assertTrue("expected a record, got $outcome", outcome is RecordOutcome.Received)
             assertEquals(
-                84.0,
+                // 2026-08-12 warm idle: byte 1 = 0x13 → 63 − 19 = 44 °C (OBD-55 inverse law).
+                44.0,
                 TcuRecordRegistry.transTempCelsius((outcome as RecordOutcome.Received).record),
                 0.0,
             )
@@ -44,18 +45,27 @@ class KwpRecordRequesterTest {
     @Test
     fun `poll scales the record through the definition and answers as an ordinary PollOutcome`() =
         runTest {
-            val link = FakeObdLink(answering(TcuRecordCaptures.POST_DRIVE))
+            // Session-3 post-drive: byte 1 = 0x12 → 45 °C under 63 − raw.
+            val link = FakeObdLink(answering(TcuRecordCaptures.S3_POST_DRIVE))
 
-            assertEquals(PollOutcome.Value(84.0), KwpRecordRequester(link).poll(spec))
+            assertEquals(PollOutcome.Value(45.0), KwpRecordRequester(link).poll(spec))
         }
 
     @Test
-    fun `all three captured records survive a full framed exchange`() =
+    fun `the session-3 anchors each survive a full framed exchange`() =
         runTest {
-            for ((name, capture) in TcuRecordCaptures.ALL_RECORDS) {
+            // 63 − raw at byte 1: warm idle 0x23 → 28, post-drive and heat-soak 0x12 → 45.
+            val anchors =
+                listOf(
+                    "warm idle" to (TcuRecordCaptures.S3_WARM_IDLE to 28.0),
+                    "post-drive" to (TcuRecordCaptures.S3_POST_DRIVE to 45.0),
+                    "heat-soak" to (TcuRecordCaptures.S3_HEAT_SOAK to 45.0),
+                )
+            for ((name, cap012) in anchors) {
+                val (capture, expected) = cap012
                 val link = FakeObdLink(answering(capture))
 
-                assertEquals(name, PollOutcome.Value(84.0), KwpRecordRequester(link).poll(spec))
+                assertEquals(name, PollOutcome.Value(expected), KwpRecordRequester(link).poll(spec))
             }
         }
 
@@ -146,7 +156,7 @@ class KwpRecordRequesterTest {
             val link = RecordingObdLink(FakeObdLink(answering(TcuRecordCaptures.WARM_IDLE)))
             val requester = KwpRecordRequester(link, Mode22Config(rxFilterEnabled = false))
 
-            assertEquals(PollOutcome.Value(84.0), requester.poll(spec))
+            assertEquals(PollOutcome.Value(44.0), requester.poll(spec))
             assertEquals(listOf("ATSH7E1", "2130", "ATSH7DF"), link.commands)
         }
 
@@ -173,11 +183,12 @@ class KwpRecordRequesterTest {
     }
 
     @Test
-    fun `the channel ships unverified until the cold-start capture proves byte 18`() {
-        // The one assertion in this file that is about restraint rather than capability: byte 18
-        // sat at 0x86 through idle, a converter stall and a 15-minute drive, which is what a
-        // regulated warm transmission AND a hard-coded setpoint both look like.
-        assertFalse("byte 18 is a candidate, not a proof", spec.definition.verified)
+    fun `the channel ships unverified because the slope is provisional`() {
+        // The one assertion in this file about restraint rather than capability. OBD-55 identified
+        // byte 1 and pinned the offset (cold soak = ambient), but the 1 °C/count slope is assumed,
+        // not measured — the drive only reached ~45 °C — so the channel ships unverified until a
+        // hot cross-checked sample lands (OBD-51).
+        assertFalse("the slope above ~60 °C is untested", spec.definition.verified)
         assertEquals(TcuRecordRegistry.TRANS_TEMP_BYTE, spec.dataByteIndex)
     }
 

@@ -32,15 +32,11 @@ object ProtocolPidIds {
     /** Throttle position (standard PID `0111`), percent. See [PidRegistry.throttlePosition]. */
     const val THROTTLE: String = "throttle"
 
-    /**
-     * Transmission fluid temperature read out of the TCU's KWP `21 30` record (OBD-49), °C.
-     *
-     * Deliberately **not** [com.revel.obdgauge.model.PidIds.TRANS_TEMP]: that id belongs to the
-     * X-Gauge-derived hypothesis in [MercedesPidRegistry], and the two are different decodes of
-     * the same request. See [TcuRecordRegistry] for which one the 2026-08-12 capture supports and
-     * why this branch does not silently swap them.
-     */
-    const val TRANS_TEMP_RECORD: String = "transTempRecord"
+    // Transmission fluid temperature is `com.revel.obdgauge.model.PidIds.TRANS_TEMP` — since OBD-55
+    // that frozen id resolves to the KWP `21 30` record channel ([TcuRecordRegistry]), which the
+    // 2026-08-13 drive test identified. The former protocol-local `TRANS_TEMP_RECORD` alias existed
+    // only while the record decode and the falsified X-Gauge decode coexisted under different ids;
+    // the id swap removed that split, so no separate constant is needed.
 
     // --- OBD-50 (session 2, 2026-08-13): live-verified standard PIDs with no dashboard gauge ---
 

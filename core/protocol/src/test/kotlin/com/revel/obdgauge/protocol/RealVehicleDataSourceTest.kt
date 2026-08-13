@@ -9,6 +9,7 @@ import com.revel.obdgauge.model.PollPriority
 import com.revel.obdgauge.model.Reading
 import com.revel.obdgauge.testing.link.FakeObdLink
 import com.revel.obdgauge.testing.link.Fault
+import com.revel.obdgauge.testing.link.TranscriptEntry
 import com.revel.obdgauge.testing.link.TranscriptParser
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
@@ -262,28 +263,27 @@ class RealVehicleDataSourceTest {
     @Test
     fun `a falsified decode is never requested and never stored, only announced`() =
         runTest {
-            // The round-1 review's closing argument, as a test. The van DOES answer 2130 — this
-            // is not an unsupported PID — but the X-Gauge decode wired to `transTemp` reads
-            // record byte 0, which the capture shows is 0x00, i.e. −50 °C. An answer here would
-            // be misread by construction, so the request must not go out at all and no Reading
-            // may be stored. Polling it "for discoverability" (the UnsupportedByVehicle rule)
-            // buys nothing: what the byte means is already known.
+            // The round-1 review's closing argument, as a test. A channel whose decode is known
+            // wrong must not reach the wire and must store no Reading — an answer would be misread
+            // by construction and render a plausible wrong number. OBD-55 repointed this from
+            // PidIds.TRANS_TEMP (now a live, identified channel) to a synthetic falsified probe:
+            // the gate is the subject, and it is spec-agnostic. See FALSIFIED_PROBE.
             val link = RecordingObdLink(FakeObdLink(transcript))
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
+            source.start(listOf(def(PidIds.RPM), def(FALSIFIED_PROBE_ID)))
             runCurrent()
             runCycles(5)
 
             val polls = link.commands.drop(INIT_COMMANDS.size)
             assertFalse("the header must never be set for a falsified channel: $polls", "ATSH7E1" in polls)
             assertFalse("and the request must never go out: $polls", "2130" in polls)
-            assertNull("nothing may be stored under it", source.readings.value[PidIds.TRANS_TEMP])
+            assertNull("nothing may be stored under it", source.readings.value[FALSIFIED_PROBE_ID])
             assertTrue(
                 "the verdict is announced once, at plan time",
                 events.any {
                     it is PollEvent.ChannelAvailabilityChanged &&
-                        it.id == PidIds.TRANS_TEMP &&
+                        it.id == FALSIFIED_PROBE_ID &&
                         it.availability is ChannelAvailability.DecodeFalsified
                 },
             )
@@ -304,7 +304,7 @@ class RealVehicleDataSourceTest {
             val link = RecordingObdLink(FakeObdLink(transcript))
             val source = sourceFor(link)
 
-            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP), def(PidIds.COOLANT)))
+            source.start(listOf(def(PidIds.RPM), def(FALSIFIED_PROBE_ID), def(PidIds.COOLANT)))
             runCurrent()
 
             assertEquals(listOf("010C", "0105"), link.commands.drop(INIT_COMMANDS.size))
@@ -312,6 +312,36 @@ class RealVehicleDataSourceTest {
                 COOLANT_C,
                 source.readings.value
                     .getValue(PidIds.COOLANT)
+                    .value,
+                TOLERANCE,
+            )
+        }
+
+    @Test
+    fun `the trans-temp record channel is polled as its framed sequence and shows its value`() =
+        runTest {
+            // OBD-55: PidIds.TRANS_TEMP now resolves to the KWP `21 30` record channel. It runs the
+            // same five-command framed sequence a mode-22 poll does, and its byte-1 value lands on
+            // the gauge — the inverse of the falsified-gate test above. The shared fixture answers
+            // 2130 as a single frame; the record channel needs a real multi-frame block, so swap in
+            // the session-3 post-drive record (byte 1 = 0x12 → 63 − 18 = 45 °C).
+            val recordScript =
+                transcript.filterNot { it.command == "2130" } +
+                    TranscriptEntry("2130", TcuRecordCaptures.S3_POST_DRIVE)
+            val link = RecordingObdLink(FakeObdLink(recordScript))
+            val source = sourceFor(link)
+
+            source.start(listOf(def(PidIds.RPM), def(PidIds.TRANS_TEMP)))
+            runCurrent()
+
+            assertEquals(
+                listOf("010C", "ATSH7E1", "ATCRA7E9", "2130", "ATCRA", "ATSH7DF"),
+                link.commands.drop(INIT_COMMANDS.size),
+            )
+            assertEquals(
+                45.0,
+                source.readings.value
+                    .getValue(PidIds.TRANS_TEMP)
                     .value,
                 TOLERANCE,
             )
@@ -591,7 +621,15 @@ class RealVehicleDataSourceTest {
             config = config,
             clock = clock,
             onEvent = events::add,
-            extraChannels = listOf(PolledPid.Manufacturer(PIPELINE_CHANNEL)),
+            overrides =
+                TestOverrides(
+                    extraChannels =
+                        listOf(
+                            PolledPid.Manufacturer(PIPELINE_CHANNEL),
+                            PolledPid.Manufacturer(FALSIFIED_PROBE),
+                        ),
+                    extraFalsified = setOf(FALSIFIED_PROBE_ID),
+                ),
         )
 
     /** Starts a source, runs init plus cycle 0, and hands it back ready to assert on. */
@@ -689,6 +727,24 @@ class RealVehicleDataSourceTest {
         val PIPELINE_CHANNEL: Mode22PidSpec =
             MercedesPidRegistry.transTemp.let { source ->
                 source.copy(definition = source.definition.copy(id = PIPELINE_CHANNEL_ID))
+            }
+
+        /** A synthetic id the test marks falsified via `extraFalsified`, to exercise the gate. */
+        const val FALSIFIED_PROBE_ID = "falsifiedProbe"
+
+        /**
+         * A manufacturer channel these tests use to exercise the *falsified-decode gate*.
+         *
+         * OBD-55 change. `PidIds.TRANS_TEMP` used to be the gate's real subject, but its decode was
+         * identified on-vehicle and it is now a live channel — so the gate's own set is empty and
+         * would go untested. The behaviour the gate tests cover (a falsified id is never framed,
+         * never sent, never stored, only announced) is spec-agnostic, so it gets a synthetic
+         * vehicle of its own — resolvable via `extraChannels`, marked falsified via
+         * `extraFalsified` — rather than losing coverage to the id swap. Mirrors [PIPELINE_CHANNEL].
+         */
+        val FALSIFIED_PROBE: Mode22PidSpec =
+            MercedesPidRegistry.transTemp.let { source ->
+                source.copy(definition = source.definition.copy(id = FALSIFIED_PROBE_ID))
             }
     }
 }

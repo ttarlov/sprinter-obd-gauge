@@ -9,10 +9,11 @@ import org.junit.Test
 
 class PidCatalogTest {
     @Test
-    fun `the catalog covers both registries and the computed channel`() {
+    fun `the catalog covers the registries, the record channel and the computed channel`() {
         val ids = PidCatalog.definitions.map { it.id }
 
-        assertEquals(PidRegistry.all.size + MercedesPidRegistry.all.size + 1, ids.size)
+        // Standard PIDs + the (now-empty) mode-22 registry + the trans-temp record channel + boost.
+        assertEquals(PidRegistry.all.size + MercedesPidRegistry.all.size + 2, ids.size)
         assertEquals(ids.distinct(), ids)
         assertTrue(ids.containsAll(PidRegistry.definitions.map { it.id }))
         assertTrue(PidIds.TRANS_TEMP in ids)
@@ -20,14 +21,15 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `standard PIDs resolve to their wire spec, manufacturer PIDs to theirs`() {
+    fun `standard PIDs resolve to their wire spec, the trans channel to its KWP record`() {
         val coolant = PidCatalog.byId(PidIds.COOLANT)
         val transTemp = PidCatalog.byId(PidIds.TRANS_TEMP)
 
         assertTrue(coolant is PolledPid.Standard)
         assertEquals("0105", (coolant as PolledPid.Standard).spec.command)
-        assertTrue(transTemp is PolledPid.Manufacturer)
-        assertEquals("2130", (transTemp as PolledPid.Manufacturer).spec.requestBytes)
+        // OBD-55: TRANS_TEMP now resolves to the byte-1 KWP record, not the retired X-Gauge spec.
+        assertTrue(transTemp is PolledPid.Record)
+        assertEquals("2130", (transTemp as PolledPid.Record).spec.requestBytes)
     }
 
     @Test
@@ -40,7 +42,10 @@ class PidCatalogTest {
     fun `verification status is exposed for the UI to badge`() {
         assertTrue(PidCatalog.isVerified(PidIds.COOLANT))
         assertTrue(PidCatalog.isVerified(PidIds.RPM))
-        assertFalse("the mode-22 hypothesis must badge as unverified", PidCatalog.isVerified(PidIds.TRANS_TEMP))
+        assertFalse(
+            "the record decode ships unverified — the slope is provisional (OBD-55)",
+            PidCatalog.isVerified(PidIds.TRANS_TEMP),
+        )
     }
 
     @Test
@@ -95,22 +100,20 @@ class PidCatalogTest {
     }
 
     @Test
-    fun `the falsified X-Gauge trans decode is reported as falsified, with its evidence`() {
-        val trans = PidCatalog.availabilityOf(PidIds.TRANS_TEMP)
-
-        assertTrue("expected DecodeFalsified, was $trans", trans is ChannelAvailability.DecodeFalsified)
-        val evidence = (trans as ChannelAvailability.DecodeFalsified).evidence
-        assertTrue("the verdict must cite the capture that produced it: $evidence", evidence.contains("2026-08-12"))
-        assertTrue("and point at the decode that replaces it: $evidence", evidence.contains("18"))
+    fun `the identified trans decode is available, no longer falsified`() {
+        // OBD-55: the 2026-08-13 drive test identified the field (record byte 1, 63 − raw), so
+        // TRANS_TEMP left FALSIFIED_DECODES and is a live, pollable channel again. It is
+        // unverified (slope provisional), which availabilityOf does not speak to — see isVerified.
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.TRANS_TEMP))
     }
 
     @Test
-    fun `falsified is a different verdict from unsupported, because the van does answer`() {
-        // 010B MAP: the van says nothing. 2130: the van answers, and we know we misread it.
-        // A UI renders those differently ("unavailable" vs "pending verification"), and the
-        // poll loop treats them differently (MAP is still polled, trans temp is not).
+    fun `an unsupported channel and an identified one are distinct verdicts`() {
+        // 010B MAP: the van says nothing (unsupported, but still polled for discoverability).
+        // 2130: the van answers and OBD-55 identified the field, so it is Available and polled —
+        // no longer the DecodeFalsified it was while the byte-0 decode stood.
         assertTrue(PidCatalog.availabilityOf(ProtocolPidIds.MAP) is ChannelAvailability.UnsupportedByVehicle)
-        assertTrue(PidCatalog.availabilityOf(PidIds.TRANS_TEMP) is ChannelAvailability.DecodeFalsified)
+        assertEquals(ChannelAvailability.Available, PidCatalog.availabilityOf(PidIds.TRANS_TEMP))
     }
 
     @Test

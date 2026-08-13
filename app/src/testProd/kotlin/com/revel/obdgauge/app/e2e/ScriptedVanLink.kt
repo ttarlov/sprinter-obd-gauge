@@ -99,6 +99,27 @@ class ScriptedVanLink(
                 "0133" to listOf("41 33 52", "41 33 52"), // 82 kPa ≈ 5 800 ft
                 "010B" to listOf("NO DATA"), // MAP unsupported → boost has no inputs
                 "010F" to listOf("NO DATA"), // IAT unsupported
+                // ---- the KWP `21 30` TCU record, framed and restored (OBD-55) ----
+                // The trans-temp field was IDENTIFIED on the 2026-08-13 drive test
+                // (docs/hardware/session-3-2026-08-13-transtemp.md): record byte 1, °C = 63 − raw.
+                // This replays that session's post-drive record so the whole prod chain shows a
+                // real trans-temp value — the crown-jewel decode going live.
+                "ATSH7E1" to listOf("OK"),
+                "ATCRA7E9" to listOf("OK"),
+                "ATCRA" to listOf("OK"),
+                "ATSH7DF" to listOf("OK"),
+                "2130" to listOf(TRANS_TEMP_RECORD_POST_DRIVE),
             )
+
+        /**
+         * The 2026-08-13 post-drive `21 30` record, headers-on, byte for byte: record byte 1
+         * `0x12` → **45 °C** (63 − 18), byte 11 `0x91` → 95 °C TCU-side coolant. Four CAN frames,
+         * one trailing `FF` of padding past the declared 26.
+         */
+        const val TRANS_TEMP_RECORD_POST_DRIVE: String =
+            "7E9 10 1A 61 30 00 12 00 FF\r" +
+                "7E9 21 00 00 00 08 04 00 DD\r" +
+                "7E9 22 91 00 00 00 00 00 00\r" +
+                "7E9 23 86 10 00 08 00 00 FF"
     }
 }

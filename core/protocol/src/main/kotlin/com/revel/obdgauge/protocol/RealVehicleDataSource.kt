@@ -82,22 +82,10 @@ class RealVehicleDataSource internal constructor(
     private val clock: Clock,
     private val onEvent: (PollEvent) -> Unit,
     /**
-     * Channels resolvable in addition to [PidCatalog]'s. **Always empty in production**, and
-     * unreachable outside this module — the public constructor below cannot set it.
-     *
-     * It exists because the round-1 review's falsified-decode gate takes the catalog's *only*
-     * manufacturer channel out of circulation: `transTemp`'s X-Gauge decode was falsified, so it
-     * is never sent and never stored. That would silently delete the coverage of the manufacturer
-     * *pipeline* — the five-command framed sequence running inside a cycle, a rejected `ATSH`
-     * costing only that channel, an unacknowledged restore being retried — which is scheduler
-     * behaviour that has nothing to do with which spec rides on it. Tests supply their own
-     * vehicle for that pipeline rather than the pipeline going untested.
-     *
-     * The property `start` is built on survives intact: `start` still takes only ids, framing and
-     * scaling still come from a registry rather than from a caller's lambda, and `:app` cannot
-     * reach this list at all.
+     * Test-only catalog overrides. **Always [TestOverrides.NONE] in production**, and unreachable
+     * outside this module — the public constructor below cannot set it. See [TestOverrides].
      */
-    private val extraChannels: List<PolledPid>,
+    private val overrides: TestOverrides,
 ) : VehicleDataSource {
     constructor(
         link: ObdLink,
@@ -105,7 +93,7 @@ class RealVehicleDataSource internal constructor(
         config: PollConfig = PollConfig(),
         clock: Clock = Clock.systemUTC(),
         onEvent: (PollEvent) -> Unit = {},
-    ) : this(link, scope, config, clock, onEvent, emptyList())
+    ) : this(link, scope, config, clock, onEvent, TestOverrides.NONE)
 
     private val mutableReadings = MutableStateFlow<Map<String, Reading>>(emptyMap())
     override val readings: StateFlow<Map<String, Reading>> = mutableReadings.asStateFlow()
@@ -152,7 +140,7 @@ class RealVehicleDataSource internal constructor(
         val needed = requested.flatMap { id -> listOf(id) + PidCatalog.dependenciesOf(id) }.distinct()
         val polled =
             needed.mapNotNull { id ->
-                val resolved = PidCatalog.byId(id) ?: extraChannels.firstOrNull { it.definition.id == id }
+                val resolved = PidCatalog.byId(id) ?: overrides.extraChannels.firstOrNull { it.definition.id == id }
                 if (resolved == null && id != PidIds.BOOST) {
                     onEvent(PollEvent.UnknownPid(id))
                 }
@@ -182,12 +170,27 @@ class RealVehicleDataSource internal constructor(
      */
     private fun reportUnavailable(needed: List<String>) {
         for (id in needed) {
-            val availability = PidCatalog.availabilityOf(id)
+            val availability = availabilityOf(id)
             if (availability != ChannelAvailability.Available) {
                 onEvent(PollEvent.ChannelAvailabilityChanged(id, availability))
             }
         }
     }
+
+    /**
+     * [PidCatalog.availabilityOf], with any test-injected [extraFalsified] ids folded in as
+     * [ChannelAvailability.DecodeFalsified]. Production passes no extras, so this is exactly the
+     * catalog's answer; the seam exists only to keep the falsified-decode gate testable now that
+     * the catalog's own set is empty (OBD-55). Both the plan-time announcement and the poll-time
+     * gate go through here, so a synthetic falsified channel is announced and blocked identically
+     * to a real one.
+     */
+    private fun availabilityOf(id: String): ChannelAvailability =
+        if (id in overrides.extraFalsified) {
+            ChannelAvailability.DecodeFalsified("synthetic falsified channel (test seam); see TestOverrides")
+        } else {
+            PidCatalog.availabilityOf(id)
+        }
 
     private suspend fun runSession(plan: PollPlan) {
         val samples = mutableMapOf<String, Sample>()
@@ -195,14 +198,14 @@ class RealVehicleDataSource internal constructor(
             publish(samples, plan, forceStale = true)
             return
         }
-        val requester = Mode22Requester(link, config.mode22)
+        val requesters = Requesters(Mode22Requester(link, config.mode22), KwpRecordRequester(link, config.mode22))
         var cycle = 0
         while (currentCoroutineContext().isActive) {
-            if (!requester.restoreHeaders()) {
+            if (!requesters.restoreHeaders()) {
                 onEvent(PollEvent.HeaderRestoreFailed)
             }
             for (pid in PollSchedule.cycleMembers(plan.polled, cycle, config.slowEveryNCycles)) {
-                if (!applyPoll(pid, requester, samples)) {
+                if (!applyPoll(pid, requesters, samples)) {
                     publish(samples, plan, forceStale = true)
                     return
                 }
@@ -235,7 +238,7 @@ class RealVehicleDataSource internal constructor(
      */
     private suspend fun applyPoll(
         pid: PolledPid,
-        requester: Mode22Requester,
+        requesters: Requesters,
         samples: MutableMap<String, Sample>,
     ): Boolean {
         val id = pid.definition.id
@@ -243,11 +246,12 @@ class RealVehicleDataSource internal constructor(
         // sent nor stored — unlike an unsupported PID (polled for discoverability), an answer
         // here would be misread by construction, and the misreading renders a plausible-looking
         // wrong number. The plan-time ChannelAvailabilityChanged(DecodeFalsified) announcement
-        // is the one signal; per-cycle re-announcement would be noise.
-        if (PidCatalog.availabilityOf(id) is ChannelAvailability.DecodeFalsified) {
+        // is the one signal; per-cycle re-announcement would be noise. (Empty in prod since
+        // OBD-55; see [availabilityOf] and [extraFalsified].)
+        if (availabilityOf(id) is ChannelAvailability.DecodeFalsified) {
             return true
         }
-        return when (val outcome = poll(pid, requester)) {
+        return when (val outcome = poll(pid, requesters)) {
             is PollOutcome.Value -> {
                 samples[id] = Sample(outcome.value, Instant.now(clock), pid.definition.pollPriority)
                 true
@@ -276,15 +280,20 @@ class RealVehicleDataSource internal constructor(
      */
     private suspend fun poll(
         pid: PolledPid,
-        requester: Mode22Requester,
+        requesters: Requesters,
     ): PollOutcome =
         when (pid) {
-            is PolledPid.Manufacturer -> requester.request(pid.spec)
+            is PolledPid.Manufacturer -> requesters.mode22.request(pid.spec)
+            // A KWP record (OBD-55: the trans-temp channel) frames its own ATSH/ATCRA sequence and
+            // restores after, exactly like the mode-22 arm — it differs only in that the answer is
+            // a multi-frame block scaled by field offset, which KwpRecordRequester owns.
+            is PolledPid.Record -> requesters.record.poll(pid.spec)
             is PolledPid.Standard -> {
-                // A failed header restore from a mode-22 poll earlier in THIS cycle must not
+                // A failed header restore from a framed poll earlier in THIS cycle must not
                 // leave this standard query addressed to 7E1 (review round-1 M1): retry the
-                // restore first. No-op when nothing is pending, so the happy path pays nothing.
-                if (!requester.restoreHeaders()) {
+                // restore on BOTH framed requesters first. No-op when nothing is pending, so the
+                // happy path pays nothing.
+                if (!requesters.restoreHeaders()) {
                     onEvent(PollEvent.HeaderRestoreFailed)
                 }
                 when (val raw = link.sendCatching(pid.spec.command, config.commandTimeout)) {
@@ -332,6 +341,52 @@ class RealVehicleDataSource internal constructor(
         // as "engine not pulling" and is indistinguishable from a real measurement. See
         // [ChannelAvailability]; [reportUnavailable] is what tells a consumer why.
         mutableReadings.value = if (boost == null) polled else polled + (boost.id to boost)
+    }
+}
+
+/**
+ * Test-only catalog overrides for [RealVehicleDataSource], both empty in production and reachable
+ * only through its `internal` constructor — `:app` gets the public constructor, which passes
+ * [NONE]. Two seams that keep coverage the OBD-55 catalog would otherwise lose:
+ *
+ * - [extraChannels] — channels resolvable in addition to [PidCatalog]'s. `MercedesPidRegistry.all`
+ *   is empty since the trans decode moved to a KWP record, so the manufacturer *pipeline* (framed
+ *   sequence in a cycle, `ATSH` rejection costing only that channel, restore retry) has no
+ *   production spec to ride; tests supply a synthetic one rather than let it go untested.
+ * - [extraFalsified] — ids to treat as [ChannelAvailability.DecodeFalsified] on top of
+ *   [PidCatalog]'s (now-empty) set, so the falsified-decode gate itself stays tested.
+ *
+ * The property `start` is built on survives either way: it still takes only ids, and framing and
+ * scaling still come from a registry rather than a caller's lambda.
+ */
+internal data class TestOverrides(
+    val extraChannels: List<PolledPid> = emptyList(),
+    val extraFalsified: Set<String> = emptySet(),
+) {
+    companion object {
+        val NONE = TestOverrides()
+    }
+}
+
+/**
+ * The two physically-addressed request paths a session may need, sharing the poll loop's restore
+ * discipline. A mode-22 single-frame read ([Mode22Requester]) and a KWP multi-frame record read
+ * ([KwpRecordRequester]) each own a [HeaderScope], so a restore left pending by one must be picked
+ * up whoever polls next — [restoreHeaders] fixes up both.
+ */
+private class Requesters(
+    val mode22: Mode22Requester,
+    val record: KwpRecordRequester,
+) {
+    /**
+     * Restores default headers on both paths. Both calls always run — a `&&` would short-circuit
+     * and skip the record path's restore whenever the mode-22 one reported not-yet-clean — and the
+     * combined result is "both are known clean".
+     */
+    suspend fun restoreHeaders(): Boolean {
+        val mode22Clean = mode22.restoreHeaders()
+        val recordClean = record.restoreHeaders()
+        return mode22Clean && recordClean
     }
 }
 

@@ -31,6 +31,17 @@ sealed interface PolledPid {
     ) : PolledPid {
         override val definition: PidDefinition get() = spec.definition
     }
+
+    /**
+     * A KWP `21 xx` **record** channel from [TcuRecordRegistry] — the same `ATSH`/`ATCRA` framing
+     * as [Manufacturer], but its answer is a multi-frame block a field is read out of by offset,
+     * not a single-frame value. The trans-temp channel (OBD-55) rides this arm.
+     */
+    data class Record(
+        val spec: KwpRecordSpec,
+    ) : PolledPid {
+        override val definition: PidDefinition get() = spec.definition
+    }
 }
 
 /**
@@ -79,9 +90,19 @@ sealed interface PolledPid {
  * knowledge, and because a second vehicle would want a second table — not a scattering of `if`s.
  */
 object PidCatalog {
-    /** Every channel that is actually polled: standard PIDs first, then manufacturer PIDs. */
+    /**
+     * Every channel that is actually polled: standard PIDs, then manufacturer PIDs, then KWP
+     * record channels.
+     *
+     * The trans-temp channel is [TcuRecordRegistry.transTempRecord] (OBD-55): the on-vehicle
+     * identification of record byte 1 retired the falsified X-Gauge byte-0 decode, so
+     * [MercedesPidRegistry.all] no longer contributes a manufacturer channel and `PidIds.TRANS_TEMP`
+     * resolves here to the record arm.
+     */
     val polled: List<PolledPid> =
-        PidRegistry.all.map(PolledPid::Standard) + MercedesPidRegistry.all.map(PolledPid::Manufacturer)
+        PidRegistry.all.map(PolledPid::Standard) +
+            MercedesPidRegistry.all.map(PolledPid::Manufacturer) +
+            listOf(PolledPid.Record(TcuRecordRegistry.transTempRecord))
 
     /**
      * The computed boost channel, `MAP − baro` in kPa. See [ComputedChannels.boost].
@@ -173,21 +194,21 @@ object PidCatalog {
             "(docs/hardware/session-2026-08-12.md); the 0100 bitmap does not advertise it"
 
     /**
-     * Channels whose currently-wired decode was falsified against real hardware (round-1 review
-     * of OBD-43/49, 2026-08-12). Same falsification-list discipline as
-     * [UNSUPPORTED_BY_THIS_VEHICLE]: adding an id requires a capture in `docs/hardware/`.
+     * Channels whose currently-wired decode was falsified against real hardware. Same
+     * falsification-list discipline as [UNSUPPORTED_BY_THIS_VEHICLE]: adding an id requires a
+     * capture in `docs/hardware/`, and the [applyPoll][RealVehicleDataSource] gate keeps a listed
+     * channel off the wire entirely so a decode known to be wrong cannot render a plausible number.
      *
-     * `TRANS_TEMP`: the X-Gauge spec reads record byte 0, which the live capture shows is `0x00`
-     * — the decode renders −50 °C on this van. The true value lives at record byte 18
-     * ([TcuRecordRegistry], OBD-49), pending its 🖐 cold-start verification, after which the id
-     * is reassigned in one reviewed change and this entry is removed.
+     * **Empty since OBD-55.** `TRANS_TEMP` was the sole entry: the X-Gauge spec read record byte 0
+     * (`0x00` → −50 °C on this van). The 2026-08-13 drive test identified the true field at record
+     * byte 1 (`63 − raw`, [TcuRecordRegistry]), so the id was reassigned to that live channel and
+     * the falsified entry removed. The gate stays — it is the mechanism the next falsified decode
+     * (if one is ever found) plugs into — but nothing populates it today.
      */
-    private val FALSIFIED_DECODES: Set<String> = setOf(PidIds.TRANS_TEMP)
+    private val FALSIFIED_DECODES: Set<String> = emptySet()
 
     private const val FALSIFIED_EVIDENCE =
-        "X-Gauge byte-0 decode falsified by the 2026-08-12 capture (record byte 0 = 0x00 → " +
-            "−50 °C; docs/hardware/session-2026-08-12.md). Correct source: 21 30 record byte 18 " +
-            "(OBD-49), pending cold-start verification"
+        "decode falsified against a docs/hardware/ capture; the true field was not identified"
 
     private const val BOOST_PLACEHOLDER_MODE = 0x01
     private const val BOOST_PLACEHOLDER_PID = 0x0B
