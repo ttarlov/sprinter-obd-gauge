@@ -4,7 +4,7 @@ title: Trans-temp gauge goes live — record 21 30 byte 1, retire falsified X-Ga
 module: core/protocol
 owner: protocol-agent
 sprint: backlog
-status: in-progress
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
