@@ -29,3 +29,12 @@ UDS SESSION CHANGE, which the standing read-only charter excludes.
 ## If approved
 Parked discovery session: sweep candidates, identify MAP (idle ≈ baro 82 kPa, blips with
 throttle), commit fixtures, wire boost's MissingInputs → Available.
+
+## Research update (2026-08-13, docs/hardware/research-2026-08-13-boost.md)
+Open-source hunt came back STRONG NEGATIVE: no working Mercedes-badged OM642 boost
+request exists publicly; likely security-access gated beyond 10 03 (Torque's own dev
+failed the analogous hunt over 18 months). REVISED plan: (1) FIRST run the free
+service-21 sweep at 7E0 in default session (community never tried it; no charter change;
+next van minute). (2) 10 03 decision de-prioritized — likely insufficient alone.
+(3) If 21 fails: Xentry-session sniff (big adventure, new decision) or aftermarket
+sensor; boost tile stays honestly unavailable meanwhile.
