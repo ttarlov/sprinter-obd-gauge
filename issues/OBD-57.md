@@ -22,8 +22,24 @@ Invert:  **MAP(kPa) = MAF(g/s) · R · T_charge(K) · 120 / (VE · Vdisp(L) · R
 test, do not hardcode a magic number.)  **Boost = MAP − BARO** (allow small vacuum; clamp
 MAP to a physical range e.g. [20, 260] kPa).
 
-Inputs (all confirmed-live, land via OBD-56): MAF 0166·A, IAT 0168·sensor1 (→K), RPM 010C,
-BARO 0133. Vdisp = 2.987 L.
+Inputs: MAF 0166·A, IAT 0168·sensor1 (→K), RPM 010C — all ECU, land via OBD-56. Vdisp 2.987 L.
+
+## BARO SOURCE (Taras 2026-08-13): ECU primary, PHONE fallback
+- **Primary: ECU baro PID 0133** — confirmed live (82 kPa this session), the ECU's own
+  sensor, perfectly matched to the MAP calc. Baro appears TWICE in the math: it's the MAP
+  reference (boost = MAP − baro) AND, since this van reports absolute MAP, the whole point.
+- **Fallback: the phone's barometer** (Android `Sensor.TYPE_PRESSURE`, present on the Pixel
+  — hPa → kPa) when 0133 is absent/stale. The van and phone share the same atmosphere at
+  the same altitude, so phone ambient pressure is a valid boost reference.
+- **Module split (keep ownership clean, avoid the OBD-50 cross-module mess):**
+  - :core:protocol stays SOURCE-AGNOSTIC — the boost computation takes a `baro` input
+    channel; it does not know or care where baro came from.
+  - A small :app/platform piece provides the baro Reading: ECU-0133 when present, else the
+    Android pressure sensor. This is where the fallback selection lives (an :app data
+    source that emits baro, ui-agent-owned).
+  - Availability: boost needs MAF+IAT+RPM (ECU) AND a baro from EITHER source. With the
+    phone fallback, baro is essentially always available → boost unavailable only when the
+    ECU airflow inputs are missing.
 
 ## What makes it HIGH QUALITY (not flat-VE)
 1. **VE(RPM) model, calibration-ready.** A volumetric-efficiency curve as a small
