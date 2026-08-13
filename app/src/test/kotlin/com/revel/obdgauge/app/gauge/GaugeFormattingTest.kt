@@ -45,4 +45,13 @@ class GaugeFormattingTest {
         val now = Instant.EPOCH
         assertEquals("last seen 0s ago", formatStaleText(reading, now))
     }
+
+    @Test
+    fun `captured text reports whole elapsed seconds regardless of staleness`() {
+        // OBD-27: unlike formatStaleText, this must render for a FRESH (non-stale) reading too —
+        // the raw-response viewer answers "when did this arrive," not "is it too old to trust."
+        val reading = Reading(id = "coolant", value = 190.0, timestamp = Instant.EPOCH, stale = false)
+        val now = Instant.EPOCH.plusSeconds(7)
+        assertEquals("captured 7s ago", formatCapturedText(reading, now))
+    }
 }

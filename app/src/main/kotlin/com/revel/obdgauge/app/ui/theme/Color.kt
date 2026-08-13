@@ -23,3 +23,17 @@ val GaugeRed = Color(0xFFE0524A)
 val GaugeNeutral = Color(0xFF9ECAFF)
 val GaugeTrackNeutral = Color(0xFF3A4150)
 val GaugeStaleDim = Color(0xFF6B7280)
+
+// OBD-27: unverified-PID badge. Deliberately its own hue, not a reuse of GaugeAmber/GaugeRed —
+// this badge answers "is this number proven," an axis completely orthogonal to "is this value
+// normal" (the green/amber/red threshold vocabulary above). Reusing amber/red here would read
+// as a threshold warning on a channel that might currently be sitting GREEN, which is exactly
+// the confusion a truth-marker badge must not create.
+//
+// Round-1 review fix (B9 MINOR — reviews/OBD-24-round1.md): the original 0xFF8B7EC8 measured
+// 3.56:1 contrast against white glyph text, under WCAG AA's 4.5:1 minimum for normal-size text.
+// This darker violet's WCAG relative luminance is ~0.099 (sRGB->linear per spec), giving
+// (1.0+0.05)/(0.099+0.05) ≈ 7.0:1 against GaugeUnverifiedBadgeContent — comfortably AA-compliant
+// with headroom, while staying visually the same hue family (still clearly not green/amber/red).
+val GaugeUnverifiedBadge = Color(0xFF5A4E99)
+val GaugeUnverifiedBadgeContent = Color(0xFFFFFFFF)

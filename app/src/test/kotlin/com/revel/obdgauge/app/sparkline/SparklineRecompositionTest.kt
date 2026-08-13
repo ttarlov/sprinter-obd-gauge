@@ -105,12 +105,20 @@ class SparklineRecompositionTest {
         composeTestRule.onNodeWithTag("gauge-${PidIds.COOLANT}-sparkline").assertIsDisplayed()
     }
 
+    // B8 (round-1 review): GaugeTileUiState's `verified` now defaults to `false` — pass it
+    // explicitly here so this fixture matches the real catalog (coolant/boost verified, trans/oil
+    // not) rather than accidentally exercising the unverified-badge overlay on all four tiles,
+    // which this recomposition-scoping test has no interest in.
     private fun fixedUiState() =
         DashboardUiState(
-            coolant = GaugeTileUiState(PidIds.COOLANT, "Coolant", "190°F", ThresholdZone.GREEN, false, null, 190.0),
-            transTemp = GaugeTileUiState(PidIds.TRANS_TEMP, "Trans", "160°F", ThresholdZone.GREEN, false, null, 160.0),
-            oilTemp = GaugeTileUiState(PidIds.OIL_TEMP, "Oil", "200°F", ThresholdZone.GREEN, false, null, 200.0),
-            boost = GaugeTileUiState(PidIds.BOOST, "Boost", "0.0 PSI", ThresholdZone.NEUTRAL, false, null, 0.0),
+            coolant =
+                GaugeTileUiState(PidIds.COOLANT, "Coolant", "190°F", ThresholdZone.GREEN, false, null, 190.0, true),
+            transTemp =
+                GaugeTileUiState(PidIds.TRANS_TEMP, "Trans", "160°F", ThresholdZone.GREEN, false, null, 160.0, false),
+            oilTemp =
+                GaugeTileUiState(PidIds.OIL_TEMP, "Oil", "200°F", ThresholdZone.GREEN, false, null, 200.0, false),
+            boost =
+                GaugeTileUiState(PidIds.BOOST, "Boost", "0.0 PSI", ThresholdZone.NEUTRAL, false, null, 0.0, true),
             connection = LinkState.Ready,
         )
 

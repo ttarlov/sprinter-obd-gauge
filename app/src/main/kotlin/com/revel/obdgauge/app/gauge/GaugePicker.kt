@@ -670,6 +670,19 @@ private fun PickerCandidateCarousel(
  * `onNodeWithTag` requires exactly one match, and testTag ordering across a modifier chain on the
  * same node is not a reliable way to suppress just one of two competing claims, hence an explicit
  * flag rather than layering `clearAndSetSemantics {}` over this function's own internal tags.
+ *
+ * ### B11 MINOR, deferred (round-1 review, reviews/OBD-24-round1.md)
+ * This mini-card carries no [UnverifiedBadge], so swapping to an unverified gauge (e.g. oil/trans
+ * temp) means the badge only appears once the tile has actually settled into its slot, not while
+ * still browsing candidates. Deferred rather than fixed this round: `GaugePickerChrome`'s
+ * carousel geometry (border/shrink math, OBD-42/44/46/47's multi-round-reviewed shrink/grow
+ * stack) is dense and heavily pinned already, and a badge here would need its own hit-target
+ * carve-out inside an already-small, horizontally-scrolling card — real risk of clutter or a
+ * second touch-target conflict (see B12's rationale in `UnverifiedBadge.kt`) for a case that's
+ * self-limiting anyway: the badge appears the instant the swap settles, before the driver has
+ * had a chance to actually read/trust a value off the newly-current tile, which is the harm this
+ * badge exists to prevent. Revisit if OBD-40 (user-defined gauges) makes the picker a more
+ * central, lingered-in surface than a quick long-press-and-tap today.
  */
 @Composable
 internal fun GaugeMiniCard(

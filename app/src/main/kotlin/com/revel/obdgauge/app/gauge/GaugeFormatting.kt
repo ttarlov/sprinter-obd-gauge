@@ -70,7 +70,19 @@ const val NO_READING_TEXT = "—"
 fun formatStaleText(
     reading: Reading,
     now: Instant,
-): String {
-    val elapsedSeconds = Duration.between(reading.timestamp, now).seconds.coerceAtLeast(0)
-    return "last seen ${elapsedSeconds}s ago"
-}
+): String = "last seen ${elapsedSeconds(reading, now)}s ago"
+
+/**
+ * "captured Xs ago" for OBD-27's raw-response viewer — unlike [formatStaleText], shown
+ * regardless of [Reading.stale], since "when did this number arrive" matters to that viewer
+ * even for a perfectly fresh reading.
+ */
+fun formatCapturedText(
+    reading: Reading,
+    now: Instant,
+): String = "captured ${elapsedSeconds(reading, now)}s ago"
+
+private fun elapsedSeconds(
+    reading: Reading,
+    now: Instant,
+): Long = Duration.between(reading.timestamp, now).seconds.coerceAtLeast(0)

@@ -24,12 +24,29 @@ data class GaugeTileUiState(
     val staleText: String?,
     /** Raw value backing [BoostArc]'s sweep position; ignored by non-boost tiles. */
     val rawValue: Double,
+    /**
+     * OBD-27: mirrors [PidDefinition.verified] — `false` means this PID's request/parse is a
+     * hypothesis, unconfirmed against real hardware (today: [PidIds.OIL_TEMP]/
+     * [PidIds.TRANS_TEMP] — see `DashboardPids.kt`). Drives the tile's unverified badge. A
+     * property of the *definition*, not the [Reading] — true even before any reading has
+     * arrived, which is why [placeholder] takes it too, and why [DashboardUiState.Loading]
+     * below sets it explicitly per-id rather than relying on this default for any of them.
+     *
+     * Defaults `false` (round-1 review, B8 MINOR — reviews/OBD-24-round1.md): mirrors
+     * `PidCatalog.isVerified`'s own deliberate "an id this module cannot vouch for is not
+     * verified" stance — an id nobody explicitly marked verified must never silently render
+     * as trustworthy. The one prior spot that defaulted to `true` (`DashboardScreen.kt`'s
+     * `GaugeSlot` placeholder fallback for an id absent from [GAUGE_CATALOG]) is flipped to
+     * match.
+     */
+    val verified: Boolean = false,
 ) {
     companion object {
         /** Shown before any [Reading] has arrived for [id]. */
         fun placeholder(
             id: String,
             label: String,
+            verified: Boolean = false,
         ) = GaugeTileUiState(
             id = id,
             label = label,
@@ -38,6 +55,7 @@ data class GaugeTileUiState(
             isStale = false,
             staleText = null,
             rawValue = 0.0,
+            verified = verified,
         )
     }
 }
@@ -66,14 +84,22 @@ data class DashboardUiState(
      * unchanged; see [tileFor].
      */
     val extraTiles: Map<String, GaugeTileUiState> = emptyMap(),
+    /**
+     * OBD-27: raw-response viewer content per [GAUGE_CATALOG] id, computed alongside
+     * [extraTiles] off the exact same [tileState]/[rawFrameState] pass — see [toDashboardUiState].
+     * Empty by default so pre-OBD-27 direct constructor calls (previews, hand-built fixtures)
+     * keep compiling; a tap on a tile whose id isn't in here simply has nothing to show, which
+     * only happens for a [DashboardUiState] no caller populated via [toDashboardUiState].
+     */
+    val rawFrames: Map<String, RawFrameUiState> = emptyMap(),
 ) {
     companion object {
         val Loading =
             DashboardUiState(
-                coolant = GaugeTileUiState.placeholder(PidIds.COOLANT, "Coolant"),
-                transTemp = GaugeTileUiState.placeholder(PidIds.TRANS_TEMP, "Trans"),
-                oilTemp = GaugeTileUiState.placeholder(PidIds.OIL_TEMP, "Oil"),
-                boost = GaugeTileUiState.placeholder(PidIds.BOOST, "Boost"),
+                coolant = GaugeTileUiState.placeholder(PidIds.COOLANT, "Coolant", verified = true),
+                transTemp = GaugeTileUiState.placeholder(PidIds.TRANS_TEMP, "Trans", verified = false),
+                oilTemp = GaugeTileUiState.placeholder(PidIds.OIL_TEMP, "Oil", verified = false),
+                boost = GaugeTileUiState.placeholder(PidIds.BOOST, "Boost", verified = true),
                 connection = LinkState.Disconnected,
             )
     }
@@ -104,6 +130,12 @@ fun toDashboardUiState(
     // swap-picker mini-card and the tile it swaps into read value/label/threshold-coloring off
     // the exact same code path, never a hand-copied "candidate" formatter that could drift.
     val tiles = GAUGE_CATALOG.associate { pid -> pid.id to tileState(pid, readings, now, thresholds, units) }
+    // Same GAUGE_CATALOG pass, same reason as `tiles` above: a picker candidate's raw-viewer
+    // content and a swapped-in tile's must read off the one code path, never a hand-copied one.
+    val rawFrames =
+        GAUGE_CATALOG.associate { pid ->
+            pid.id to rawFrameState(pid, readings[pid.id], tiles.getValue(pid.id).valueText, now)
+        }
     return DashboardUiState(
         coolant = tiles.getValue(PidIds.COOLANT),
         transTemp = tiles.getValue(PidIds.TRANS_TEMP),
@@ -111,6 +143,7 @@ fun toDashboardUiState(
         boost = tiles.getValue(PidIds.BOOST),
         connection = connection,
         extraTiles = tiles - CORE_TILE_IDS,
+        rawFrames = rawFrames,
     )
 }
 
@@ -139,7 +172,7 @@ private fun tileState(
     units: UnitPreferences,
 ): GaugeTileUiState {
     val id = pid.id
-    val reading = readings[id] ?: return GaugeTileUiState.placeholder(id, pid.label)
+    val reading = readings[id] ?: return GaugeTileUiState.placeholder(id, pid.label, verified = pid.verified)
     // wireUnit is read from the PidDefinition, never hardcoded — see UnitConversion.kt's KDoc
     // on why this must not assume FAHRENHEIT/PSI once :core:protocol wiring lands (OBD-25).
     val wireUnit = pid.unit
@@ -156,5 +189,6 @@ private fun tileState(
         isStale = reading.stale,
         staleText = if (reading.stale) formatStaleText(reading, now) else null,
         rawValue = reading.value,
+        verified = pid.verified,
     )
 }

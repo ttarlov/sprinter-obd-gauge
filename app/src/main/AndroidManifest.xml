@@ -8,6 +8,43 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      OBD-24: permissions the `connectedDevice`-typed foreground service needs.
+      - FOREGROUND_SERVICE / FOREGROUND_SERVICE_CONNECTED_DEVICE: required to start any
+        foreground service of this type on API 34+ (targetSdk 36 here, so this is enforced).
+      - BLUETOOTH_CONNECT / CHANGE_NETWORK_STATE: round-1 review (reviews/OBD-24-round1.md,
+        B1 BLOCKER) — this manifest previously claimed the `connectedDevice` FGS-type check was a
+        DECLARED-permission check (i.e. satisfied by the `<uses-permission>` line alone). It is
+        not: `ForegroundServiceTypePolicy`'s CONNECTED_DEVICE set is enforced at
+        `startForeground()` call time via `checkPermission` — a GRANTED check. BLUETOOTH_CONNECT
+        is a runtime/dangerous permission, never auto-granted at install, and nothing in this app
+        requests it before OBD-25 wires real BLE — so a fresh install (demo flavor included, since
+        the check runs regardless of whether the app ever actually uses Bluetooth) would crash in
+        `ObdConnectionService.onCreate()` before first paint. CHANGE_NETWORK_STATE is also in the
+        CONNECTED_DEVICE set's allowed-permissions list, but unlike BLUETOOTH_CONNECT it's a
+        NORMAL permission — the OS grants it automatically at install, no runtime prompt needed —
+        so declaring it here is what actually makes the typed `startForeground()` call succeed
+        immediately after a fresh install, before the user has granted anything. BLUETOOTH_CONNECT
+        stays declared too (it's the honest, permanent statement of what this app does once OBD-25
+        lands; :core:ble's own debug-only manifest also declares it for OBD-19's console). See
+        `ObdConnectionService.startForegroundDegrading` for the belt-and-braces runtime fallback
+        in case some other combination of OS/permission state still rejects the typed call.
+      - WAKE_LOCK: B3 MAJOR — a foreground service alone exempts the process from Doze/App
+        Standby *bucketing* (deferred jobs, batched network access), but does NOT keep the CPU
+        awake through a SoC suspend; see `ObdConnectionService`'s corrected Doze KDoc.
+        `PARTIAL_WAKE_LOCK` is a normal permission (no runtime prompt).
+      - POST_NOTIFICATIONS: API 33+ runtime permission required to actually show the
+        service's persistent notification; without a grant the service still runs (polling is
+        unaffected) but the notification silently doesn't post. B6: requested by `MainActivity` on
+        first launch — see its KDoc.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".ObdGaugeApplication"
         android:allowBackup="true"
@@ -25,6 +62,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          OBD-24: `exported="false"` — nothing outside this app ever needs to start/bind it,
+          `MainActivity` is the only caller (see MainActivity.kt). `foregroundServiceType=
+          "connectedDevice"` per the AC; the actual type constant is applied in code via
+          `ServiceCompat.startForeground` (see ObdConnectionService's KDoc) — this attribute is
+          what the manifest merger + Play/OS static checks read, and what makes the
+          `BLUETOOTH_CONNECT` declaration above load-bearing rather than dead weight.
+        -->
+        <service
+            android:name=".service.ObdConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
     </application>
 

@@ -27,6 +27,17 @@ class GaugeCatalogTest {
         assertTrue(PidIds.RPM in GAUGE_CATALOG_BY_ID)
     }
 
+    // B13 (round-1 review, reviews/OBD-24-round1.md): unpinned before this — RPM_PID_DEFINITION
+    // never set `verified` explicitly, silently inheriting whatever PidDefinition's own frozen-
+    // contract default happened to be. Standard mode-01 PID 010C is genuinely SAE-standard, not a
+    // hypothesis, so `true` is the CORRECT value here (unlike GaugeTileUiState's OWN default,
+    // which B8 flipped to the conservative `false` for ids this app can't vouch for at all) — this
+    // pins that correctness against an accidental future default flip in :core:model.
+    @Test
+    fun `rpm is a verified standard PID, not a hypothesis`() {
+        assertTrue(GAUGE_CATALOG_BY_ID.getValue(PidIds.RPM).verified)
+    }
+
     @Test
     fun `rpm is declared in RPM units with no seed threshold entry, so it classifies NEUTRAL`() {
         assertEquals(MeasurementUnit.RPM, GAUGE_CATALOG_BY_ID.getValue(PidIds.RPM).unit)

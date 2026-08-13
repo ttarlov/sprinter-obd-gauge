@@ -340,7 +340,15 @@ private fun GaugeSlot(
 ) {
     // MINOR M3: placeholder fallback — see GaugeSlot's own KDoc file history (OBD-42/44 review
     // rounds) for why: DashboardUiState.Loading only seeds the four core tiles.
-    val tile = uiState.tileFor(id) ?: GaugeTileUiState.placeholder(id, GAUGE_CATALOG_BY_ID[id]?.label ?: id)
+    // B8 (round-1 review): `?: false`, not `?: true` — an id absent from GAUGE_CATALOG entirely
+    // is exactly the "cannot vouch for it" case PidCatalog.isVerified treats as unverified; this
+    // now matches GaugeTileUiState's own default (see its KDoc).
+    val tile =
+        uiState.tileFor(id) ?: GaugeTileUiState.placeholder(
+            id,
+            GAUGE_CATALOG_BY_ID[id]?.label ?: id,
+            verified = GAUGE_CATALOG_BY_ID[id]?.verified ?: false,
+        )
     val progress = rememberPickerShrinkProgress(isPicking, label = "gauge-picker-shrink-$id")
 
     // fullSize/currentSlotBounds: this tile's own coordinates and the chrome ghost's, converted
@@ -395,6 +403,13 @@ private fun GaugeSlot(
         } else {
             GaugeTile(tile, sparkline, liveMod, pressEff, onDismissPicker, isPicking, progEff, fullSize, boundsEff)
         }
+
+        UnverifiedBadgeOverlay(
+            tile = tile,
+            settled = progEff == 0f,
+            rawFrame = uiState.rawFrames[id],
+            modifier = Modifier.matchParentSize(),
+        )
     }
 }
 
@@ -615,6 +630,7 @@ private fun previewUiState() =
                 isStale = false,
                 staleText = null,
                 rawValue = 225.0,
+                verified = true,
             ),
         transTemp =
             GaugeTileUiState(
@@ -625,6 +641,7 @@ private fun previewUiState() =
                 isStale = false,
                 staleText = null,
                 rawValue = 215.0,
+                verified = false,
             ),
         oilTemp =
             GaugeTileUiState(
@@ -635,6 +652,7 @@ private fun previewUiState() =
                 isStale = false,
                 staleText = null,
                 rawValue = 240.0,
+                verified = false,
             ),
         boost =
             GaugeTileUiState(
@@ -645,6 +663,7 @@ private fun previewUiState() =
                 isStale = false,
                 staleText = null,
                 rawValue = 8.0,
+                verified = true,
             ),
         connection = LinkState.Ready,
     )

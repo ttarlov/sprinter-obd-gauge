@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OBD-24: status-bar/notification small icon for ObdConnectionService's persistent notification.
+  A simple gauge-needle glyph — Android renders notification icons as a flat alpha mask (color
+  is ignored, only the shape's silhouette shows), so this deliberately has no gradient/detail
+  that would be lost. This app has no launcher-icon resource of its own yet (AGP's default is
+  used); this is the first drawable this project needs one for.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,3 C7.03,3 3,7.03 3,12 C3,16.97 7.03,21 12,21 C16.97,21 21,16.97 21,12 C21,7.03 16.97,3 12,3 Z M12,19 C8.14,19 5,15.86 5,12 C5,8.14 8.14,5 12,5 C15.86,5 19,8.14 19,12 C19,15.86 15.86,19 12,19 Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,11 C11.45,11 11,11.45 11,12 C11,12.28 11.11,12.53 11.29,12.71 L8.79,16.21 L13.29,13.21 C13.29,13.14 13.3,13.07 13.3,13 C13.3,11.9 12.4,11 12,11 Z" />
+</vector>
