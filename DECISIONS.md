@@ -158,3 +158,18 @@ if targeted fails. Never at the TCU; never security access; never writes/routine
 operations. Session state is non-persistent (lapses on timeout). Context: research annex
 docs/hardware/research-2026-08-13-boost.md — this is the standard handshake every
 commercial scan tool performs. Spec: issues/OBD-52.md.
+
+## D9 — MeasurementUnit additive evolution: GRAMS_PER_SECOND, LITERS_PER_HOUR, VOLTS (orchestrator, 2026-08-13)
+
+**Status:** decided by orchestrator 2026-08-13 (additive contract evolution; Taras's boost
+request is the driver). The Phase-0 MeasurementUnit freeze (OBD-3) stands for existing
+members; these three are ADDITIVE — real physical quantities this van reports live (MAF
+g/s via 0166, fuel rate L/h via 015E, module voltage V via 0142). Non-breaking: no existing
+member/semantic changes; the only ripple is exhaustive `when(unit)` sites gaining branches
+(compiler-caught) and :app rendering the new units.
+
+**Landing (deliberate, not bundled into the parallel boost build):** OBD-58 — a focused
+contract-change adding the three units to :core:model, wiring MAF/fuelRate/moduleVoltage as
+live StandardPidSpec channels, handling the :app unit-render ripple, and flipping boost's
+MAF input from PendingUnitContract to a live channel (boost → Available). Reviewed as its
+own unit. Reversible.
