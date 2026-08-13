@@ -102,6 +102,10 @@ private const val SETTINGS_GLYPH = "⚙"
  * @param onSettingsClick invoked by the gear button; the caller (here, `MainActivity`) owns
  *   navigation — this composable has no nav-library dependency, per the codebase's minimal
  *   style.
+ * @param onConnect OBD-25: the connect/retry action shown in [ConnectionBanner]. `null` (the
+ *   default, and what the `demo` flavor passes — it has no link) renders the pre-OBD-25 banner
+ *   exactly, which is why this change leaves both dashboard screenshots byte-identical. See
+ *   [ConnectionBanner]'s KDoc for which link states show a button and why the busy ones don't.
  * @param onSwapGauge OBD-42: invoked `(oldId, newId)` the moment a picker candidate is tapped —
  *   the caller is expected to persist it via the same `gaugeOrder` path OBD-21's settings screen
  *   uses (`DashboardViewModel.swapGauge`/`AppSettings.withGaugeSwapped`). Picker-mode dismissal
@@ -117,6 +121,7 @@ fun GaugeDashboard(
     sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
     onSettingsClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
+    onConnect: (() -> Unit)? = null,
 ) {
     val visibleIds = gaugeOrder.filter { it.visible }.map { it.id }
 
@@ -159,7 +164,7 @@ fun GaugeDashboard(
             }
             Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    ConnectionBanner(uiState.connection, modifier = Modifier.weight(1f))
+                    ConnectionBanner(uiState.connection, modifier = Modifier.weight(1f), onConnect = onConnect)
                     TextButton(onClick = onSettingsClick, modifier = Modifier.testTag("settings-button")) {
                         Text(text = SETTINGS_GLYPH, style = MaterialTheme.typography.titleLarge)
                     }

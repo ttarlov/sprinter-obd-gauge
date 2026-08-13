@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkError
 import com.revel.obdgauge.model.LinkState
@@ -60,6 +61,48 @@ class ConnectionBannerTest {
 
         composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("disconnected"))
         composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Not connected")
+    }
+
+    // ---- OBD-25: the connect affordance ----
+
+    @Test
+    fun `no connect action means no button - the demo flavor's banner is unchanged`() {
+        composeTestRule.setContent { ObdGaugeTheme { ConnectionBanner(LinkState.Disconnected) } }
+
+        composeTestRule.onNodeWithTag("connection-banner-connect").assertDoesNotExist()
+    }
+
+    @Test
+    fun `a connect action renders a Connect button that calls back exactly once per tap`() {
+        var taps = 0
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Disconnected, onConnect = { taps++ }) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner-connect").assertTextEquals("Connect")
+        composeTestRule.onNodeWithTag("connection-banner-connect").performClick()
+
+        assertEquals(1, taps)
+    }
+
+    @Test
+    fun `an errored link offers Retry`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Error(LinkError.DeviceNotFound), onConnect = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner-connect").assertTextEquals("Retry")
+    }
+
+    // An attempt is already in flight; a second tap would only supersede it and restart
+    // :core:ble's backoff from zero — see ConnectActionLabelTest for the full reasoning.
+    @Test
+    fun `a link mid-attempt offers no button even with a connect action wired`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Scanning, onConnect = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner-connect").assertDoesNotExist()
     }
 
     @Test

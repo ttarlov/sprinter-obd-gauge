@@ -19,16 +19,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.revel.obdgauge.app.gauge.DashboardViewModel
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
 import com.revel.obdgauge.app.gauge.GaugeDashboard
+import com.revel.obdgauge.app.link.LinkController
 import com.revel.obdgauge.app.service.ObdConnectionService
 import com.revel.obdgauge.app.settings.SettingsRoute
 import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import java.util.Optional
+import javax.inject.Inject
 
 /**
  * Single-activity host. No `screenOrientation` lock in the manifest: a dash mount holds the
@@ -43,6 +48,34 @@ import kotlinx.coroutines.flow.StateFlow
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    /**
+     * OBD-25: the connect entry point, present on `prod` and `Optional.empty()` on `demo` (which
+     * has no link — see `LinkController`'s KDoc for why the binding is optional rather than
+     * defaulted). Absent means the dashboard renders with no Connect button, exactly as before.
+     */
+    @Inject
+    lateinit var linkController: Optional<LinkController>
+
+    /**
+     * OBD-25 / OBD-17: the BLE runtime permissions, requested **at the connect moment** rather
+     * than at launch — same flow `ConsoleActivity` has run since OBD-19, and for the same reason:
+     * a permission prompt makes sense when the user has just asked for a dongle, and is noise
+     * when they have just opened a gauge. `:core:ble` reports what is missing
+     * (`BleObdLink.missingPermissions`, API-level-aware via `BlePermissionPolicy`) and never
+     * prompts itself; this is where the prompting lives.
+     *
+     * A denial is not an error state to render: `connect()` would have parked the link in
+     * `LinkState.Error(PermissionDenied)` anyway, which the banner already says in words, so the
+     * result handler simply does not connect. Registered as a field for the Activity Result
+     * API's before-STARTED requirement, like the notification request below it.
+     */
+    private val requestBlePermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants.isNotEmpty() && grants.values.all { granted -> granted }) {
+                connectNow()
+            }
+        }
+
     // B6 (round-1 review, reviews/OBD-24-round1.md): registered as a field, not inline in
     // onCreate — the Activity Result API requires this before the Activity reaches STARTED,
     // same constraint ConsoleActivity's own requestPermissions already follows. No-op result
@@ -69,6 +102,13 @@ class MainActivity : ComponentActivity() {
         // ConnectionServiceController.start(), which itself no-ops while already running), so
         // re-entering MainActivity (e.g. after a config change) never spins up a second poll loop.
         ContextCompat.startForegroundService(this, Intent(this, ObdConnectionService::class.java))
+        // OBD-25 remembered-device fast path: if this phone has connected to a dongle before and
+        // every permission is already granted, reconnect without the user tapping anything —
+        // key-on, phone on the mount, gauges live. Silent no-op otherwise (including all of
+        // `demo`), which is what leaves the banner's Connect action as the visible way in rather
+        // than throwing a permission dialog at a launch. Guards live in
+        // `BleLinkController.connectIfRemembered`; this is the only automatic connect in the app.
+        lifecycleScope.launch { linkController.orElse(null)?.connectIfRemembered() }
         setContent {
             ObdGaugeTheme {
                 val viewModel: DashboardViewModel = viewModel()
@@ -103,10 +143,35 @@ class MainActivity : ComponentActivity() {
                         sparklines = sparklines,
                         onSettingsClick = { showSettings = true },
                         onSwapGauge = viewModel::swapGauge,
+                        // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
+                        onConnect = if (linkController.isPresent) ::requestConnect else null,
                     )
                 }
             }
         }
+    }
+
+    /**
+     * The banner's Connect/Retry tap: request exactly what's missing, then connect — or connect
+     * straight away when nothing is missing. Mirrors `ConsoleActivity.requestConnect`.
+     */
+    private fun requestConnect() {
+        val controller = linkController.orElse(null) ?: return
+        val missing = controller.missingPermissions
+        if (missing.isEmpty()) {
+            connectNow()
+        } else {
+            requestBlePermissions.launch(missing.toTypedArray())
+        }
+    }
+
+    /**
+     * The one user-gesture-driven `connect()` in the app (the other caller is
+     * `connectIfRemembered` at launch). Everything after this — retry cadence, backoff, giving up
+     * — belongs to `:core:ble`'s reconnect machine; see `LinkController`'s ownership KDoc.
+     */
+    private fun connectNow() {
+        lifecycleScope.launch { linkController.orElse(null)?.connect() }
     }
 
     /** B6: requests POST_NOTIFICATIONS once, only when it's both needed and not already granted. */

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,11 +39,27 @@ private const val SPINNER_STROKE_DP = 2
  * uses the theme's error container plus a "Reconnecting…" affordance — since whether a retry
  * actually happens is out of this composable's scope, the affordance communicates intent, not
  * a guarantee.
+ *
+ * ### OBD-25: the connect entry point
+ * [onConnect] is the app's one user-visible way to ask for a link. `null` (the default, and what
+ * the `demo` flavor always passes, since it has no link) renders exactly the pre-OBD-25 banner —
+ * which is why every existing banner test and both dashboard screenshots are untouched by this
+ * change. When non-null, a trailing text button appears on the states where asking is meaningful:
+ * `Disconnected` ("Connect") and `Error` ("Retry"). `Scanning`/`Connecting` deliberately show no
+ * button — an attempt is already in flight, and a second tap would only supersede it and restart
+ * `:core:ble`'s backoff from zero (see `LinkController`'s ownership KDoc). `Ready` renders no
+ * banner at all, so there is nothing to attach a button to; ending a session deliberately lives
+ * on the service notification's Stop action instead, which also hangs up the link.
+ *
+ * Requesting runtime permissions is **not** done here: this composable has no Activity. The
+ * caller (`MainActivity`) checks `LinkController.missingPermissions` and prompts at the moment
+ * of the tap, exactly as `ConsoleActivity` has done since OBD-19.
  */
 @Composable
 fun ConnectionBanner(
     connection: LinkState,
     modifier: Modifier = Modifier,
+    onConnect: (() -> Unit)? = null,
 ) {
     val message = connectionBannerMessage(connection) ?: return
     val isError = connection is LinkState.Error
@@ -84,8 +101,28 @@ fun ConnectionBanner(
                 modifier = Modifier.testTag("connection-banner-reconnecting"),
             )
         }
+        val connectLabel = connectActionLabel(connection)
+        if (onConnect != null && connectLabel != null) {
+            TextButton(
+                onClick = onConnect,
+                modifier = Modifier.testTag("connection-banner-connect"),
+            ) {
+                Text(text = connectLabel, color = contentColor, style = MaterialTheme.typography.labelLarge)
+            }
+        }
     }
 }
+
+/**
+ * The connect button's label for [connection], or `null` where no button should show. Pure, so
+ * the "no second tap while an attempt is in flight" rule is assertable without Compose.
+ */
+internal fun connectActionLabel(connection: LinkState): String? =
+    when (connection) {
+        LinkState.Disconnected -> "Connect"
+        is LinkState.Error -> "Retry"
+        LinkState.Scanning, LinkState.Connecting, LinkState.Ready -> null
+    }
 
 /** Lowercase [LinkState] state name, exposed as `stateDescription` for test assertions. */
 internal fun connectionBannerStateName(connection: LinkState): String =

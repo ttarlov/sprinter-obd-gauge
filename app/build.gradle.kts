@@ -105,10 +105,24 @@ dependencies {
     implementation(project(":core:model"))
     "demoImplementation"(project(":core:testing"))
     // OBD-19: the debug-only "OBD Console" raw AT-command REPL needs the real BleObdLink.
-    // `debugImplementation` keeps :core:ble (and its BLE permissions/manifest entries) off
-    // both demoRelease and prodRelease classpaths entirely — verify with
-    // `:app:dependencies --configuration prodReleaseRuntimeClasspath | grep -i "core:ble"`.
+    // Still `debugImplementation` because the console must exist in demoDebug too, where
+    // :core:ble is otherwise absent.
     debugImplementation(project(":core:ble"))
+    // OBD-25: the `prod` dashboard flow IS the real chain (BleObdLink -> RealVehicleDataSource),
+    // so :core:ble and :core:protocol are now `prod` runtime dependencies in BOTH build types —
+    // `prodRelease` included, which is the point: a release van build with no BLE would be an
+    // app that cannot read an engine. The fence that stays intact is the one that always
+    // mattered: `demoRelease` sees neither module, and `:core:testing` reaches neither prod
+    // variant. Verify with
+    // `:app:dependencies --configuration demoReleaseRuntimeClasspath | grep -i "core:ble"`
+    // (expect empty) and
+    // `:app:dependencies --configuration prodReleaseRuntimeClasspath | grep -Ei "junit|core:testing"`
+    // (expect empty). :core:ble's OWN debug/release fence (OBD-48's LogcatTrafficLog vs
+    // TrafficLog.NONE, enforced per build type inside the module and verified at the AAR's
+    // classes.jar — see core/ble/MODULE.md) is unaffected by which :app configuration consumes
+    // it, and is re-verified in this issue's report.
+    "prodImplementation"(project(":core:ble"))
+    "prodImplementation"(project(":core:protocol"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

@@ -1,10 +1,13 @@
 # :app
 
 Android application. Compose + Material 3, Hilt-wired end to end. Depends on `:core:model`
-unconditionally; `:core:testing` only on the `demo` flavor (see "Build flavors" below).
-`:core:ble` is a `debugImplementation`-only dependency (OBD-19's debug console, below) — the
-main dashboard flow's real `ObdLink`/`:core:protocol` wiring is still OBD-25. No
-`:core:protocol` at this stage.
+unconditionally; `:core:testing` only on the `demo` flavor and `:core:ble`/`:core:protocol`
+only on the `prod` flavor (see "Build flavors" below). `:core:ble` is *additionally* a
+`debugImplementation` dependency, because OBD-19's debug console has to exist in `demoDebug`
+too.
+
+**As of OBD-25 the `prod` flavor reads a real engine**: `BleObdLink` → `RealVehicleDataSource`
+→ `DisplayUnitDataSource` → ViewModels, in both build types.
 
 ## Build flavors (OBD-12)
 
@@ -17,10 +20,13 @@ theme, `MainActivity`, `ObdGaugeApplication` — none of it depends on either fl
   the EPOCH-re-anchoring `Clock` the stale-age math needs (see Known limitations). Zero
   Bluetooth permissions (the manifest declares none, common or flavor-specific).
   `:core:testing` is a `demoImplementation` dependency — see the HARD CONSTRAINT below.
-- **`prod`** — `src/prod/kotlin/.../di/DataSourceModule.kt` binds `VehicleDataSource` to
-  `StubVehicleDataSource` (`src/prod/.../datasource/`), a placeholder that sits
-  `LinkState.Disconnected` with empty readings and no-op `start`/`stop`. Real `ObdLink` →
-  `:core:protocol` → `VehicleDataSource` wiring lands in OBD-25.
+- **`prod` (OBD-25)** — `src/prod/kotlin/.../di/DataSourceModule.kt` builds the real chain:
+  `RealVehicleDataSource(BleObdLink, appScope, PollConfig(), systemClock)` wrapped in
+  `DisplayUnitDataSource`. The `StubVehicleDataSource` placeholder OBD-12 shipped is deleted.
+  It injects the **concrete** `BleObdLink` rather than the frozen `ObdLink` contract, because
+  OBD-19's `@Binds ObdLink -> BleObdLink` lives in `src/debug/` and does not exist in
+  `prodRelease` — and because `BleLinkController` needs `missingPermissions`/
+  `rememberedDevice`, which are module-level extras deliberately off the interface.
 
 **HARD CONSTRAINT**: `:core:testing` (and therefore `FakeVehicleDataSource`/`Scenario`) must
 never reach the `prod` runtime classpath. Enforced by scoping the dependency to
@@ -31,13 +37,35 @@ never reach the `prod` runtime classpath. Enforced by scoping the dependency to
 ```
 (expect empty output).
 
+**The `:core:ble` fence, restated after OBD-25.** `:core:ble` used to be
+`debugImplementation`-only, which made "no BLE in any release build" true but only incidentally
+— the module was not wired to anything a release build ran. It is now also
+`prodImplementation`, so `prodRelease` contains it *on purpose*: a release van build that
+cannot open a GATT link is an app that cannot read an engine. What the fence protects is
+unchanged and still verified:
+
+- `demoRelease` contains **no** `:core:ble` and no `:core:protocol` —
+  `:app:dependencies --configuration demoReleaseRuntimeClasspath | grep -i "core:"`.
+- `:core:ble`'s **own** debug/release split (OBD-48: `LogcatTrafficLog` in `src/debug/`,
+  `TrafficLog.NONE` in `src/release/`) is a per-build-type source-set fence *inside* that
+  module and is unaffected by which `:app` configuration consumes it. Verified at the AAR's
+  `classes.jar` with the debug AAR as positive control: release ships `ReleaseTrafficLogKt`
+  and neither `LogcatTrafficLog` nor `TrafficFormat`, and contains zero `ObdTraffic` tag
+  literals.
+- The **app-level dex check is no longer vacuous** (`reviews/OBD-23-round1.md` flagged that it
+  was, precisely because `:core:ble` never reached a release APK). `app-prod-release.apk`'s
+  dex now genuinely contains `BleObdLink`/`RealVehicleDataSource` and zero occurrences of
+  `ObdTraffic`, `LogcatTrafficLog`, `ConsoleActivity` or `FakeVehicleDataSource`;
+  `app-demo-release.apk` contains `FakeVehicleDataSource` and no `BleObdLink` at all.
+
 Unit tests that exercise `FakeVehicleDataSource` (`DashboardViewModelTest`,
 `DashboardScreenTest`, `DashboardScreenshotTest`, `ThresholdConfigTest`,
 `ConnectionBannerTest`) live in `src/testDemo/` and only run as `testDemoDebugUnitTest`.
 `GaugeFormattingTest`/`BoostArcTest` have no `:core:testing` dependency and stay in the common
 `src/test/`, running for both `testDemoDebugUnitTest` and `testProdDebugUnitTest`. The `test`
-aggregate task runs both variants; `testProdDebugUnitTest` only ever sees the two
-flavor-agnostic suites.
+aggregate task runs both variants. Since OBD-25 `testProdDebugUnitTest` also has a source set
+of its own, `src/testProd/` — `ProdChainEndToEndTest` and `DisplayUnitDataSourceTest`, which
+need `:core:protocol` and the `src/prod/` wiring and therefore cannot live anywhere else.
 
 Unit tests remain debug-variant-only (both flavors) via the existing
 `androidComponents { beforeVariants(...) { variant.enableUnitTest = false } }` release gate.
@@ -55,6 +83,98 @@ was already true before OBD-12 (verified against `main`; test sources were never
 scope). `app/build.gradle.kts`'s `detekt { source.setFrom(...) }` now also lists
 `src/demo/kotlin` and `src/prod/kotlin` so the new DI wiring and stub don't silently escape
 the gate; `src/test*/` intentionally stays out of scope, matching prior behavior.
+
+## Prod integration (OBD-25)
+
+### Who owns what
+
+Two things were being confused before this issue, and the confusion is what produced the
+restart storm `reviews/OBD-24-round1.md` measured (30 `start()`/60 s, three times Android's BLE
+scan throttle, at which point the OS blanks scan results and the storm prevents the reconnect
+it is forcing). They are now separated, each with exactly one owner:
+
+| Thing | Owner | Everyone else |
+|---|---|---|
+| The **link** (scan/connect/retry/backoff/give up) | `:core:ble`'s reconnect machine (OBD-23) | may call `connect`/`disconnect` **only** from a user gesture, never in reaction to a state |
+| The **poll loop** (`VehicleDataSource.start`/`stop`) | `ConnectionServiceController`, while the foreground service intends to run; `DashboardViewModel`'s UI-gated subscription otherwise | — |
+
+Mechanically:
+
+- `LinkController` (`link/LinkController.kt`) is the only seam in `:app` that can drive the
+  link. `prod` binds it to `BleLinkController`; `demo` binds nothing and every injection point
+  sees `Optional.empty()` (a `@BindsOptionalOf` in `src/main/`, so the `demo` DI graph needed no
+  change at all). Its three callers are all gestures: the banner's Connect/Retry tap, the
+  notification's Stop action, and one launch-time remembered-device attempt.
+- `ConnectionServiceController` holds **no link reference**, so "don't reconnect in reaction to
+  state" is structural rather than a convention it could drift away from.
+- The Ready→Disconnected self-heal is **deleted**. The controller restarts the source on the
+  transition **into** `Ready` instead — a success edge, which a failing scan or a backing-off
+  retry can never produce, so `start()` calls are bounded by successful connects rather than by
+  failures. It is needed because `RealVehicleDataSource`'s loop parks on a link drop and
+  resumes only when its owner calls `start()` again.
+- `PollKeepAlive` (`service/PollKeepAlive.kt`) is the service's *published* intent, replacing
+  the thing the self-heal was really trying to detect: `DashboardViewModel`'s
+  `WhileSubscribed(5_000)` teardown ~5 s after the screen turns off. The ViewModel consults it
+  and declines to stop a source the service is keeping alive. Nobody has to infer a stop from
+  link state any more — which never carried that information, since
+  `RealVehicleDataSource.connection` just forwards `ObdLink.state` and `start`/`stop` does not
+  touch it.
+
+Pinned by `ConnectionServiceControllerTest`: forty cycles of the whole reconnect-failure shape
+(`Scanning → Error → Connecting → Error → Disconnected`) leave the `start()` count at exactly
+one. Any failure-driven restart trigger, bounded or not, fails that test.
+
+### Connect UX
+
+`MainActivity` owns the runtime-permission flow `:core:ble` deliberately never does (it has no
+UI), the same way `ConsoleActivity` has since OBD-19: a Connect tap checks
+`LinkController.missingPermissions` — `BlePermissionPolicy`'s API-level-aware list — and
+prompts for exactly what is missing before connecting. `ConnectionBanner` grew one optional
+`onConnect` parameter: `Disconnected` offers "Connect", `Error` offers "Retry", and
+`Scanning`/`Connecting` offer nothing, because a second tap mid-attempt would supersede the
+attempt in flight and restart `:core:ble`'s backoff from zero. `Ready` renders no banner at all
+(unchanged), so ending a session lives on the service notification's Stop action, which now
+also hangs up the link. Passing `null` — what `demo` always does — renders the pre-OBD-25
+banner exactly, which is why every banner test and both dashboard screenshots are untouched.
+
+The remembered-device fast path runs once at launch and only when a device is already
+remembered *and* every permission is already granted; otherwise it is silent and the banner's
+Connect action is the way in. `BleObdLink.connect()` itself tries the remembered address before
+scanning, so nothing further is needed for the "key on, gauges live" case.
+
+### Unit alignment at the DI seam
+
+`:core:protocol` parses to natural SI-ish units (°C, kPa absolute); `:app`'s `DASHBOARD_PIDS`
+declares `coolant` as `FAHRENHEIT` and `boost` as `PSI`, and `ThresholdConfig` plus every
+persisted OBD-21 threshold override is stored in **those** units.
+`core/protocol/MODULE.md` named two legal resolutions — convert at the UI boundary, or change
+the declared units. `DisplayUnitDataSource` (`src/prod/.../datasource/`) is the first: it
+re-expresses each reading from the protocol catalog's unit into the app catalog's, once, in
+`prod` DI. Changing the declared units instead was rejected because it silently reinterprets
+thresholds already persisted on the phone (a 230 °F red line would become 230 °C) and would
+change what `demo` renders. Channels with no `:app` gauge (`engineLoad`, `throttle`, `map`,
+`speed`, `iat`) pass through untouched. Nothing is defaulted or substituted — an absent channel
+stays absent, which is the entire boost story.
+
+### The end-to-end test
+
+`src/testProd/.../e2e/ProdChainEndToEndTest` runs
+`ScriptedVanLink → Elm327InitStateMachine → ResponseParser/PollSchedule → RealVehicleDataSource
+→ DisplayUnitDataSource → DashboardViewModel → DashboardUiState` on the JVM, with no Android
+instrumentation. Every object is the production one; the only substitution is the transport,
+and even that replays bytes transcribed from `docs/hardware/session-2026-08-12.md` (OM642,
+engine running, ~5 800 ft) rather than bytes this codebase predicted. It asserts coolant 94 °C
+rendering as `201°F` (and `94.0°C` under a metric preference — the round trip closing), rpm in
+the captured 725–729 idle range, load ~56 %, throttle 83 % (the diesel intake flap, not a
+driver-commanded plate), baro 82 kPa, boost as a typed unavailability and never a zero, trans
+temp neither requested nor published behind the `DecodeFalsified` gate, and every tile's
+unverified badge agreeing with `PidCatalog.isVerified`.
+
+`engineLoad` and `throttle` have no dashboard tile — `GAUGE_CATALOG` is deliberately pinned to
+the core four plus rpm by `GaugeCatalogTest` (OBD-42) — so they are asserted in the readings
+map rather than in `DashboardUiState`. `speed` is left out of the fixture on purpose: the
+`0100` bitmap advertises it but the session never captured a reply, and scripting one would be
+a prediction rather than a capture.
 
 ## Public surface
 
@@ -263,8 +383,11 @@ swap (no nav library, same minimal style `MainActivity`'s KDoc already describes
 - Poll rate: `AppSettings.pollRate` (`PollRate.HZ_4/HZ_2/HZ_1`, i.e. 250/500/1000 ms) is
   persisted and surfaced in the UI, but **nothing in `:app` reads it yet** — `demo`'s
   `FakeVehicleDataSource` replays a fixed script regardless, and the real poll scheduler is
-  `:core:protocol`'s (OBD-25/the Phase-4 integration). The value is there for that scheduler to
-  read once it exists; wiring it through is out of this issue's scope.
+  `:core:protocol`'s `PollConfig.cycleInterval`. **Still unread as of OBD-25**: `prod` DI
+  constructs `PollConfig()` with its default 200 ms cycle rather than reading this setting, which
+  would mean rebuilding the data source (or threading a mutable config into a running poll loop)
+  on every settings change — deliberately out of the integration issue's scope, and now the one
+  remaining "persisted but ignored" setting.
 
 ### Unit conversion
 
@@ -297,16 +420,20 @@ both readings and stored thresholds:
   °F↔°C or PSI↔kPa in Units never rewrites a stored `thresholdOverrides` value, satisfying the
   OBD-21 AC verbatim.
 
-**Known caveat for OBD-25/Phase-4 integration:** when the real `:core:protocol` wiring lands and
-`DASHBOARD_PIDS`' declared units flip from `FAHRENHEIT`/`PSI` to `CELSIUS`/`KPA` (per
-`core/protocol/MODULE.md`'s flagged mismatch), `ThresholdConfig.seed`'s literal numbers must be
-converted too (they're presently Fahrenheit-scale) — and any **user-saved** `thresholdOverrides`
-persisted before that rewiring will misinterpret (their numbers were saved assuming a
-Fahrenheit/PSI wire unit; classify would then compare them against Celsius/kPa readings). This
-repo's `DataStoreSettingsRepository` has no migration/versioning for that scenario today — flagged
-here rather than silently left for whoever does OBD-25 to discover. A reasonable fix at that
-point: reset `thresholdOverrides` (or migrate them by converting each stored value from the old
-wire unit to the new one) as part of the OBD-25 changeset.
+**How OBD-25 resolved this (the caveat below is now closed, and stayed closed by not being
+triggered).** The previous version of this section predicted that Phase-4 integration would flip
+`DASHBOARD_PIDS`' declared units from `FAHRENHEIT`/`PSI` to `CELSIUS`/`KPA`, and warned that
+doing so would silently reinterpret every `thresholdOverrides` value a user had already saved
+(their numbers were stored assuming a Fahrenheit/PSI wire unit) with no migration in
+`DataStoreSettingsRepository` to catch it. That warning is exactly why OBD-25 took the *other*
+option `core/protocol/MODULE.md` offered: **the declared units did not change.**
+`DisplayUnitDataSource` converts at the `prod` DI seam instead (see "Prod integration"), so
+`ThresholdConfig.seed`, every persisted override, `BoostArc`'s fixed −2..18 PSI sweep and every
+threshold test keep meaning what they meant, and no settings migration is needed. The
+`DisplayUnitDataSourceTest` case "the mismatch this class exists for is still real" pins the two
+catalogs' declared units against each other, so if a future change *does* align them directly,
+that test fails and says the wrapper has become an identity function that should be deleted
+rather than left quietly converting nothing.
 
 This gap does **not** extend to `gaugeOrder`: unlike thresholds, gauge order is reconciled
 against `DASHBOARD_PIDS_BY_ID`/`GAUGE_CATALOG_BY_ID` on every decode (see "Settings screen"
@@ -671,9 +798,10 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   Deliberately self-contained — its own dark `MaterialTheme`, its own banner — rather than
   reusing anything from `gauge/`'s `ConnectionBanner`: this tool must keep working independent
   of the main dashboard UI.
-- `console.di.DebugObdLinkModule` — `src/debug/`-scoped `@Binds ObdLink -> BleObdLink`. The
-  first place in `:app` that binds `ObdLink` at all (OBD-25 will do the same for the release
-  dashboard flow, per flavor).
+- `console.di.DebugObdLinkModule` — `src/debug/`-scoped `@Binds ObdLink -> BleObdLink`. Still
+  the only `ObdLink` *binding* in `:app`, and still console-only: OBD-25's `prod` wiring injects
+  the concrete `BleObdLink` directly (it needs `missingPermissions`/`rememberedDevice` anyway,
+  and a `src/debug/` binding would not exist in `prodRelease`), so the two do not overlap.
 - `console.ConsoleEntryFormatting` — pure display formatting (`formatConsoleTimestamp`,
   `formatConsoleEntryBody`, `formatLinkStateName`) for `:core:ble`'s `ConsoleEntry`, mirroring
   `gauge/GaugeFormatting.kt`'s split between pure formatting and Compose.
@@ -861,6 +989,33 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
 
 ## Known limitations
 
+**OBD-25 integration**
+
+- **`oilTemp` produces nothing on `prod`.** `MercedesPidRegistry.all` contains only `transTemp`,
+  so `PidCatalog.byId("oilTemp")` is `null` and the poll loop emits `PollEvent.UnknownPid` and
+  moves on. The tile renders its "no reading" placeholder with an unverified badge, which is
+  honest, but it is a permanently blank gauge on the van until OBD-35 schedules that channel.
+- **`engineLoad` and `throttle` are decoded but never displayed.** `GAUGE_CATALOG` is pinned to
+  the core four plus rpm (`GaugeCatalogTest`), and the ViewModel requests exactly that, so on
+  the van those two are not even polled — the end-to-end test exercises them by asking the data
+  source for them directly. Surfacing them means adding catalog entries and re-recording the
+  picker screenshot; deliberately not done here.
+- **`PollEvent`s go to logcat only.** `ChannelAvailabilityChanged` is what explains a blank
+  boost gauge ("MAP unsupported on this vehicle") and a blank trans gauge ("decode falsified"),
+  and nothing carries it to the UI — there is no contract for it today. A van-side "why is this
+  gauge empty?" is currently answered by `adb logcat -s ObdPoll`.
+- **No Activity-level test for the connect flow.** `LinkController`'s implementations and
+  `connectActionLabel` are unit-tested, and `ConnectionBanner`'s button is Robolectric-tested,
+  but `MainActivity`'s permission-request/result plumbing itself is not — same gap
+  `ConsoleActivity` has carried since OBD-19, for the same reason (an Activity Result contract
+  needs instrumentation to exercise honestly). 🖐 on-device is the arbiter.
+- **`ObdConnectionService.disconnectLinkOnUserStop` launches on a detached one-shot scope**, on
+  purpose: `stopSelf()` reaches `onDestroy`, which cancels `serviceScope`, and a cancelled
+  `disconnect()` would leave auto-reconnect armed after the user explicitly ended the session.
+  Untested at that seam (it needs a real service teardown), and the reasoning is in the KDoc.
+
+**Earlier**
+
 - `DataSourceModule`'s clock/`FakeVehicleDataSource` timeline mismatch (OBD-10 era) is fixed
   via `RestartAnchoredDataSource` (`src/demo/.../datasource/`): a decorator that records the
   wall-clock instant of every `start()` and derives the injected `Clock` as
@@ -881,8 +1036,10 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   downsample cost bound) — real frame timing needs a device macrobenchmark (OBD-34). See the
   "Sparklines" section above.
 - OBD-21's threshold storage is pegged to whatever unit `DASHBOARD_PIDS` currently declares
-  (today Fahrenheit/PSI), not a fixed SI unit — see "Unit conversion" above for the design
-  rationale and the **known migration gap** for whenever OBD-25 changes those declared units.
+  (Fahrenheit/PSI), not a fixed SI unit. OBD-25 deliberately did **not** change those declared
+  units — `DisplayUnitDataSource` converts at the `prod` DI seam instead — so the migration gap
+  this line used to warn about was never triggered; see "Unit conversion" above. It would return
+  if anyone flips the declared units later.
 - `ConnectionBanner` has no dedicated light-theme/rotation screenshot coverage (only the
   existing `DashboardScreenshotTest` references, which happen to be in the `Ready`/hidden
   state) — `ConnectionBannerTest`'s Robolectric assertions (testTag/stateDescription/text) are
@@ -901,3 +1058,9 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   finite) and reserve `backgroundScope` for the one genuinely-infinite job
   (`viewModel.uiState.collect {}`), whose suspension is a direct Flow handoff rather than a
   scheduled delay and so isn't subject to the same issue.
+
+### Flapping degrades to blank, not to stale (OBD-25 review note)
+Each restart-on-Ready re-runs ELM init and clears readings first, so a link flapping
+faster than init completes leaves tiles at `—` rather than showing last-known values.
+Blank is the safe direction (a stale-but-plausible number is the charter failure); noted
+so nobody "fixes" the blank by caching readings across restarts without staleness rigor.

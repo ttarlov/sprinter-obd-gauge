@@ -1,5 +1,7 @@
 package com.revel.obdgauge.app.gauge
 
+import com.revel.obdgauge.app.service.ConnectionServiceController
+import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.model.LinkState
@@ -110,6 +112,58 @@ class DashboardViewModelTest {
 
             advanceTimeBy(SUBSCRIPTION_TIMEOUT_MILLIS + 1_000)
             advanceUntilIdle()
+            assertEquals(1, recording.stopCallCount)
+        }
+
+    /**
+     * OBD-25's half of the self-heal ownership resolution, from the ViewModel side.
+     *
+     * With the foreground service holding the keep-alive lease, the UI-gated teardown must NOT
+     * stop the shared data source: the screen going off on a dash mount is precisely when
+     * `ObdConnectionService` (and the wake lock it holds) needs polling to continue. Before
+     * OBD-25 this stop always fired, and the service papered over it by re-issuing `start()` on
+     * an observed `Disconnected` — the trigger `reviews/OBD-24-round1.md` measured at 30
+     * `start()`/60 s once a real reconnect policy sits behind the same source.
+     */
+    @Test
+    fun `the UI-gated stop defers to the service's keep-alive lease`() =
+        runTest(testDispatcher) {
+            val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+            val recording = RecordingVehicleDataSource(fake)
+            val keepAlive = PollKeepAlive()
+            val viewModel = DashboardViewModel(recording, fixedClock, InMemorySettingsRepository(), keepAlive)
+            val controller = ConnectionServiceController(recording, backgroundScope, keepAlive) {}
+            controller.start()
+
+            val collectJob = backgroundScope.launch { viewModel.uiState.collect {} }
+            advanceUntilIdle()
+            collectJob.cancel()
+            advanceTimeBy(SUBSCRIPTION_TIMEOUT_MILLIS + 1_000)
+            advanceUntilIdle()
+
+            // The subscription lapsed and WhileSubscribed fired — but the service is running, so
+            // the source was left polling. Remove the keep-alive check and this reads 1.
+            assertEquals(0, recording.stopCallCount)
+
+            // The service ending the session is what actually stops it — one owner, one stop.
+            controller.stop()
+            assertEquals(1, recording.stopCallCount)
+        }
+
+    /** The lease is opt-in: with no service holding one, the pre-OBD-25 teardown is unchanged. */
+    @Test
+    fun `without a keep-alive lease the UI-gated stop still fires`() =
+        runTest(testDispatcher) {
+            val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+            val recording = RecordingVehicleDataSource(fake)
+            val viewModel = DashboardViewModel(recording, fixedClock, InMemorySettingsRepository(), PollKeepAlive())
+
+            val collectJob = backgroundScope.launch { viewModel.uiState.collect {} }
+            advanceUntilIdle()
+            collectJob.cancel()
+            advanceTimeBy(SUBSCRIPTION_TIMEOUT_MILLIS + 1_000)
+            advanceUntilIdle()
+
             assertEquals(1, recording.stopCallCount)
         }
 

@@ -4,7 +4,7 @@ title: Prod-flavor DI wiring
 module: app
 owner: ui-agent
 sprint: 3
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: [OBD-18, OBD-16]

@@ -2,6 +2,7 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
@@ -33,6 +34,9 @@ import javax.inject.Inject
  * @param settingsRepository OBD-21 settings (thresholds/units/gauge order/keep-screen-on):
  *   combined into [uiState] so a settings edit recolors/reformats the dashboard live, without
  *   restarting anything.
+ * @param keepAlive OBD-25: whether [com.revel.obdgauge.app.service.ObdConnectionService] is
+ *   currently keeping the shared data source polling. Defaults to a fresh (inactive) instance so
+ *   a ViewModel built without one behaves exactly as it did before — see [stopUnlessKeptAlive].
  */
 @HiltViewModel
 class DashboardViewModel
@@ -41,6 +45,7 @@ class DashboardViewModel
         private val dataSource: VehicleDataSource,
         private val clock: Clock,
         private val settingsRepository: SettingsRepository,
+        private val keepAlive: PollKeepAlive = PollKeepAlive(),
     ) : ViewModel() {
         // Per-gauge rolling history for OBD-20's sparklines, fed a step inside the same
         // combine() below. Deliberately NOT part of `uiState`'s DashboardUiState — see
@@ -70,7 +75,7 @@ class DashboardViewModel
                     settings.units,
                 )
             }.onStart { dataSource.start(GAUGE_CATALOG) }
-                .onCompletion { dataSource.stop() }
+                .onCompletion { stopUnlessKeptAlive() }
                 .stateIn(
                     scope = viewModelScope,
                     started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
@@ -116,8 +121,40 @@ class DashboardViewModel
             // Belt-and-suspenders: makes teardown deterministic on ViewModel clear rather than
             // relying solely on the async cancellation of the onCompletion above. stop() is
             // idempotent (see FakeVehicleDataSource), so this is safe to call twice.
-            dataSource.stop()
+            stopUnlessKeptAlive()
             super.onCleared()
+        }
+
+        /**
+         * The UI-gated `stop()`, with OBD-25's one condition on it: **do not stop a data source
+         * the foreground service is deliberately keeping alive.**
+         *
+         * [dataSource] is a `@Singleton` with two owners. This ViewModel's
+         * `WhileSubscribed(5_000)` teardown is right when it is the only one — closing the app
+         * should not leave a dongle being polled forever. It is wrong ~5 s after the screen turns
+         * off on a dash mount, which is the exact scenario `ObdConnectionService` (and the wake
+         * lock it holds) exists for: the service would sit there burning a wake lock on a poll
+         * loop this line had just cancelled.
+         *
+         * OBD-24 patched that from the other side, by having the service watch for a fall to
+         * `Disconnected` and re-issue `start()`. `reviews/OBD-24-round1.md` measured what that
+         * costs once a real reconnect policy is behind the same source (30 `start()`/60 s, three
+         * times the OS scan throttle, defeating the very backoff it was racing) and its hazard
+         * statement made resolving the ownership part of OBD-25. This is the resolution's
+         * ViewModel half: the service's intent is a published fact
+         * ([com.revel.obdgauge.app.service.PollKeepAlive]) rather than something inferred from
+         * link state — which never carried that information in the first place, since
+         * `RealVehicleDataSource.connection` just forwards `ObdLink.state` and start/stop does not
+         * touch it.
+         *
+         * `start()` is deliberately NOT gated the same way: it "replaces" per the frozen
+         * contract, so a foregrounding app re-asserting a session it is about to render is
+         * harmless, and gating it would mean the dashboard could open onto a source nobody
+         * started.
+         */
+        private fun stopUnlessKeptAlive() {
+            if (keepAlive.active.value) return
+            dataSource.stop()
         }
 
         private companion object {

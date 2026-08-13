@@ -16,12 +16,15 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.getSystemService
 import com.revel.obdgauge.app.MainActivity
 import com.revel.obdgauge.app.R
+import com.revel.obdgauge.app.link.LinkController
 import com.revel.obdgauge.model.VehicleDataSource
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import java.util.Optional
 import javax.inject.Inject
 
 /**
@@ -87,6 +90,22 @@ class ObdConnectionService : Service() {
     @Inject
     lateinit var dataSource: VehicleDataSource
 
+    /**
+     * OBD-25: published so `DashboardViewModel`'s UI-gated teardown can tell "nobody wants this
+     * source" from "the service is keeping it alive with the screen off". See [PollKeepAlive].
+     */
+    @Inject
+    lateinit var keepAlive: PollKeepAlive
+
+    /**
+     * OBD-25: present on `prod` only (`Optional.empty()` on `demo`). Used for exactly one thing —
+     * hanging up the link when the *user* ends the session (the notification's Stop action, or
+     * swiping the app out of recents). Never in reaction to a link-state transition; see
+     * [LinkController]'s KDoc for why that distinction is the whole hazard resolution.
+     */
+    @Inject
+    lateinit var linkController: Optional<LinkController>
+
     // internal (not private): ObdConnectionServiceTest substitutes a test double controller and
     // reads wakeLock/serviceScope state directly — Robolectric's ShadowService can't reproduce
     // the round-1 B1 crash or observe onDestroy's teardown any other way (see both classes' KDoc).
@@ -117,6 +136,7 @@ class ObdConnectionService : Service() {
             ConnectionServiceController(
                 dataSource = dataSource,
                 scope = serviceScope,
+                keepAlive = keepAlive,
                 onStateChanged = ::postNotification,
             ).also { it.start() }
     }
@@ -130,6 +150,7 @@ class ObdConnectionService : Service() {
         startId: Int,
     ): Int {
         if (intent?.action == ACTION_STOP) {
+            disconnectLinkOnUserStop()
             stopSelf()
         }
         return START_NOT_STICKY
@@ -139,8 +160,29 @@ class ObdConnectionService : Service() {
 
     /** "App swiped out of recents" reads as "disconnect" — see this class's KDoc. */
     override fun onTaskRemoved(rootIntent: Intent?) {
+        disconnectLinkOnUserStop()
         stopSelf()
         super.onTaskRemoved(rootIntent)
+    }
+
+    /**
+     * OBD-25: the two paths above are the user saying "we're done" — the notification's Stop
+     * action and a swipe out of recents. Both must disarm `:core:ble`'s auto-reconnect, or the
+     * app would go on quietly retrying a GATT link to an always-hot OBD port after the user
+     * explicitly ended the session; `BleObdLink.disconnect()` is exactly that disarm.
+     *
+     * These are the **only** two link calls this file makes, and both are user gestures. Nothing
+     * here reacts to a `LinkState` — see [ConnectionServiceController]'s ownership KDoc.
+     *
+     * Deliberately NOT launched on [serviceScope]: `stopSelf()` reaches `onDestroy`, which
+     * cancels that scope, and a cancelled `disconnect()` would leave auto-reconnect armed — the
+     * precise bug this is here to prevent. A one-shot scope outlives the service just long enough
+     * to finish; it is not stored, and `disconnect()` is a bounded dispatcher hop plus a GATT
+     * close, so there is nothing to leak.
+     */
+    private fun disconnectLinkOnUserStop() {
+        val controller = linkController.orElse(null) ?: return
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { controller.disconnect() }
     }
 
     override fun onDestroy() {
