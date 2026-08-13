@@ -23,6 +23,21 @@ real ATF source (packet-proven).
       matching 63−raw. If it instead sits at a small positive value, the model is dead.
 - [ ] Optional richer capture: OBD-48 traffic log during the drive itself
 
+## ★ IDENTIFIED 2026-08-13 (drive test, docs/hardware/session-3-2026-08-13-transtemp.md)
+Byte 1 CONFIRMED as trans temp: tracked cold-soak 18°C → idle 28°C → driven 45°C inversely
++ monotonically, and held 45°C steady for 90s while coolant (byte 11) dropped 95→93°C
+(decoupled — not the coolant echo). Model ATF °C = 63 − raw. Offset SOLID (cold=ambient
+anchor); SLOPE PROVISIONAL (1°C/count assumed, only 1 independent anchor). High-temp wrap
+UNTESTED (drive only reached ~45°C).
+
+Status: byte identified with high confidence → can ship as a REAL gauge, verified=false
+still (scaling provisional) OR verified with a documented caveat. Recommend: wire it,
+badge honest, refine slope when a >60°C sample lands.
+
+## 🖐 REMAINING (scaling refinement, not identification)
+- [ ] One ATF >60°C reading (grade/tow/spirited pull) → confirms slope + high-temp behavior
+- [ ] Optional: STAR/Xentry ATF cross-read for a 2nd independent anchor
+
 ## After proof
 Extraction + verified=true + retire the falsified X-Gauge spec + reassign
 PidIds.TRANS_TEMP in one reviewed change (the OBD-49 endgame, byte 1 instead of byte 18).
