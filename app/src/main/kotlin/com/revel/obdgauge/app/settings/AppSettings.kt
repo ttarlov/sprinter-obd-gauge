@@ -80,6 +80,13 @@ data class AppSettings(
     // raw ECU speed. Written silently by SpeedCalibrator as the factor converges; there is no
     // Settings UI for it in v1.
     val speedCorrectionFactor: Double = 1.0,
+    /**
+     * OBD-62: the resizable-grid layout. `null` until the user has a grid persisted — the dashboard
+     * derives one from [gaugeOrder] via `GridMigration.fromGaugeOrder` in that case, so this stays
+     * additive and a fresh/old install renders exactly as before. Once the grid feature writes a
+     * layout, this becomes the source of truth for tile positions and spans.
+     */
+    val gridLayout: com.revel.obdgauge.app.gauge.grid.GridLayout? = null,
 )
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */

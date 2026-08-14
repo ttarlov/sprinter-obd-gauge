@@ -69,6 +69,28 @@ class SettingsCodecTest {
     }
 
     @Test
+    fun `OBD-62 the grid layout round-trips, and defaults to null when missing`() {
+        val grid =
+            com.revel.obdgauge.app.gauge.grid.GridEngine.repack(
+                4,
+                listOf(
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.BOOST, 0, 0, colSpan = 2, rowSpan = 1),
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.COOLANT, 0, 0),
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.OIL_TEMP, 0, 0),
+                ),
+            )
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(AppSettings(gridLayout = grid), preferences)
+        assertEquals(grid, decodeAppSettings(preferences.toPreferences()).gridLayout)
+
+        // Absent: no grid persisted decodes to null (the dashboard then migrates from gaugeOrder).
+        assertEquals(null, decodeAppSettings(emptyPreferences()).gridLayout)
+    }
+
+    @Test
     fun `a threshold with no boundaries round-trips its nulls`() {
         val settings = AppSettings(thresholdOverrides = mapOf(PidIds.BOOST to GaugeThresholds()))
 
