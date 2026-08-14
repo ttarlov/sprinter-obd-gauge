@@ -47,6 +47,7 @@ class SettingsCodecTest {
                 units = UnitPreferences(temperatureUnit = MeasurementUnit.CELSIUS, pressureUnit = MeasurementUnit.KPA),
                 keepScreenOn = true,
                 pollRate = PollRate.HZ_2,
+                speedCorrectionFactor = 1.1,
             )
 
         val preferences = mutablePreferencesOf()
@@ -54,6 +55,17 @@ class SettingsCodecTest {
         val decoded = decodeAppSettings(preferences.toPreferences())
 
         assertEquals(settings, decoded)
+    }
+
+    @Test
+    fun `OBD-61 the speed correction factor round-trips, and defaults to 1_0 when missing`() {
+        // Present: a learned factor survives a round trip.
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(AppSettings(speedCorrectionFactor = 1.0834), preferences)
+        assertEquals(1.0834, decodeAppSettings(preferences.toPreferences()).speedCorrectionFactor, 0.0)
+
+        // Absent: empty preferences decode to the 1.0 default (no correction).
+        assertEquals(1.0, decodeAppSettings(emptyPreferences()).speedCorrectionFactor, 0.0)
     }
 
     @Test

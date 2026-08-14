@@ -2,6 +2,10 @@ package com.revel.obdgauge.app.di
 
 import android.util.Log
 import com.revel.obdgauge.app.datasource.DisplayUnitDataSource
+import com.revel.obdgauge.app.datasource.SpeedCorrectionDataSource
+import com.revel.obdgauge.app.settings.SettingsRepository
+import com.revel.obdgauge.app.speed.GpsSpeedProvider
+import com.revel.obdgauge.app.speed.SpeedCalibrator
 import com.revel.obdgauge.ble.BleObdLink
 import com.revel.obdgauge.model.VehicleDataSource
 import com.revel.obdgauge.protocol.PollConfig
@@ -61,11 +65,19 @@ object DataSourceModule {
     fun provideVehicleDataSource(
         link: BleObdLink,
         clock: Clock,
+        speedSource: GpsSpeedProvider,
+        settingsRepository: SettingsRepository,
     ): VehicleDataSource {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val real =
             RealVehicleDataSource(link = link, scope = scope, config = PollConfig(), clock = clock, onEvent = ::log)
-        return DisplayUnitDataSource(real, scope)
+        val display = DisplayUnitDataSource(real, scope)
+        // OBD-61: the calibrator observes `real` (RAW km/h speed, before the mph conversion) so
+        // its ratio math compares commensurate km/h against the GPS speed; the correction wraps
+        // `display` (the factor is unitless, so it commutes with the km/h→mph conversion). Demo's
+        // DI chain is untouched — it has no GpsSpeedProvider and shows raw fake speed.
+        val calibrator = SpeedCalibrator(real, speedSource, settingsRepository, scope)
+        return SpeedCorrectionDataSource(display, calibrator.factor, scope)
     }
 
     @Provides

@@ -36,6 +36,20 @@ class UnitConversionTest {
     }
 
     @Test
+    fun `kmh to mph`() {
+        // OBD-61: 1 km/h = 0.621371 mph; 100 km/h = 62.1371 mph; 96.56 km/h ≈ 60 mph.
+        assertEquals(0.621371, UnitConversion.convert(1.0, MeasurementUnit.KMH, MeasurementUnit.MPH), 1e-6)
+        assertEquals(62.1371, UnitConversion.convert(100.0, MeasurementUnit.KMH, MeasurementUnit.MPH), 1e-4)
+    }
+
+    @Test
+    fun `mph to kmh round trips`() {
+        val mph = UnitConversion.convert(105.0, MeasurementUnit.KMH, MeasurementUnit.MPH)
+        val roundTripped = UnitConversion.convert(mph, MeasurementUnit.MPH, MeasurementUnit.KMH)
+        assertEquals(105.0, roundTripped, 1e-9)
+    }
+
+    @Test
     fun `units outside temperature and pressure pass through unchanged`() {
         assertEquals(3000.0, UnitConversion.convert(3000.0, MeasurementUnit.RPM, MeasurementUnit.RPM), 0.0)
     }
@@ -47,8 +61,9 @@ class UnitConversionTest {
         assertEquals(UnitKind.PRESSURE, MeasurementUnit.KPA.kind())
         assertEquals(UnitKind.PRESSURE, MeasurementUnit.PSI.kind())
         assertEquals(UnitKind.OTHER, MeasurementUnit.RPM.kind())
-        assertEquals(UnitKind.OTHER, MeasurementUnit.KMH.kind())
-        assertEquals(UnitKind.OTHER, MeasurementUnit.MPH.kind())
+        // OBD-61: km/h and mph are their own SPEED kind so UnitConversion converts between them.
+        assertEquals(UnitKind.SPEED, MeasurementUnit.KMH.kind())
+        assertEquals(UnitKind.SPEED, MeasurementUnit.MPH.kind())
         assertEquals(UnitKind.OTHER, MeasurementUnit.PERCENT.kind())
     }
 

@@ -3,6 +3,7 @@ package com.revel.obdgauge.app.settings
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS_BY_ID
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
@@ -26,6 +27,7 @@ private val KEY_TEMPERATURE_UNIT = stringPreferencesKey("temperature_unit")
 private val KEY_PRESSURE_UNIT = stringPreferencesKey("pressure_unit")
 private val KEY_KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
 private val KEY_POLL_RATE = stringPreferencesKey("poll_rate")
+private val KEY_SPEED_CORRECTION_FACTOR = doublePreferencesKey("speed_correction_factor")
 
 private const val ENTRY_SEPARATOR = ";"
 private const val FIELD_SEPARATOR = ":"
@@ -51,6 +53,11 @@ fun decodeAppSettings(preferences: Preferences): AppSettings {
             ),
         keepScreenOn = preferences[KEY_KEEP_SCREEN_ON] ?: defaults.keepScreenOn,
         pollRate = preferences[KEY_POLL_RATE]?.let(::decodePollRate) ?: defaults.pollRate,
+        // Missing/malformed (NaN/infinite) → the 1.0 default, matching the file's "worst case is
+        // a silent reset, never a crash" discipline.
+        speedCorrectionFactor =
+            preferences[KEY_SPEED_CORRECTION_FACTOR]?.takeIf { it.isFinite() }
+                ?: defaults.speedCorrectionFactor,
     )
 }
 
@@ -65,6 +72,7 @@ fun encodeAppSettings(
     preferences[KEY_PRESSURE_UNIT] = settings.units.pressureUnit.name
     preferences[KEY_KEEP_SCREEN_ON] = settings.keepScreenOn
     preferences[KEY_POLL_RATE] = settings.pollRate.name
+    preferences[KEY_SPEED_CORRECTION_FACTOR] = settings.speedCorrectionFactor
 }
 
 private fun encodeGaugeOrder(order: List<GaugeOrderEntry>): String =

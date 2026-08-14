@@ -28,6 +28,7 @@ import com.revel.obdgauge.app.link.LinkController
 import com.revel.obdgauge.app.service.ObdConnectionService
 import com.revel.obdgauge.app.settings.SettingsRoute
 import com.revel.obdgauge.app.sparkline.SparklinePoint
+import com.revel.obdgauge.app.speed.SpeedSource
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.StateFlow
@@ -55,6 +56,16 @@ class MainActivity : ComponentActivity() {
      */
     @Inject
     lateinit var linkController: Optional<LinkController>
+
+    /**
+     * OBD-61: the GPS speed provider, present on `prod` and `Optional.empty()` on `demo` (which
+     * has no GPS — see `SpeedSource`'s KDoc). Started/stopped with this Activity's foreground
+     * lifecycle ([onStart]/[onStop]) so GPS is never polled in the background, and only once
+     * `ACCESS_FINE_LOCATION` is granted. Absent, or denied, means the correction feature stays
+     * dormant (factor 1.0) — the Speed tile just shows the raw ECU speed.
+     */
+    @Inject
+    lateinit var speedSource: Optional<SpeedSource>
 
     /**
      * OBD-25 / OBD-17: the BLE runtime permissions, requested **at the connect moment** rather
@@ -86,6 +97,17 @@ class MainActivity : ComponentActivity() {
     private val requestNotificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    /**
+     * OBD-61: FINE_LOCATION for GPS speed. Requested once on first launch (like
+     * [requestNotificationPermission]); on grant, the GPS provider is started immediately so the
+     * feature is live this session rather than only after the next foreground. A denial is not an
+     * error to render — the correction simply stays at factor 1.0.
+     */
+    private val requestLocationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) startSpeedSource()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Explicit dark scrims for both bars: ObdGaugeTheme forces dark unconditionally (see
@@ -96,6 +118,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(TRANSPARENT),
         )
         requestNotificationPermissionIfNeeded()
+        requestLocationPermissionIfNeeded()
         // OBD-24: starts the connection foreground service once per process, the moment the app
         // is opened — "the app's connection lifecycle," not "the Activity's." The service is
         // idempotent to a repeat start (ObdConnectionService.onStartCommand doesn't re-trigger
@@ -173,6 +196,39 @@ class MainActivity : ComponentActivity() {
     private fun connectNow() {
         lifecycleScope.launch { linkController.orElse(null)?.connect() }
     }
+
+    /**
+     * OBD-61: GPS speed updates follow the Activity's foreground lifecycle — started when it
+     * becomes visible, stopped when it leaves. [startSpeedSource] is a no-op without the
+     * permission or on `demo` (empty [speedSource]), and [SpeedSource.start]/`stop` are
+     * idempotent, so a config-change round-trip never leaks a second listener.
+     */
+    override fun onStart() {
+        super.onStart()
+        startSpeedSource()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        speedSource.orElse(null)?.stop()
+    }
+
+    /** Starts GPS speed updates iff the permission is granted and a provider exists. */
+    private fun startSpeedSource() {
+        if (hasLocationPermission()) {
+            speedSource.orElse(null)?.start()
+        }
+    }
+
+    /** OBD-61: requests FINE_LOCATION once, only when needed, not already granted, and available. */
+    private fun requestLocationPermissionIfNeeded() {
+        if (speedSource.isEmpty || hasLocationPermission()) return
+        requestLocationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
 
     /** B6: requests POST_NOTIFICATIONS once, only when it's both needed and not already granted. */
     private fun requestNotificationPermissionIfNeeded() {

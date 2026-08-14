@@ -31,12 +31,49 @@ val RPM_PID_DEFINITION: PidDefinition =
     )
 
 /**
- * All gauges the OBD-42 swap picker may offer: [DASHBOARD_PIDS] plus [RPM_PID_DEFINITION].
- * Neutral-colored automatically — [ThresholdConfig.seed] has no entry for [PidIds.RPM], and
- * [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL] for any id absent from its
- * threshold table, exactly like [PidIds.BOOST].
+ * The channel id for vehicle speed, mirrored from `:core:protocol`'s `ProtocolPidIds.SPEED`
+ * ("speed"). Defined locally because `:core:protocol` is a `prodImplementation`-only dependency
+ * (see `app/build.gradle.kts`) and this file is flavor-common `src/main/` — the app-model
+ * `PidIds` does not name speed. A `testProd` parity assertion pins this equal to
+ * `ProtocolPidIds.SPEED` so the two can never silently drift.
  */
-val GAUGE_CATALOG: List<PidDefinition> = DASHBOARD_PIDS + RPM_PID_DEFINITION
+const val SPEED_PID_ID: String = "speed"
+
+private const val SPEED_STANDARD_MODE = 1
+private const val SPEED_PID = 0x0D
+private const val SPEED_UNUSED_PARSE_RESULT = 0.0
+
+/**
+ * OBD-61's speed gauge: standard PID `010D`, declared in [MeasurementUnit.MPH] so the existing
+ * [DisplayUnitDataSource][com.revel.obdgauge.app.datasource.DisplayUnitDataSource] seam
+ * auto-converts the protocol layer's km/h into mph (the same way it turns coolant °C into °F) —
+ * no per-gauge conversion code. Declared exactly like [RPM_PID_DEFINITION]: a `verified` standard
+ * mode-01 PID with a placeholder parse (the real decode lives in `:core:protocol`).
+ *
+ * Swap-only, like rpm: added to [GAUGE_CATALOG] but deliberately NOT to [DASHBOARD_PIDS], so it
+ * is offered by the long-press picker without becoming a fifth always-visible tile on a fresh
+ * install. Because it *is* in [GAUGE_CATALOG], `DashboardViewModel.start(GAUGE_CATALOG)` polls it
+ * even while it occupies no visible slot — which is what lets OBD-61's GPS calibrator observe the
+ * raw ECU speed continuously.
+ */
+val SPEED_PID_DEFINITION: PidDefinition =
+    PidDefinition(
+        id = SPEED_PID_ID,
+        label = "Speed",
+        unit = MeasurementUnit.MPH,
+        request = ObdRequest.StandardPid(mode = SPEED_STANDARD_MODE, pid = SPEED_PID),
+        parse = { SPEED_UNUSED_PARSE_RESULT },
+        pollPriority = PollPriority.FAST,
+        verified = true,
+    )
+
+/**
+ * All gauges the OBD-42 swap picker may offer: [DASHBOARD_PIDS] plus [RPM_PID_DEFINITION] and
+ * [SPEED_PID_DEFINITION] (OBD-61). Neutral-colored automatically — [ThresholdConfig.seed] has no
+ * entry for [PidIds.RPM] or speed, and [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL]
+ * for any id absent from its threshold table, exactly like [PidIds.BOOST].
+ */
+val GAUGE_CATALOG: List<PidDefinition> = DASHBOARD_PIDS + RPM_PID_DEFINITION + SPEED_PID_DEFINITION
 
 /** [GAUGE_CATALOG] keyed by [PidDefinition.id]. */
 val GAUGE_CATALOG_BY_ID: Map<String, PidDefinition> = GAUGE_CATALOG.associateBy { it.id }

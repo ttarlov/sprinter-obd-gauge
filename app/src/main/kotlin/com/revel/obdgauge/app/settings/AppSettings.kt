@@ -75,6 +75,11 @@ data class AppSettings(
     val units: UnitPreferences = UnitPreferences(),
     val keepScreenOn: Boolean = false,
     val pollRate: PollRate = PollRate.HZ_4,
+    // OBD-61: the GPS-auto-learned speedometer correction multiplier (true = ecu × factor).
+    // 1.0 means "no correction / not yet learned", which is what a fresh install renders — the
+    // raw ECU speed. Written silently by SpeedCalibrator as the factor converges; there is no
+    // Settings UI for it in v1.
+    val speedCorrectionFactor: Double = 1.0,
 )
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */

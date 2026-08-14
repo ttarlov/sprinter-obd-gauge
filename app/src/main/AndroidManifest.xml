@@ -45,6 +45,15 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+      OBD-61: GPS speed for the auto-calibrated Speed tile. ACCESS_FINE_LOCATION is a runtime
+      (dangerous) permission requested by MainActivity; a denial leaves the feature dormant
+      (correction factor 1.0, tile shows raw ECU speed) rather than affecting anything else. The
+      `demo` flavor declares it too (single merged manifest) but binds no SpeedSource, so it never
+      requests updates. Foreground-only use — no background-location permission is declared.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
         android:name=".ObdGaugeApplication"
         android:allowBackup="true"

@@ -15,8 +15,31 @@ import org.junit.Test
  */
 class GaugeCatalogTest {
     @Test
-    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm, and nothing else`() {
-        assertEquals(DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM, GAUGE_CATALOG.map { it.id }.toSet())
+    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm and speed, and nothing else`() {
+        assertEquals(
+            DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM + SPEED_PID_ID,
+            GAUGE_CATALOG.map { it.id }.toSet(),
+        )
+    }
+
+    @Test
+    fun `OBD-61 speed is a swap-only catalog gauge, never a default dashboard tile`() {
+        // Same discipline as rpm: adding speed to DASHBOARD_PIDS would make it a default-visible
+        // tile (DEFAULT_GAUGE_ORDER derives from DASHBOARD_PIDS). It must be picker-only.
+        assertFalse(SPEED_PID_ID in DASHBOARD_PIDS_BY_ID)
+        assertTrue(SPEED_PID_ID in GAUGE_CATALOG_BY_ID)
+    }
+
+    @Test
+    fun `OBD-61 speed is declared in MPH, verified, and classifies NEUTRAL`() {
+        val speed = GAUGE_CATALOG_BY_ID.getValue(SPEED_PID_ID)
+        assertEquals(MeasurementUnit.MPH, speed.unit)
+        // Standard mode-01 PID 010D — SAE-standard, not a hypothesis.
+        assertTrue(speed.verified)
+        assertEquals("Speed", speed.label)
+        // No seed threshold entry → neutral coloring, like rpm and boost.
+        assertFalse(SPEED_PID_ID in ThresholdConfig.seed)
+        assertEquals(ThresholdZone.NEUTRAL, ThresholdConfig.classify(SPEED_PID_ID, ARBITRARY_SPEED_VALUE))
     }
 
     @Test
@@ -110,5 +133,6 @@ class GaugeCatalogTest {
 
     private companion object {
         const val ARBITRARY_RPM_VALUE = 3000.0
+        const val ARBITRARY_SPEED_VALUE = 65.0
     }
 }
