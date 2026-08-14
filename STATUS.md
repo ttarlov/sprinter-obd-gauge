@@ -14,8 +14,8 @@
 |---|---|
 | Current phase | **SPRINT 3 DONE + oil temp live (OBD-50) + TRANS TEMP IDENTIFIED (OBD-60)** — app reads real coolant/RPM/oil/trans/load. 4 solid tiles + boost est. Remaining: Sprint 4, backlog |
 | Repo | Gate green @ `299f15b`; develop synced; no open branches. VAN BUILD: builds/van/app-prod-debug.apk @ 299f15b (trans temp LIVE, byte-11 raw−50) — installed on the Pixel. Main-channel APK @ 299f15b in builds/main/ |
-| Blockers | None. 🖐 Taras (optional): a true cold-start (overnight) drive would be the emphatic final confirmation of the trans-temp identification + gives boost its MAP calibration point. Not required — trans temp ships on the 2495-sample warm-restart drive. |
-| Next action | Nothing pending. Trans temp identified & shipped (OBD-60, record 21 30 byte 11, °C = raw − 50) from a 2495-sample logged drive 2026-08-13 — the rigorous re-ID OBD-51 asked for; decisive test was a 25 °C load-decoupling from coolant. Boost still `verified=false` (needs a MAP calibration point — no independent boost source on this van). Sprint 4 available on request. |
+| Blockers | None. |
+| Next action | Nothing pending. **Trans temp CONFIRMED** (OBD-60, record 21 30 byte 11, °C = raw − 50) across two independent drives — warm-restart (2495 samp) + true cold-start (5749 samp, 2026-08-14): max −49 °C load-decoupling from coolant kills the echo hypothesis dead; mechanism = coolant-warmed ATF heat exchanger (idle-coupled, load-decoupled). **GPS speed tile shipped** (OBD-61 + 61b): swap-in Speed gauge, auto-learns the tire-size correction factor from phone GPS, applies to displayed mph; 61b fixed a maxSdkVersion=30 cap that would've disabled it on Android 12+. Boost still `verified=false` (no independent MAP source on this van; high-load inputs healthy — MAF 152 g/s). Van APK @ 436cd19 installed. Sprint 4 available on request. |
 
 ## Wave board
 
