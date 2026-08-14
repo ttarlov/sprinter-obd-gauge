@@ -3,8 +3,12 @@ package com.revel.obdgauge.app.gauge
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.revel.obdgauge.app.gauge.grid.GridEngine
+import com.revel.obdgauge.app.gauge.grid.GridLayout
+import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
+import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -66,6 +70,80 @@ class DashboardScreenshotTest {
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "dashboard_portrait.png")
     }
 
+    // OBD-63: spanning-grid scenarios. Each passes an explicit GridLayout so the reference
+    // documents a specific span/side-by-side arrangement, not just the migrated default. The
+    // engine repacks by packing-order + spans (positions in these fixtures are placeholders), so
+    // these fix the ORDER and SPANS and let repack settle the cells — exactly the production path.
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `dashboard renders a 2x1 wide tile`() {
+        // Boost runs two columns wide in the top-left; the other three flow around it.
+        captureGrid(
+            "dashboard_grid_wide.png",
+            gridOf(
+                GridPlacement(BOOST, 0, 0, colSpan = 2, rowSpan = 1),
+                GridPlacement(COOLANT, 0, 0),
+                GridPlacement(OIL, 0, 0),
+                GridPlacement(TRANS, 0, 0),
+            ),
+        )
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `dashboard renders six tiles with speed beside oil`() {
+        // Six 1×1 tiles: coolant, oil, speed, boost fill the top row (oil at col 1, speed at
+        // col 2 → side-by-side); trans and rpm wrap to the second row.
+        captureGrid(
+            "dashboard_grid_six.png",
+            gridOf(
+                GridPlacement(COOLANT, 0, 0),
+                GridPlacement(OIL, 0, 0),
+                GridPlacement(SPEED, 0, 0),
+                GridPlacement(BOOST, 0, 0),
+                GridPlacement(TRANS, 0, 0),
+                GridPlacement(RPM, 0, 0),
+            ),
+        )
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `dashboard renders a 2x2 tile`() {
+        // Boost is a big 2×2 square in the top-left; the temp tiles flow around it.
+        captureGrid(
+            "dashboard_grid_big.png",
+            gridOf(
+                GridPlacement(BOOST, 0, 0, colSpan = 2, rowSpan = 2),
+                GridPlacement(COOLANT, 0, 0),
+                GridPlacement(OIL, 0, 0),
+                GridPlacement(TRANS, 0, 0),
+            ),
+        )
+    }
+
+    private fun captureGrid(
+        fileName: String,
+        grid: GridLayout,
+    ) {
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(
+                    sampleUiState(),
+                    gridLayout = grid,
+                    sparklines = sampleSparklines(),
+                )
+            }
+        }
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + fileName)
+    }
+
+    // Repack into 4 columns (the landscape grid width) so the fixture is a valid, production-shaped
+    // layout regardless of the placeholder positions passed in.
+    private fun gridOf(vararg placements: GridPlacement): GridLayout =
+        GridEngine.repack(columns = 4, ordered = placements.toList())
+
     // OBD-20 AC: the references should show sparklines, not just bare tiles — a small synthetic
     // rising trend per gauge, distinct enough from a flat line to be visibly a chart.
     private fun sampleSparklines(): Map<String, StateFlow<List<SparklinePoint>>> =
@@ -101,6 +179,15 @@ class DashboardScreenshotTest {
         // Lives under src/testDemo/ (OBD-12) alongside this test, which only runs for the
         // `demo` flavor.
         const val SCREENSHOT_DIR = "src/testDemo/screenshots/"
+
+        // Gauge ids used by the OBD-63 spanning-grid fixtures above.
+        const val COOLANT = PidIds.COOLANT
+        const val OIL = PidIds.OIL_TEMP
+        const val TRANS = PidIds.TRANS_TEMP
+        const val BOOST = PidIds.BOOST
+        const val RPM = PidIds.RPM
+        const val SPEED = SPEED_PID_ID
+
         const val SPARKLINE_SAMPLE_COUNT = 20
 
         // 250 ms = a nominal 4 Hz cadence, well under SparklineChart's 2 s gap threshold, so the

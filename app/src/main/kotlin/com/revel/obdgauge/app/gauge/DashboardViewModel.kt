@@ -2,6 +2,7 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
@@ -87,6 +88,16 @@ class DashboardViewModel
             settingsRepository.settings
                 .map { it.gaugeOrder }
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), DEFAULT_GAUGE_ORDER)
+
+        /**
+         * OBD-63: the persisted spanning-grid layout, or `null` until one is written — the
+         * dashboard derives one from [gaugeOrder] in that case (see `GaugeDashboard`). Passed
+         * straight through unresolved so the screen can repack it per orientation.
+         */
+        val gridLayout: StateFlow<GridLayout?> =
+            settingsRepository.settings
+                .map { it.gridLayout }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), AppSettings().gridLayout)
 
         /** OBD-21's keep-screen-on toggle; `MainActivity` applies it to the window. */
         val keepScreenOn: StateFlow<Boolean> =

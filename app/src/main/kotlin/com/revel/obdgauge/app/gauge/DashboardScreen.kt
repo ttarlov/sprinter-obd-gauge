@@ -3,7 +3,6 @@ package com.revel.obdgauge.app.gauge
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -12,8 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -22,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -42,6 +38,10 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.revel.obdgauge.app.gauge.grid.GaugeGrid
+import com.revel.obdgauge.app.gauge.grid.GridEngine
+import com.revel.obdgauge.app.gauge.grid.GridLayout
+import com.revel.obdgauge.app.gauge.grid.GridMigration
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
 import com.revel.obdgauge.app.sparkline.SparklineChart
@@ -65,6 +65,13 @@ internal const val TILE_PADDING_DP = 16
 internal const val TILE_BACKGROUND_ALPHA = 0.18f
 private const val TILE_SPACING_DP = 12
 private const val SPARKLINE_TOP_PADDING_DP = 4
+
+// OBD-63: grid width per orientation. Landscape (dash-mount primary) is 4 wide so the migrated
+// default (4 core gauges, 1×1) fills one row exactly like the pre-grid dashboard; portrait is 2
+// wide so tiles stay legible when stacked. GridEngine.withColumns repacks the resolved layout into
+// whichever applies for the current orientation.
+private const val GRID_COLUMNS_LANDSCAPE = 4
+private const val GRID_COLUMNS_PORTRAIT = 2
 
 // Gear glyph for the settings entry point — plain text/emoji, matching this codebase's
 // icon-free style (no material-icons dependency).
@@ -94,6 +101,11 @@ private const val SETTINGS_GLYPH = "⚙"
  *   original hardcoded order/visibility so a caller that doesn't pass settings renders exactly
  *   as before OBD-21. OBD-42's picker also reads this to compute each tile's swap candidates
  *   (`candidateGaugesFor` in `GaugeCatalog.kt`) — excluding whatever's already visible elsewhere.
+ * @param gridLayout OBD-63: the persisted spanning-grid layout (`AppSettings.gridLayout`), or
+ *   `null` when none is stored yet — in which case one is derived from [gaugeOrder] via
+ *   [GridMigration.fromGaugeOrder], so a fresh/old install renders exactly as before. Positions
+ *   and spans of tiles come from here; [gaugeOrder] still drives visibility and the swap picker's
+ *   candidate list.
  * @param sparklines per-gauge-id rolling history (OBD-20), each a [StateFlow] rather than a
  *   plain `List` — collected only by the leaf [GaugeSparklineStrip], never read here or by
  *   [GaugeTile]/[BoostTile] themselves, so a 4 Hz sparkline tick recomposes only that one leaf
@@ -118,6 +130,7 @@ fun GaugeDashboard(
     uiState: DashboardUiState,
     modifier: Modifier = Modifier,
     gaugeOrder: List<GaugeOrderEntry> = DEFAULT_GAUGE_ORDER,
+    gridLayout: GridLayout? = null,
     sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
     onSettingsClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
@@ -172,10 +185,10 @@ fun GaugeDashboard(
                 BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     GaugeTileGrid(
                         isLandscape = maxWidth >= maxHeight,
-                        visibleIds = visibleIds,
                         uiState = uiState,
                         sparklines = sparklines,
                         gaugeOrder = gaugeOrder,
+                        gridLayout = gridLayout,
                         pickerTileId = pickerTileId,
                         onLongPress = { id -> pickerTileId = id },
                         onDismissPicker = dismissPicker,
@@ -188,12 +201,20 @@ fun GaugeDashboard(
 }
 
 /**
- * The landscape single-[Row] / portrait scrollable-[Column] tile layout, extracted out of
- * [GaugeDashboard] so that composable's own body stays focused on Surface/scrim/picker-state
- * plumbing. Every [visibleIds] entry is `key`ed by its own id (unchanged from pre-OBD-42
- * behavior) — this is what gives OBD-21's reorder-in-settings its stable per-gauge composition
- * identity as a tile moves position. A swap changes *which* id occupies a position, which is a
- * *different* id — Compose tears down that key's subtree and mounts the new id fresh.
+ * OBD-63: the spanning-grid tile layout — the Phase-2 replacement for the pre-grid landscape
+ * single-`Row` / portrait scrollable-`Column`, extracted out of [GaugeDashboard] so that
+ * composable's own body stays focused on Surface/scrim/picker-state plumbing. Tiles are positioned
+ * by their [com.revel.obdgauge.app.gauge.grid.GridPlacement] (col/row/colSpan/rowSpan) via
+ * [GaugeGrid], which lets gauges sit side-by-side, run wide/tall, and exceed four in count.
+ *
+ * The layout to render is resolved here: the persisted [gridLayout] if present, otherwise one
+ * migrated from [gaugeOrder] ([GridMigration.fromGaugeOrder]) — then repacked into the current
+ * orientation's column count ([GridEngine.withColumns]). With no persisted grid (the Phase-2
+ * reality — nothing writes one yet), this is always the migration, so a swap that rewrites
+ * [gaugeOrder] re-derives a fresh layout with the new id in the same cell: the picker path is
+ * unchanged. Each tile is `key`ed by its id *inside* [GaugeGrid] (see its KDoc) — the same stable
+ * per-gauge composition identity the pre-grid layout gave, which OBD-47's grow-in and OBD-44's
+ * "never remounted across picker mode" both depend on.
  *
  * OBD-47: [growOrigins] is what lets the freshly-mounted id still animate in like a continuation
  * of the tap that caused it, despite that teardown/remount — it's a plain `remember`ed map (not
@@ -210,10 +231,10 @@ fun GaugeDashboard(
 @Suppress("LongParameterList") // one param per input the per-tile GaugeSlot calls below actually need.
 private fun GaugeTileGrid(
     isLandscape: Boolean,
-    visibleIds: List<String>,
     uiState: DashboardUiState,
     sparklines: Map<String, StateFlow<List<SparklinePoint>>>,
     gaugeOrder: List<GaugeOrderEntry>,
+    gridLayout: GridLayout?,
     pickerTileId: String?,
     onLongPress: (String) -> Unit,
     onDismissPicker: () -> Unit,
@@ -225,59 +246,33 @@ private fun GaugeTileGrid(
     val growOrigins = remember { mutableMapOf<String, Rect>() }
     val recordGrowOrigin: (id: String, boundsInRoot: Rect) -> Unit = { id, bounds -> growOrigins[id] = bounds }
     val consumeGrowOrigin: (id: String) -> Rect? = { id -> growOrigins.remove(id) }
-    if (isLandscape) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(TILE_SPACING_DP.dp),
-            horizontalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
-        ) {
-            visibleIds.forEach { id ->
-                key(id) {
-                    GaugeSlot(
-                        id = id,
-                        uiState = uiState,
-                        sparkline = sparklines[id],
-                        gaugeOrder = gaugeOrder,
-                        isPicking = pickerTileId == id,
-                        onLongPress = { onLongPress(id) },
-                        onDismissPicker = onDismissPicker,
-                        onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
-                        recordGrowOrigin = recordGrowOrigin,
-                        consumeGrowOrigin = consumeGrowOrigin,
-                        modifier = Modifier.weight(1f).fillMaxSize(),
-                    )
-                }
-            }
+
+    val columns = if (isLandscape) GRID_COLUMNS_LANDSCAPE else GRID_COLUMNS_PORTRAIT
+    val layout =
+        remember(gridLayout, gaugeOrder, columns) {
+            val base = gridLayout ?: GridMigration.fromGaugeOrder(gaugeOrder, columns)
+            GridEngine.withColumns(base, columns)
         }
-    } else {
-        // No fixed tile height here: each tile sizes to its own content (label + value, or
-        // label + arc + value for boost). Combined with the scroll below, this is what
-        // guarantees portrait never clips regardless of font scale or screen height.
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(TILE_SPACING_DP.dp),
-            verticalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
-        ) {
-            visibleIds.forEach { id ->
-                key(id) {
-                    GaugeSlot(
-                        id = id,
-                        uiState = uiState,
-                        sparkline = sparklines[id],
-                        gaugeOrder = gaugeOrder,
-                        isPicking = pickerTileId == id,
-                        onLongPress = { onLongPress(id) },
-                        onDismissPicker = onDismissPicker,
-                        onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
-                        recordGrowOrigin = recordGrowOrigin,
-                        consumeGrowOrigin = consumeGrowOrigin,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        }
+
+    GaugeGrid(
+        columns = columns,
+        layout = layout,
+        spacing = TILE_SPACING_DP.dp,
+        modifier = Modifier.fillMaxSize().padding(TILE_SPACING_DP.dp),
+    ) { id ->
+        GaugeSlot(
+            id = id,
+            uiState = uiState,
+            sparkline = sparklines[id],
+            gaugeOrder = gaugeOrder,
+            isPicking = pickerTileId == id,
+            onLongPress = { onLongPress(id) },
+            onDismissPicker = onDismissPicker,
+            onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
+            recordGrowOrigin = recordGrowOrigin,
+            consumeGrowOrigin = consumeGrowOrigin,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

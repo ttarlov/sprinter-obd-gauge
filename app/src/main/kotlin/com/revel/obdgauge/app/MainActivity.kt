@@ -140,6 +140,7 @@ class MainActivity : ComponentActivity() {
                 // isn't STARTED, rather than collecting for as long as the Activity exists.
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
+                val gridLayout by viewModel.gridLayout.collectAsStateWithLifecycle()
                 val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
 
                 // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
@@ -163,6 +164,7 @@ class MainActivity : ComponentActivity() {
                     GaugeDashboard(
                         uiState = uiState,
                         gaugeOrder = gaugeOrder,
+                        gridLayout = gridLayout,
                         sparklines = sparklines,
                         onSettingsClick = { showSettings = true },
                         onSwapGauge = viewModel::swapGauge,

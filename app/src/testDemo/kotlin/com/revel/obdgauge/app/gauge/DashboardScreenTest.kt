@@ -7,7 +7,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performScrollTo
 import com.revel.obdgauge.app.ui.theme.GaugeAmber
 import com.revel.obdgauge.app.ui.theme.GaugeGreen
 import com.revel.obdgauge.app.ui.theme.GaugeNeutral
@@ -116,7 +115,10 @@ class DashboardScreenTest {
             ObdGaugeTheme { GaugeDashboard(dashboardUiStateFor(Scenario.TOWN_HEAT_SOAK)) }
         }
 
-        GAUGE_VALUE_TAGS.forEach { tag -> composeTestRule.onNodeWithTag(tag).performScrollTo().assertIsDisplayed() }
+        // OBD-63: portrait is now a 2-column spanning grid (GaugeGrid), so the four default tiles
+        // fit as a 2×2 that fills the viewport without scrolling — no performScrollTo() needed (and
+        // it would throw, there being no scroll parent when everything already fits).
+        GAUGE_VALUE_TAGS.forEach { tag -> composeTestRule.onNodeWithTag(tag).assertIsDisplayed() }
     }
 
     @Config(qualifiers = "w800dp-h360dp-land")
