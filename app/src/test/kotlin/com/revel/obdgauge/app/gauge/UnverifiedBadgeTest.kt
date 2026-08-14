@@ -46,11 +46,11 @@ class UnverifiedBadgeTest {
     fun `unverified gauges show the badge, verified gauges do not`() {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
-        // OBD-50: oilTemp moved to the verified side once PidRegistry.oilTemp wired it to the
-        // live-verified standard PID 015C. OBD-57: boost joined transTemp on the unverified side —
-        // it is now the speed-density estimate ("Est."), so its badge shows too.
-        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertIsDisplayed()
+        // OBD-50: oilTemp verified via standard 015C. OBD-60: transTemp joined the verified side too —
+        // byte 11 of the `21 30` record was identified on-vehicle, so its badge is gone. Boost is now
+        // the sole unverified core gauge (the speed-density "Est."), so only its badge shows.
         composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertDoesNotExist()
         composeTestRule.onNodeWithTag("gauge-coolant-unverified-badge").assertDoesNotExist()
         composeTestRule.onNodeWithTag("gauge-oilTemp-unverified-badge").assertDoesNotExist()
     }
@@ -59,26 +59,26 @@ class UnverifiedBadgeTest {
     fun `tapping the badge opens the raw-response viewer with request, value, and unverified note`() {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
-        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").performClick()
+        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").performClick()
 
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("raw-viewer-boost").assertIsDisplayed()
         composeTestRule
-            .onNodeWithTag("raw-viewer-transTemp-request")
-            .assertTextEquals("Request: ATSH07E12130 ATCRA032200000000 → 220543")
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp-value").assertTextEquals("Value: 215°F")
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp-unverified-note").assertIsDisplayed()
+            .onNodeWithTag("raw-viewer-boost-request")
+            .assertTextEquals("Request: Mode 01 PID 0B")
+        composeTestRule.onNodeWithTag("raw-viewer-boost-value").assertTextEquals("Value: 5.0 PSI")
+        composeTestRule.onNodeWithTag("raw-viewer-boost-unverified-note").assertIsDisplayed()
     }
 
     @Test
     fun `closing the raw-response viewer dismisses it`() {
-        // transTemp (OBD-50: oilTemp is verified now, see the class KDoc note above).
+        // boost (OBD-60: transTemp is verified now, so boost is the unverified exemplar).
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
-        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").performClick()
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").performClick()
+        composeTestRule.onNodeWithTag("raw-viewer-boost").assertIsDisplayed()
 
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp-close").performClick()
+        composeTestRule.onNodeWithTag("raw-viewer-boost-close").performClick()
 
-        composeTestRule.onNodeWithTag("raw-viewer-transTemp").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("raw-viewer-boost").assertDoesNotExist()
     }
 
     // Mutation (c) killer (round-1 review, reviews/OBD-24-round1.md): "drop the settled gate"
@@ -89,8 +89,8 @@ class UnverifiedBadgeTest {
     // the mutant would remove, deterministically.
     @Test
     fun `badge does not render while the tile is mid-shrink or mid-grow (settled = false)`() {
-        // transTemp (OBD-50: oilTemp is verified now, see the class KDoc note above).
-        val unverifiedTile = readyState().transTemp
+        // boost (OBD-60: transTemp is verified now, so boost is the unverified exemplar).
+        val unverifiedTile = readyState().boost
 
         composeTestRule.setContent {
             ObdGaugeTheme {
@@ -105,12 +105,12 @@ class UnverifiedBadgeTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertDoesNotExist()
     }
 
     @Test
     fun `badge renders once settled becomes true for the same unverified tile`() {
-        val unverifiedTile = readyState().transTemp
+        val unverifiedTile = readyState().boost
 
         composeTestRule.setContent {
             ObdGaugeTheme {
@@ -125,7 +125,7 @@ class UnverifiedBadgeTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("gauge-transTemp-unverified-badge").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("gauge-boost-unverified-badge").assertIsDisplayed()
     }
 
     // B9 MINOR: the visible glyph stays small, but the tap target must meet Android's 48dp
@@ -135,7 +135,7 @@ class UnverifiedBadgeTest {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
         composeTestRule
-            .onNodeWithTag("gauge-transTemp-unverified-badge")
+            .onNodeWithTag("gauge-boost-unverified-badge")
             .assertWidthIsAtLeast(MIN_TOUCH_TARGET_DP.dp)
             .assertHeightIsAtLeast(MIN_TOUCH_TARGET_DP.dp)
     }
@@ -147,7 +147,7 @@ class UnverifiedBadgeTest {
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(readyState()) } }
 
         composeTestRule
-            .onNodeWithTag("gauge-transTemp-unverified-badge")
+            .onNodeWithTag("gauge-boost-unverified-badge")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
             .assert(
                 SemanticsMatcher.expectValue(

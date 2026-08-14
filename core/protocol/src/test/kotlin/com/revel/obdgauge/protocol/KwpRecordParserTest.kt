@@ -6,14 +6,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The `21 30` reassembly, against the records the van actually sent (OBD-49 framing captures).
+ * The `21 30` reassembly, against the records the van actually sent (OBD-49 framing captures), plus
+ * the transmission-fluid-temperature decode at byte 11 (`°C = raw − 50`, identified on-vehicle,
+ * OBD-60, `docs/hardware/session-5-2026-08-13-transtemp-IDENTIFIED.md`).
  *
- * This suite is about the **reassembly machinery** — kept for OBD-51 to re-identify the real
- * transmission-temperature byte, since the OBD-55 byte-1 `63 − raw` decode was falsified on-vehicle
- * (OBD-59, `docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md`) and retired. So the
- * assertions here read **raw bytes** and the byte-11 coolant probe (`raw − 50`, exact on an integer
- * byte), never a trans-temp value: what must hold is that the reassembly lands on the right offsets,
- * which is exactly what the re-identification will depend on.
+ * Two things must hold: the reassembly lands on the right offsets (raw-byte anchors below), and byte
+ * 11 decodes to transmission temperature. The byte-1 `63 − raw` candidate (OBD-55) that this replaces
+ * was falsified on-vehicle (byte 1 jumps at operating RPM — OBD-59); byte 1 survives here only as a
+ * raw-offset reassembly anchor, never as a decode.
  */
 class KwpRecordParserTest {
     private val spec = TcuRecordRegistry.transTempRecord
@@ -55,20 +55,31 @@ class KwpRecordParserTest {
         )
     }
 
-    // OBD-59: the byte-1 `63 − raw` decode was FALSIFIED on-vehicle (byte 1 jumps at operating RPM;
-    // docs/hardware/session-4-2026-08-13-transtemp-FALSIFIED.md) and retired, so the byte-1 anchor,
-    // the coolant-decoupling identification, and the inverse-law tests that pinned it are gone with
-    // it — there is no trans-temp decode left to assert. The reassembly-correctness checks below
-    // (raw bytes and the byte-11 coolant probe) are what OBD-51 re-identifies the real byte on top of.
+    @Test
+    fun `byte 11 decodes transmission temp at 92, 91 and 97 C across the low-load captures`() {
+        // Byte 11 = ATF temp, °C = raw − 50 (OBD-60). At these idle / post-stall / post-drive
+        // captures the transmission makes little heat, so ATF ≈ coolant (92/91/97 °C) — which is why
+        // earlier sessions mistook it for a coolant echo. It moved +6 °C over the session, so it is
+        // live data, and a reassembly off by one byte cannot land on all three of these.
+        assertEquals(92.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.WARM_IDLE)), 0.0)
+        assertEquals(91.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.POST_STALL)), 0.0)
+        assertEquals(97.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.POST_DRIVE)), 0.0)
+    }
 
     @Test
-    fun `the byte-11 coolant anchor holds at 92, 91 and 97 C across the session`() {
-        // The reassembly-correctness probe, not a channel: engine coolant read out of the TCU's own
-        // record. It moved +6 C over a 15-minute drive, so it is live data rather than a
-        // constant — and a reassembly off by one byte cannot land on all three of these.
-        assertEquals(92.0, TcuRecordRegistry.tcuCoolantCelsius(recordFrom(TcuRecordCaptures.WARM_IDLE)), 0.0)
-        assertEquals(91.0, TcuRecordRegistry.tcuCoolantCelsius(recordFrom(TcuRecordCaptures.POST_STALL)), 0.0)
-        assertEquals(97.0, TcuRecordRegistry.tcuCoolantCelsius(recordFrom(TcuRecordCaptures.POST_DRIVE)), 0.0)
+    fun `the driven record's byte 11 decodes to 68 C, well below the idle reading of the same byte`() {
+        // A mutation guard on index/offset/mask using a real driven record (OBD-60). Byte 11 reads
+        // 68 °C here vs 92 °C at warm idle — a 24 °C swing driven by load on the SAME byte, which
+        // pins that this is a dynamic thermal field, not a constant. (The physical proof that 68 °C
+        // sits 25 °C below the *coolant* at that moment lives in the session-5 CSV/doc: coolant is a
+        // separate 0105 PID and cannot appear in this single 21 30 record.)
+        assertEquals(68.0, TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.DRIVEN_UNDER_LOAD)), 0.0)
+        val idle = TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.WARM_IDLE))
+        val driven = TcuRecordRegistry.transTempCelsius(recordFrom(TcuRecordCaptures.DRIVEN_UNDER_LOAD))
+        assertTrue(
+            "driven ATF must sit well below the idle reading of the same byte, was idle=$idle driven=$driven",
+            idle - driven >= 20.0,
+        )
     }
 
     @Test
@@ -82,18 +93,15 @@ class KwpRecordParserTest {
     }
 
     @Test
-    fun `the definition's parse refuses because the byte-1 decode was falsified`() {
-        // OBD-59: no field is identified, so the definition scales nothing — a poll of it skips on a
-        // ScalingError rather than publishing a number. This is what keeps the gate honest even if a
-        // caller reached past PidCatalog straight to the spec.
+    fun `the definition's parse decodes byte 11 as raw minus 50, reading it unsigned`() {
+        // The spec's own lambda is the wire path: it must read byte 11 (0x8E = 142 → 92 °C) and mask
+        // to unsigned, since ByteArray is signed (0x8E as a signed byte is −114). A byte-1 or wrong-
+        // offset read, or a missing `and 0xFF`, all break this.
         val record = recordFrom(TcuRecordCaptures.WARM_IDLE)
 
-        try {
-            spec.definition.parse(ByteArray(record.bytes.size) { record.bytes[it].toByte() })
-            throw AssertionError("expected the falsified decode to refuse")
-        } catch (expected: UnsupportedOperationException) {
-            assertTrue(expected.message.orEmpty().contains("falsified"))
-        }
+        val celsius = spec.definition.parse(ByteArray(record.bytes.size) { record.bytes[it].toByte() })
+
+        assertEquals(92.0, celsius, 0.0)
     }
 
     @Test

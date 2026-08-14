@@ -39,6 +39,10 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             parse = { UNUSED_PARSE_RESULT },
             pollPriority = PollPriority.SLOW,
         ),
+        // OBD-60: trans temp is now verified — byte 11 of the `21 30` record was identified as ATF
+        // temperature on-vehicle across 2495 samples (°C = raw − 50). The real decode lives in
+        // :core:protocol (TcuRecordRegistry); this catalog only mirrors the verified flag for the
+        // badge, pinned to PidCatalog.isVerified by the E2E parity test. (OBD-53 removes the mirror.)
         PidDefinition(
             id = PidIds.TRANS_TEMP,
             label = "Trans",
@@ -46,7 +50,7 @@ val DASHBOARD_PIDS: List<PidDefinition> =
             request = ObdRequest.Mode22(header = TRANS_HEADER, rxFilter = TRANS_RX_FILTER, request = TRANS_REQUEST),
             parse = { UNUSED_PARSE_RESULT },
             pollPriority = PollPriority.SLOW,
-            verified = false,
+            verified = true,
         ),
         // OBD-57: boost is now the speed-density estimate ("Est."), not a verified MAP − baro
         // subtraction — its MAP is computed from an uncalibrated VE model. Mirrors

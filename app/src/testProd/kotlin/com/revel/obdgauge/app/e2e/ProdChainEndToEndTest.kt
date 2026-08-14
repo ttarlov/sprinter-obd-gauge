@@ -135,24 +135,22 @@ class ProdChainEndToEndTest {
         }
 
     @Test
-    fun `the trans-temp record is gated off the wire and reaches the readings map with no value`() =
+    fun `the trans-temp record runs its framed sequence and reaches the readings map decoded`() =
         runTest(testDispatcher) {
             val source = startVanSession(CAPTURED_CHANNELS)
 
-            // OBD-59: the byte-1 63 − raw decode was FALSIFIED on-vehicle (byte 1 jumps at operating
-            // RPM — a dynamic signal, not a temperature), so TRANS_TEMP is back in FALSIFIED_DECODES.
-            // Nothing is stored under it — the tile blanks to "—", honest beats a jumping wrong number.
-            assertNull(source.readings.value[PidIds.TRANS_TEMP])
+            // OBD-60: byte 11 of the `21 30` record is ATF temp (°C = raw − 50), identified on-vehicle.
+            // The captured record's byte 11 → 95 °C, which the display seam renders as 203 °F. A value
+            // reaches the readings map — the tile shows a number, not "—".
+            assertEquals(203.0, source.readings.value[PidIds.TRANS_TEMP]?.value)
 
-            // The framed record sequence never goes on the wire — the gate holds it back before any
-            // ATSH/2130 is sent, exactly as for any other falsified decode.
-            assertFalse(HEADER_SET_TCU in link.commands)
-            assertFalse(KWP_RECORD_COMMAND in link.commands)
+            // The framed record sequence goes on the wire: the TCU header is set and 2130 is sent.
+            assertTrue(HEADER_SET_TCU in link.commands)
+            assertTrue(KWP_RECORD_COMMAND in link.commands)
 
-            // And the DecodeFalsified verdict is announced once, at plan time, so a consumer knows
-            // WHY the tile is blank (re-gated decode, not a missing reading).
+            // No DecodeFalsified verdict for a live, verified channel — Available channels are silent.
             assertTrue(
-                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().any {
+                events.filterIsInstance<PollEvent.ChannelAvailabilityChanged>().none {
                     it.id == PidIds.TRANS_TEMP && it.availability is ChannelAvailability.DecodeFalsified
                 },
             )
@@ -172,7 +170,7 @@ class ProdChainEndToEndTest {
     // ---- half 2: the same chain, through the real ViewModel, into rendered state ----
 
     @Test
-    fun `the dashboard renders the van's coolant and rpm, and blanks the re-gated trans temp`() =
+    fun `the dashboard renders the van's coolant and rpm, and the identified trans temp`() =
         runTest(testDispatcher) {
             val state = renderDashboard(UnitPreferences())
 
@@ -190,11 +188,11 @@ class ProdChainEndToEndTest {
             // returns null instead of a difference-of-absent-inputs.
             assertEquals(NO_READING_TEXT, state.boost.valueText)
             assertFalse(state.boost.valueText.contains("0"))
-            // Trans (OBD-59): the byte-1 record decode was falsified on-vehicle and re-gated, so the
-            // tile blanks to "—" rather than showing a jumping wrong number. Oil (OBD-50:
-            // PidRegistry.oilTemp, standard 015C) also renders "no reading" here — but for a
-            // different reason: this session's fixture never scripted a 015C response.
-            assertEquals(NO_READING_TEXT, state.transTemp.valueText)
+            // Trans (OBD-60): byte 11 of the `21 30` record was identified on-vehicle as ATF temp,
+            // so the tile now renders a real value (95 °C → 203 °F). Oil (OBD-50: PidRegistry.oilTemp,
+            // standard 015C) renders "no reading" here because this session's fixture never scripted a
+            // 015C response — a missing reading, not a gated one.
+            assertEquals("203°F", state.transTemp.valueText)
             assertEquals(NO_READING_TEXT, state.oilTemp.valueText)
 
             assertFalse(state.coolant.isStale)
@@ -228,7 +226,7 @@ class ProdChainEndToEndTest {
             }
             assertTrue(state.coolant.verified)
             assertTrue(state.extraTiles.getValue(PidIds.RPM).verified)
-            assertFalse(state.transTemp.verified)
+            assertTrue(state.transTemp.verified)
             assertTrue(state.oilTemp.verified)
         }
 

@@ -98,4 +98,23 @@ internal object TcuRecordCaptures {
             "7E9 21 00 00 00 08 04 00 DD\r" +
             "7E9 22 91 00 00 00 00 00 00\r" +
             "7E9 23 86 10 00 08 00 00 FF\r"
+
+    // ---- session 5 (2026-08-13): the record that identified byte 11 as ATF temp ----
+    //
+    // The decisive discriminator against the "byte 11 = coolant echo" hypothesis. Captured under
+    // DRIVE LOAD early in the session-5 drive (rpm ~1440), byte 11 = 0x76 = 118 → 68 °C while engine
+    // coolant (SAE 0105, a separate PID not in this record) read 93 °C at the same moment — a 25 °C
+    // decoupling a software mirror of the coolant value cannot produce. At the low-load captures above
+    // (WARM_IDLE/POST_STALL/POST_DRIVE) ATF ≈ coolant, which is why byte 11 looked like an echo until
+    // a drive separated them. See docs/hardware/session-5-2026-08-13-transtemp-IDENTIFIED.md, OBD-60.
+    //
+    // Provenance: the 24 record bytes are byte-for-byte from the drive log; the ISO-TP FRAMING is
+    // reconstructed (the diagnostic logged parsed record bytes, not raw ELM frames). Used only for
+    // the byte-11 DECODE assertion — never for a framing-property test, where only the fully captured
+    // WARM_IDLE record qualifies.
+    const val DRIVEN_UNDER_LOAD: String =
+        "7E9 10 1A 61 30 00 11 00 12\r" +
+            "7E9 21 0F 31 03 05 04 04 44\r" +
+            "7E9 22 76 00 89 00 89 05 8B\r" +
+            "7E9 23 00 10 80 08 00 00 FF\r"
 }

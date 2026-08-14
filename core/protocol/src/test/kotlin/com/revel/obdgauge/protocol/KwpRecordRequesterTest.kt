@@ -40,18 +40,17 @@ class KwpRecordRequesterTest {
         }
 
     @Test
-    fun `poll refuses because the byte-1 decode was falsified, without a value reaching a gauge`() =
+    fun `poll decodes byte 11 as transmission temperature and hands back a value`() =
         runTest {
-            // OBD-59: the field is unidentified, so the definition's parse refuses. poll routes that
-            // through scaleReading into a typed Skipped(ScalingError) — never a number on a gauge —
-            // exactly as the never-poisoned-value guarantee requires. (PidCatalog's gate keeps this
-            // channel off the wire entirely in production; this proves poll is safe even bypassing it.)
+            // OBD-60: byte 11 is ATF temp (°C = raw − 50). The S3 record's byte 11 is 0x91 = 145 →
+            // 95 °C. poll runs the whole framed exchange and scales the field through scaleReading,
+            // the same boundary the mode-01/mode-22 paths use.
             val link = FakeObdLink(answering(TcuRecordCaptures.S3_POST_DRIVE))
 
             val outcome = KwpRecordRequester(link).poll(spec)
 
-            assertTrue("expected a skip, got $outcome", outcome is PollOutcome.Skipped)
-            assertTrue((outcome as PollOutcome.Skipped).reason is ParseFailure.ScalingError)
+            assertTrue("expected a value, got $outcome", outcome is PollOutcome.Value)
+            assertEquals(95.0, (outcome as PollOutcome.Value).value, 0.0)
         }
 
     @Test
@@ -171,12 +170,13 @@ class KwpRecordRequesterTest {
     }
 
     @Test
-    fun `the channel is unverified and its field is unidentified since the byte-1 decode was falsified`() {
-        // The one assertion in this file about restraint rather than capability. OBD-59: the byte-1
-        // 63 − raw decode was falsified on-vehicle, so there is no field to scale — dataByteIndex is
-        // the unidentified sentinel and the channel stays unverified until OBD-51 re-identifies it.
-        assertFalse("a decode that was falsified is not verified", spec.definition.verified)
-        assertEquals(TcuRecordRegistry.TRANS_TEMP_BYTE_UNIDENTIFIED, spec.dataByteIndex)
+    fun `the channel is verified and its field is byte 11 since the on-vehicle identification`() {
+        // OBD-60: byte 11 was identified as ATF temp against on-vehicle ground truth across 2495
+        // samples, so the channel is verified and its field index is byte 11 (not the retired byte-1
+        // candidate). This is the mutation guard on the arming: flip verified or move dataByteIndex
+        // and this breaks.
+        assertTrue("an on-vehicle-identified decode is verified", spec.definition.verified)
+        assertEquals(TcuRecordRegistry.TRANS_TEMP_BYTE, spec.dataByteIndex)
     }
 
     /** The branch transcript with its predicted `2130` answer replaced by [capture]. */
