@@ -6,7 +6,8 @@
   happens before AAPT resolves the resource reference, so the merged manifest is byte-identical
   to the pre-OBD-45 hardcoded `@string/app_name` when the property is absent.
 -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       OBD-24: permissions the `connectedDevice`-typed foreground service needs.
@@ -51,8 +52,16 @@
       (correction factor 1.0, tile shows raw ECU speed) rather than affecting anything else. The
       `demo` flavor declares it too (single merged manifest) but binds no SpeedSource, so it never
       requests updates. Foreground-only use — no background-location permission is declared.
+
+      `tools:remove="android:maxSdkVersion"`: a BLE dependency declares ACCESS_FINE_LOCATION with
+      `maxSdkVersion="30"` (the legacy pre-Android-12 "BT scan needs location" rule). Without this
+      the merger keeps that cap, which would silently disable the GPS permission — and therefore
+      the whole speed-correction feature — on Android 12+ (every phone this ships to). Stripping the
+      cap makes FINE_LOCATION requestable on all API levels the app runs on.
     -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        tools:remove="android:maxSdkVersion" />
 
     <application
         android:name=".ObdGaugeApplication"
