@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-12 (OBD-25 MERGED — SPRINT 3 SOFTWARE 100% COMPLETE. The van build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **39 merged / 55 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-13 (OBD-60 MERGED 299f15b — TRANS TEMP IDENTIFIED: record 21 30 byte 11, °C = raw − 50, from a 2495-sample logged drive). 40 merged / 56 issues. 4 solid tiles (coolant/oil/RPM/trans) + boost est. Van APK @ 299f15b installed.n build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **39 merged / 55 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
 
 ---
 
@@ -12,10 +12,10 @@
 
 | | |
 |---|---|
-| Current phase | **SPRINT 3 DONE + oil temp live (OBD-50)** — app reads real coolant/RPM/oil/load the moment it meets the van. Remaining: 🖐 van session (boost probe, trans snapshot, live demo), Sprint 4, backlog |
-| Repo | Gate green @ `58c0f8e`; develop synced; no open branches. VAN BUILD: builds/van/app-prod-debug.apk (prod DI: BleObdLink → RealVehicleDataSource → DisplayUnitDataSource seam → dashboard; restart-on-Ready ownership; connect UX + runtime perms). Demo/master APK @ 58c0f8e in builds/main/ |
-| Blockers | None in software. 🖐 Taras: (1) cold-start capture (trans verify + id swap), (2) next van session device checks: fresh-install FGS start, 10-min screen-off polling |
-| Next action | 🖐 Next van session: LOGGED cold-start→warmup→drive (screen-on/WiFi) recording the FULL 21 30 record + coolant every few sec → rigorously re-identify the real trans-temp byte (OBD-51 reframed) OR conclude it's not cleanly available. Same drive calibrates boost VE (OBD-57). Van APK current @ 19612fa (trans blanked, honest). |
+| Current phase | **SPRINT 3 DONE + oil temp live (OBD-50) + TRANS TEMP IDENTIFIED (OBD-60)** — app reads real coolant/RPM/oil/trans/load. 4 solid tiles + boost est. Remaining: Sprint 4, backlog |
+| Repo | Gate green @ `299f15b`; develop synced; no open branches. VAN BUILD: builds/van/app-prod-debug.apk @ 299f15b (trans temp LIVE, byte-11 raw−50) — installed on the Pixel. Main-channel APK @ 299f15b in builds/main/ |
+| Blockers | None. 🖐 Taras (optional): a true cold-start (overnight) drive would be the emphatic final confirmation of the trans-temp identification + gives boost its MAP calibration point. Not required — trans temp ships on the 2495-sample warm-restart drive. |
+| Next action | Nothing pending. Trans temp identified & shipped (OBD-60, record 21 30 byte 11, °C = raw − 50) from a 2495-sample logged drive 2026-08-13 — the rigorous re-ID OBD-51 asked for; decisive test was a 25 °C load-decoupling from coolant. Boost still `verified=false` (needs a MAP calibration point — no independent boost source on this van). Sprint 4 available on request. |
 
 ## Wave board
 
