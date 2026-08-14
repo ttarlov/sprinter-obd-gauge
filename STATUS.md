@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-13 (OBD-60 MERGED 299f15b — TRANS TEMP IDENTIFIED: record 21 30 byte 11, °C = raw − 50, from a 2495-sample logged drive). 40 merged / 56 issues. 4 solid tiles (coolant/oil/RPM/trans) + boost est. Van APK @ 299f15b installed.n build exists.) — Sprints 0-2 complete + ad-hoc OBD-42/44/45: **39 merged / 55 issues** (OBD-44+46+47 PROMOTED to main ca896b5 — Taras feel-verdict accepted). Full stack: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer w/ solved trans-temp decode, dual-channel build process live. No open branches. 🖐 Taras: feel-test the dev build (`builds/dev/app-dev-debug.apk`, installs beside master as "OBD Gauge Dev"); promotion develop→main on his accept.
+**Last updated:** 2026-08-13 (OBD-60 MERGED 299f15b — TRANS TEMP IDENTIFIED: record 21 30 byte 11, °C = raw − 50, from a 2495-sample logged drive). 40 merged / 56 issues. 4 solid tiles (coolant/oil/RPM/trans) + boost est. Van APK @ 299f15b installed on the Pixel. Full stack live: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer with coolant/oil/RPM/**trans** decoded + speed-density boost estimate, dual-channel builds. No open branches.
 
 ---
 
