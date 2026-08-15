@@ -16,12 +16,17 @@ turbine = "1.2.1"
 ktlintGradle = "14.2.0"
 detekt = "1.23.8"
 robolectric = "4.16.1"
+# Core library desugaring: backports java.time and java.util.Optional to API 23, which the
+# Garmin Overlander (Android 6.0.1) needs. Without it every Instant/Duration/Clock call site
+# in sparkline/, gauge/, and ble/console/ is a runtime NoClassDefFoundError below API 26.
+desugarJdkLibs = "2.1.5"
 # Pinned to the last release built with Kotlin 2.0.21 (Roborazzi bumped to Kotlin 2.3.21 in
 # 1.61.0, which is metadata-incompatible with this project's Kotlin 2.1.21 plugin).
 roborazzi = "1.60.0"
 
 [libraries]
-kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
+kotlinx-coroutines-core ={ module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 

@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
@@ -235,8 +236,15 @@ class ObdConnectionService : Service() {
     /**
      * `IMPORTANCE_LOW`: shows in the status bar/shade without a sound, vibration, or heads-up
      * pop — this notification exists to answer "are we still connected," not to interrupt.
+     *
+     * Channels are an API 26 concept and, unlike `java.time`, are a platform class that core
+     * library desugaring cannot backport. Below O there is nothing to create: the notification's
+     * importance comes from `NotificationCompat.PRIORITY_LOW` (already set in [buildNotification]),
+     * which is exactly what the pre-channel platform reads. Skipping the call is the correct
+     * no-op, not a degradation — this is the Garmin Overlander (API 23) path.
      */
     private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel =
             NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_LOW).apply {
                 description = CHANNEL_DESCRIPTION

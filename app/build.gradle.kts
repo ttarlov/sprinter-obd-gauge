@@ -25,7 +25,10 @@ android {
 
     defaultConfig {
         applicationId = "com.revel.obdgauge.app"
-        minSdk = 26
+        // API 23 (Android 6.0.1) is the Garmin Overlander's platform level. Every java.time /
+        // java.util.Optional call site below API 26 is covered by core library desugaring
+        // (see compileOptions + the coreLibraryDesugaring dependency).
+        minSdk = 23
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
@@ -69,6 +72,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -98,6 +102,8 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
+
     // :core:model is the frozen contract surface both flavors build against. :core:testing
     // (FakeVehicleDataSource) is `demo`-only by design (OBD-12 HARD CONSTRAINT) — real
     // ObdLink -> VehicleDataSource wiring (:core:ble, :core:protocol) for `prod` arrives with

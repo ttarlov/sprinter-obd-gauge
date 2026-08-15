@@ -14,11 +14,14 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        minSdk = 26
+        // Matches :app — API 23 for the Garmin Overlander (Android 6.0.1). ConsoleSession and
+        // TrafficFormat use java.time, covered by core library desugaring below.
+        minSdk = 23
         consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -35,6 +38,8 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
+
     // api: BleObdLink is an ObdLink, and its state flow emits LinkState/LinkError to :app.
     api(project(":core:model"))
     implementation(libs.kotlinx.coroutines.core)
