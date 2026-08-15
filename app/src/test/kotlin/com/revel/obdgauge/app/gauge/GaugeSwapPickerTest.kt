@@ -1,8 +1,6 @@
 package com.revel.obdgauge.app.gauge
 
-import android.provider.Settings
 import androidx.activity.ComponentActivity
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -12,13 +10,9 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
-import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.unit.DpRect
-import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,28 +47,19 @@ import org.robolectric.annotation.GraphicsMode
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
-import kotlin.math.abs
-import kotlin.math.sign
 
 /**
- * OBD-42's long-press swap carousel, end to end: [GaugeDashboard] wired to a real
- * [DashboardViewModel] (temp-file [DataStoreSettingsRepository] where a test needs real
- * persistence, an in-memory double otherwise — same split `LiveRecolorTest`/
- * `SettingsRepositoryTest` already use) and a small hand-rolled [VehicleDataSource] double
- * emitting coolant/trans/oil/boost **and rpm** readings, so the picker's rpm mini-card (and a
- * tile it gets swapped into) both show a real, non-placeholder value — the AC's "feels alive,
- * not like a menu."
+ * OBD-65 (in-tile pager): long-pressing a tile turns its content into a [SwapPager] — a
+ * [androidx.compose.foundation.pager.HorizontalPager] filling the tile's own bounds, page 0 the
+ * current gauge, following pages the swap candidates. Swipe (device-only — Robolectric can't drive
+ * fling reliably) to flip through them; tap a candidate page to swap it in, tap page 0 / the scrim
+ * to dismiss. These tests pin the STRUCTURE (a pager exists, its pages are the right gauges, page
+ * taps select/dismiss and persist) and reach candidate pages deterministically via
+ * `performScrollToIndex` (the pager's own scroll semantics) rather than a synthetic swipe.
  *
- * [createAndroidComposeRule] (not the plain `createComposeRule()` most other tests in this
- * module use) specifically so the back-gesture dismiss test can reach the hosting Activity's
- * `OnBackPressedDispatcher` via `activityRule` — `createComposeRule()`'s declared return type
- * doesn't expose that, even though it's backed by the same kind of rule under the hood.
- *
- * `DEFAULT_GAUGE_ORDER` (all four core gauges visible) is used throughout, so every picker in
- * this file has exactly two candidates — the current gauge plus rpm — a deliberate choice to
- * keep each carousel's mini-cards within `LazyRow`'s initial composition window; `.performScrollTo()`
- * is still used before interacting with the rpm card since it's the second/peeking item, per
- * `app/MODULE.md`'s "off-screen node" pitfall.
+ * `DEFAULT_GAUGE_ORDER` (all four core gauges placed) is used throughout, so every picker's pages
+ * are exactly `[current, rpm, speed]` — the current gauge plus the two catalog-only swap-in
+ * candidates.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -95,49 +80,90 @@ class GaugeSwapPickerTest {
     }
 
     @Test
-    fun `long-press enters picker mode on that tile only`() {
+    fun `long-press turns that tile only into a swap pager`() {
         setDashboard(newViewModel())
 
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertExists()
+        // The picked tile is now a pager; its normal value node is gone (replaced by pages).
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertDoesNotExist()
-        // The rest of the dashboard stays live and untouched.
+        // The rest of the dashboard stays live and untouched — no pager anywhere else.
         composeTestRule.onNodeWithTag("gauge-transTemp-value").assertTextEquals(TRANS_TEXT)
         composeTestRule.onNodeWithTag("gauge-oilTemp-value").assertTextEquals(OIL_TEXT)
         composeTestRule.onNodeWithTag("gauge-boost-value").assertTextEquals(BOOST_TEXT)
-        composeTestRule.onNodeWithTag("gauge-picker-transTemp").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-transTemp").assertDoesNotExist()
     }
 
     @Test
-    fun `carousel shows the current gauge first, then candidates excluding gauges visible on other tiles`() {
+    fun `pager opens on the current gauge and is horizontally scrollable`() {
         setDashboard(newViewModel())
 
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("gauge-picker-card-coolant").assertExists()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().assertExists()
-        composeTestRule.onNodeWithTag("gauge-picker-card-transTemp").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("gauge-picker-card-oilTemp").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("gauge-picker-card-boost").assertDoesNotExist()
-        // Mini-card shows a live value, not just a label — "feels alive, not like a menu" (AC).
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm-value").assertTextEquals(RPM_TEXT)
+        // Page 0 is the current gauge, showing a live value — "feels alive, not a menu".
+        composeTestRule.onNodeWithTag("gauge-swap-page-coolant").assertExists()
+        composeTestRule.onNodeWithTag("gauge-swap-page-coolant-value").assertTextEquals(COOLANT_TEXT)
+        // The pager is a real horizontally-scrollable surface (the fix for the drag being eaten).
+        composeTestRule
+            .onNodeWithTag("gauge-swap-pager-coolant")
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.HorizontalScrollAxisRange))
     }
 
     @Test
-    fun `tap a candidate swaps the tile and persists, surviving a recreated repository`() {
+    fun `the centered card is a fraction of the frame so neighbours peek`() {
+        setDashboard(newViewModel())
+
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+
+        // The centered card (~75% per SWAP_CARD_FRACTION) is clearly narrower than the pager/frame
+        // it sits in — the remaining width is the left/right peek where neighbour cards show.
+        val pagerWidth = composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").getBoundsInRoot().width
+        val cardWidth = composeTestRule.onNodeWithTag("gauge-swap-page-coolant").getBoundsInRoot().width
+        assertTrue(
+            "card ($cardWidth) should be narrower than the pager ($pagerWidth) so neighbours peek",
+            cardWidth < pagerWidth,
+        )
+        assertTrue(
+            "card ($cardWidth) should still be the majority of the pager ($pagerWidth), not tiny",
+            cardWidth > pagerWidth / 2,
+        )
+    }
+
+    @Test
+    fun `pager pages are the current gauge plus catalog candidates, excluding gauges placed elsewhere`() {
+        setDashboard(newViewModel())
+
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+
+        // Candidates (rpm, speed) are reachable pages with live values.
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-swap-page-rpm").assertExists()
+        composeTestRule.onNodeWithTag("gauge-swap-page-rpm-value").assertTextEquals(RPM_TEXT)
+
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(SPEED_PAGE)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-swap-page-$SPEED_PID_ID").assertExists()
+
+        // Gauges already placed on OTHER tiles are NOT offered — they stay on their own tiles.
+        composeTestRule.onNodeWithTag("gauge-transTemp-value").assertTextEquals(TRANS_TEXT)
+        composeTestRule.onNodeWithTag("gauge-oilTemp-value").assertTextEquals(OIL_TEXT)
+    }
+
+    @Test
+    fun `tap a candidate page swaps the tile and persists, surviving a recreated repository`() {
         val file = temporaryFolder.newFile("gauge-swap.preferences_pb").also { it.delete() }
         val firstScope = CoroutineScope(UnconfinedTestDispatcher() + SupervisorJob())
         val firstRepository =
             DataStoreSettingsRepository(PreferenceDataStoreFactory.create(scope = firstScope) { file })
         setDashboard(newViewModel(firstRepository))
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
-        settlePickerAnimation()
+        swapCoolantToRpm()
 
         composeTestRule.onNodeWithTag("gauge-rpm").assertExists()
         composeTestRule.onNodeWithTag("gauge-rpm-value").assertTextEquals(RPM_TEXT)
@@ -160,48 +186,29 @@ class GaugeSwapPickerTest {
     fun `M1 - the picker scrim is gone after a completed swap (no stale pickerTileId)`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
-        settlePickerAnimation()
+        swapCoolantToRpm()
 
         // Sanity: the swap actually landed.
         composeTestRule.onNodeWithTag("gauge-rpm").assertExists()
-        // Review round-1 M1: key(id) tears "coolant"'s subtree down (GaugePickerTile's own
-        // LaunchedEffect included) before its delayed onDismiss() can run, so without
-        // GaugeDashboard's own visibleIds self-heal, pickerTileId stays pinned to "coolant"
-        // forever — this invisible scrim would still exist, silently eating the next back
-        // press/outside tap for no visible reason.
+        // The self-heal clears pickerTileId once coolant leaves the layout, so the scrim is gone.
         composeTestRule.onNodeWithTag("gauge-picker-scrim").assertDoesNotExist()
     }
 
     @Test
-    fun `M1 - the old id returning to gaugeOrder via a non-picker path does not reopen its picker`() {
-        // Restores "coolant" by calling swapGauge directly rather than via a second long-press:
-        // ANY tile's long-press unconditionally overwrites pickerTileId to that tile's own id
-        // (GaugeDashboard's onLongPress), which would silently "fix" the stale value as a side
-        // effect of the interaction needed to trigger the second swap in the first place — that
-        // would mask the bug instead of exercising it. Driving the second swap straight through
-        // the ViewModel isolates review round-1 M1's actual defect: pickerTileId staying pinned
-        // to an id no longer on screen, independent of what brings that id back into gaugeOrder.
+    fun `M1 - the old id returning to the layout via a non-picker path does not reopen its pager`() {
         val viewModel = newViewModel()
         setDashboard(viewModel)
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
-        settlePickerAnimation()
+        swapCoolantToRpm()
         composeTestRule.onNodeWithTag("gauge-rpm").assertExists()
 
         viewModel.swapGauge(PidIds.RPM, PidIds.COOLANT)
         composeTestRule.waitForIdle()
 
-        // Review round-1 M1: without the self-heal, pickerTileId is still pinned to "coolant"
-        // from the FIRST swap's abandoned dismiss — the instant coolant's id reappears in
-        // gaugeOrder, its tile would mount already in picker mode instead of showing live data.
+        // Coolant comes back as a normal live tile, never re-entering pick mode.
         composeTestRule.onNodeWithTag("gauge-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals(COOLANT_TEXT)
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertDoesNotExist()
     }
 
     @Test
@@ -222,17 +229,17 @@ class GaugeSwapPickerTest {
     }
 
     @Test
-    fun `dismiss - tapping the current gauge's own mini-card changes nothing`() {
+    fun `dismiss - tapping the current gauge's own page changes nothing`() {
         setDashboard(newViewModel())
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("gauge-picker-card-coolant").performTouchInput { click() }
+        composeTestRule.onNodeWithTag("gauge-swap-page-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("gauge-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals(COOLANT_TEXT)
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertDoesNotExist()
     }
 
     @Test
@@ -248,7 +255,7 @@ class GaugeSwapPickerTest {
 
         composeTestRule.onNodeWithTag("gauge-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals(COOLANT_TEXT)
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertDoesNotExist()
     }
 
     @Test
@@ -262,7 +269,7 @@ class GaugeSwapPickerTest {
 
         composeTestRule.onNodeWithTag("gauge-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals(COOLANT_TEXT)
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertDoesNotExist()
     }
 
     @Test
@@ -274,7 +281,7 @@ class GaugeSwapPickerTest {
         composeTestRule.onNodeWithTag("gauge-transTemp").performTouchInput { click() }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertDoesNotExist()
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals(COOLANT_TEXT)
     }
 
@@ -286,16 +293,12 @@ class GaugeSwapPickerTest {
         // wouldn't be caught by asserting the new state in isolation.
         composeTestRule.onNodeWithTag("gauge-coolant").assert(hasZone(ThresholdZone.RED))
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
-        settlePickerAnimation()
+        swapCoolantToRpm()
 
         // VALUE: the fed rpm reading, never the stale coolant one.
         composeTestRule.onNodeWithTag("gauge-rpm-value").assertTextEquals(RPM_TEXT)
         // LABEL: "RPM", not "Coolant".
         composeTestRule.onNodeWithTag("gauge-rpm-label").assertTextEquals("RPM")
-        // UNIT SUFFIX: RPM_TEXT ("3200 RPM") already pins this — " RPM", never "°F".
         // THRESHOLD COLORING: rpm has no seed threshold entry, so NEUTRAL — not RED, which is
         // what coolant's own value would still produce if coloring were stuck on the old pid.
         composeTestRule.onNodeWithTag("gauge-rpm").assert(hasZone(ThresholdZone.NEUTRAL))
@@ -303,375 +306,26 @@ class GaugeSwapPickerTest {
 
     @Config(qualifiers = "w360dp-h640dp-port")
     @Test
-    fun `picker is reachable in portrait too`() {
+    fun `pager is reachable in portrait too`() {
         setDashboard(newViewModel())
 
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("gauge-picker-coolant").assertExists()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().assertExists()
-    }
-
-    // --- OBD-44: picker-entry shrink animation --------------------------------------------
-
-    /**
-     * OBD-44 AC: "Gauge stays LIVE during the animation (value updates mid-shrink render
-     * correctly)." Review round-1 MAJOR M2: the original version of this test advanced a FIXED
-     * delta from an assumed `t == 0`, but `performTouchInput { longClick() }`'s own synthetic
-     * gesture already advances `mainClock` by roughly its long-press timeout (~630 ms, comfortably
-     * past `PICKER_SHRINK_MS`'s 300 ms) as part of recognizing the gesture at all — the fixed
-     * delta landed a few ms BEFORE the animation settled, making the test pass even against a
-     * broken (already-settled) implementation. Fixed by advancing a small delta from
-     * `mainClock.currentTime` captured immediately AFTER the gesture, and — this is the "so drift
-     * fails loudly" half of the fix — asserting mid-flight-ness explicitly (bounds strictly
-     * between the full tile's own and the fully-settled mini-card's) so a future timing drift
-     * fails the test instead of silently testing the settled frame again.
-     */
-    @Test
-    fun `gauge shrinks continuously through mid-animation and stays live while it does`() {
-        val dataSource = FixedReadingsVehicleDataSource(fixedReadings())
-        setDashboard(DashboardViewModel(dataSource, clock, PickerInMemorySettingsRepository()))
-        val fullBounds = composeTestRule.onNodeWithTag("gauge-coolant").getBoundsInRoot()
-
-        lateinit var midBounds: DpRect
-        composeTestRule.mainClock.autoAdvance = false
-        try {
-            composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-            // Small delta from wherever the gesture itself left the clock — NOT a fixed absolute
-            // time (see KDoc above).
-            composeTestRule.mainClock.advanceTimeBy(MID_FLIGHT_DELTA_MS)
-            midBounds = composeTestRule.onNodeWithTag("gauge-picker-card-coolant").getBoundsInRoot()
-
-            // The picker-card identity switches the instant picker mode is entered (isPicking
-            // flips synchronously in GaugeSlot; only the VISUAL shrink is still animating), so
-            // the live value already lives under the picker-card tag before the shrink settles.
-            dataSource.readings.value =
-                dataSource.readings.value +
-                (PidIds.COOLANT to Reading(PidIds.COOLANT, MID_SHRINK_COOLANT_VALUE, Instant.EPOCH, stale = false))
-            composeTestRule.mainClock.advanceTimeByFrame()
-            composeTestRule
-                .onNodeWithTag("gauge-picker-card-coolant-value")
-                .assertTextEquals(MID_SHRINK_COOLANT_TEXT)
-
-            composeTestRule.mainClock.advanceTimeBy(SWAP_SETTLE_MS)
-        } finally {
-            composeTestRule.mainClock.autoAdvance = true
-        }
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertExists()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
         composeTestRule.waitForIdle()
-
-        val settledBounds = composeTestRule.onNodeWithTag("gauge-picker-card-coolant").getBoundsInRoot()
-        assertMidFlight(fullBounds, midBounds, settledBounds)
+        composeTestRule.onNodeWithTag("gauge-swap-page-rpm").assertExists()
     }
 
-    /**
-     * OBD-44 AC: "Reduced-motion / animation-scale-0 devices: end states still correct (no stuck
-     * mid-scale composables)." Review round-1 MAJOR M1: the original version of this test called
-     * `waitForIdle()`, which auto-advances the clock through however long a (non-`snap`) `tween`
-     * branch would take too — it passed identically whether or not `rememberPickerShrinkAnimationSpec`
-     * actually branched on the duration scale at all (mutation-confirmed below). The FIRST fix
-     * attempt (pause `mainClock`, trigger the long-press via `longClick()`, advance exactly one
-     * frame) turned out to be vacuous too: `longClick()`'s own synthetic gesture already advances
-     * `mainClock` by roughly its long-press timeout as part of recognizing the gesture at all
-     * (~630 ms, comfortably longer than `PICKER_SHRINK_MS`'s 300 ms) — a REAL tween would have
-     * fully settled by the time `longClick()` even returns, one frame or not.
-     *
-     * Fixed by driving the press manually — `down()` then `advanceEventTime()` in small polled
-     * steps against [composeTestRule]'s ROOT node (not the tile's own testTag, which switches to
-     * `gauge-picker-card-coolant` the instant `isPicking` flips — continuing the SAME partial
-     * gesture against a node whose own tag just changed out from under it doesn't reliably
-     * resolve) — stopping the INSTANT the picker-card identity appears, i.e. as close to the real
-     * long-press threshold as this polling granularity allows. At that exact instant, a real
-     * `snap()` must have the shrink ALREADY at (or very near) its settled size; a `tween` — even a
-     * 300 ms one — would still be almost full-size, since barely any *animation* time has elapsed
-     * beyond the threshold crossing itself.
-     */
-    @Test
-    fun `animator duration scale 0 snaps to the picker-card end state the instant the long-press registers`() {
-        val context = composeTestRule.activity
-        val originalScale =
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        try {
-            setDashboard(newViewModel())
-            val fullBounds = composeTestRule.onNodeWithTag("gauge-coolant").getBoundsInRoot()
-            val pressPoint =
-                composeTestRule
-                    .onNodeWithTag("gauge-coolant")
-                    .fetchSemanticsNode()
-                    .boundsInRoot.center
-
-            composeTestRule.mainClock.autoAdvance = false
-            try {
-                composeTestRule.onRoot().performTouchInput { down(pressPoint) }
-                var waited = 0L
-                while (composeTestRule.onAllNodesWithTag("gauge-picker-card-coolant").fetchSemanticsNodes().isEmpty()) {
-                    check(waited < LONG_PRESS_POLL_TIMEOUT_MS) { "long-press never registered" }
-                    // mainClock, not the touch injection's own advanceEventTime: the long-press
-                    // gesture detector's timeout is coroutine/frame-clock-based (mainClock),
-                    // not driven by the timestamp embedded in synthetic MotionEvents.
-                    composeTestRule.mainClock.advanceTimeBy(LONG_PRESS_POLL_STEP_MS)
-                    waited += LONG_PRESS_POLL_STEP_MS
-                }
-
-                // Height only (not a hard-coded target size) so this doesn't depend on the exact
-                // mini-card dimensions — just "clearly already shrunk," which a real snap()
-                // guarantees at this instant and a tween cannot.
-                val justOpenedBounds = composeTestRule.onNodeWithTag("gauge-picker-card-coolant").getBoundsInRoot()
-                assertTrue(
-                    "expected the shrink to already be (near) settled under animator-scale 0, but height " +
-                        "${justOpenedBounds.height} is still close to the full tile's ${fullBounds.height}",
-                    justOpenedBounds.height < fullBounds.height / 2,
-                )
-
-                composeTestRule.onRoot().performTouchInput { up() }
-            } finally {
-                composeTestRule.mainClock.autoAdvance = true
-            }
-            composeTestRule.waitForIdle()
-        } finally {
-            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, originalScale)
-        }
-    }
-
-    /**
-     * Review round-1 BLOCKER B1: an anisotropic (independent scaleX/scaleY) transform on the
-     * shrinking tile's CONTENT read as a vertically-crushed smear once the full (portrait-tall)
-     * tile landed in the (landscape-wide) mini-card slot. `pickerShrinkContentCounterScale`
-     * (`GaugePicker.kt`) fixes the distortion; this pins the OUTER geometry regression guard the
-     * fix round asked for — the settled current-card's own bounds must have the SAME aspect ratio
-     * as a real [GaugeMiniCard] (here, the `rpm` candidate sitting right next to it in the same
-     * carousel — a real, unscaled reference rather than a hand-computed pixel value, robust to
-     * density/font-scale).
-     *
-     * `getBoundsInRoot()`, not `getUnclippedBoundsInRoot()`, on BOTH nodes: the latter reports
-     * pure LAYOUT size, blind to `pickerShrinkLayer`'s graphicsLayer scale entirely (it's a
-     * paint-time transform, not a layout one) — it would report the *current* card's own
-     * un-shrunk full-tile size. `getBoundsInRoot()` correctly reflects the transformed/visible
-     * bounds for the current card, but clips the *reference* candidate to however much of it
-     * happens to be scrolled into the carousel's `LazyRow` viewport — this test's wider-than-
-     * default `@Config` exists specifically so a 96dp candidate card fully fits that viewport
-     * unclipped, making the two `getBoundsInRoot()` reads comparable.
-     */
-    @Config(qualifiers = "w1400dp-h500dp-land")
-    @Test
-    fun `settled current-card bounds match a real GaugeMiniCard's aspect ratio`() {
-        setDashboard(newViewModel())
-
+    /** Long-press coolant, scroll the pager to the rpm page, and tap it to swap. */
+    private fun swapCoolantToRpm() {
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
-
-        val currentBounds = composeTestRule.onNodeWithTag("gauge-picker-card-coolant").getBoundsInRoot()
-        val referenceBounds =
-            composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().getBoundsInRoot()
-
-        val currentAspect = currentBounds.width / currentBounds.height
-        val referenceAspect = referenceBounds.width / referenceBounds.height
-        assertEquals(
-            "the settled current-card's aspect ratio should match a real GaugeMiniCard's",
-            referenceAspect,
-            currentAspect,
-            ASPECT_TOLERANCE,
-        )
-    }
-
-    /**
-     * Review round-1 MAJOR M3: pins OBD-44's core architectural claim directly — `GaugeTile`
-     * itself is never torn down and remounted across the picker-mode boundary — rather than only
-     * inferring it from value/tag assertions that a remount would also (eventually) satisfy.
-     * [LocalGaugeTileMountProbe] (`DashboardScreen.kt`) fires once per composition MOUNT via
-     * `remember { }`, which only re-runs if the underlying composable is recreated — a mutation as
-     * narrow as wrapping a tile's call site in `key(isPicking) { }` inside `GaugeSlot` would bump
-     * this count on every picker-mode toggle; this test would catch it where a `waitForIdle()` +
-     * value-equality assertion would not (the value re-reads correctly either way).
-     */
-    @Test
-    fun `GaugeTile is never torn down and remounted across a long-press + dismiss cycle`() {
-        var mountCount = 0
-        val viewModel = newViewModel()
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalGaugeTileMountProbe provides { mountCount++ }) {
-                ObdGaugeTheme {
-                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                    val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
-                    GaugeDashboard(uiState = uiState, gaugeOrder = gaugeOrder, onSwapGauge = viewModel::swapGauge)
-                }
-            }
-        }
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
         composeTestRule.waitForIdle()
-        val initialMounts = mountCount
-        assertTrue("expected every visible tile to have mounted once", initialMounts > 0)
-
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.onNodeWithTag("gauge-swap-page-rpm").performTouchInput { click() }
         composeTestRule.waitForIdle()
-        assertEquals("entering picker mode must not remount any tile", initialMounts, mountCount)
-
-        composeTestRule.onNodeWithTag("gauge-picker-card-coolant").performTouchInput { click() }
-        composeTestRule.waitForIdle()
-        assertEquals("dismissing must not remount any tile", initialMounts, mountCount)
-
-        // OBD-47: a REAL swap (not just enter/dismiss) must still mount the incoming tile
-        // exactly ONCE — no double-mount from the grow-in entry-state machinery (e.g. a second
-        // composable spun up just to hold the grow Animatable, or a key(isGrowingIn) { } wrapper
-        // around GaugeTile itself, which would defeat the "single surface" guarantee just as
-        // surely as key(isPicking) { } would have for OBD-44).
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().performTouchInput { click() }
-        settlePickerAnimation()
-
-        composeTestRule.onNodeWithTag("gauge-rpm").assertExists()
-        assertEquals(
-            "swapping coolant -> rpm should mount exactly one new tile (rpm), never more",
-            initialMounts + 1,
-            mountCount,
-        )
-    }
-
-    // --- OBD-47: swap-in grow animation ----------------------------------------------------
-
-    /**
-     * AC: "New gauge is live during grow... mirror the OBD-44 mid-flight test construction."
-     * Same shape as `gauge shrinks continuously through mid-animation and stays live while it
-     * does` above, reversed: [growStartBounds] is the TAPPED CANDIDATE's own mini-card rect
-     * (the grow's origin), [growEndBounds] is the settled full tile (the grow's destination),
-     * and [midBounds] — captured a small delta after the swap-in tile first mounts — must sit
-     * strictly between them, exactly like [assertMidFlight] already validates for the shrink
-     * direction (it doesn't care which end is temporally first, only that mid is geometrically
-     * between the two, moving toward the "settled" one and never past it).
-     *
-     * A plain `click()` (not `longClick()`) doesn't carry a built-in recognition delay the way
-     * `longClick()` does (see the shrink test's own KDoc) — the swap fires on `up()` — so this
-     * pauses the clock BEFORE tapping and advances exactly one frame first (long enough for the
-     * `key(id)` remount the tap triggers — a snapshot-state write, picked up on the NEXT
-     * recomposition, not synchronously inside the tap handler — to actually happen) before the
-     * small [MID_FLIGHT_DELTA_MS] delta that puts the grow itself partway through its own
-     * animation.
-     */
-    @Test
-    fun `swap-in grows continuously from the tapped candidate's rect and stays live while it does`() {
-        val dataSource = FixedReadingsVehicleDataSource(fixedReadings())
-        setDashboard(DashboardViewModel(dataSource, clock, PickerInMemorySettingsRepository()))
-
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
-        val growStartBounds =
-            composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().getBoundsInRoot()
-
-        lateinit var midBounds: DpRect
-        composeTestRule.mainClock.autoAdvance = false
-        try {
-            composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performTouchInput { click() }
-            // One frame so the key(id) remount (coolant -> rpm) actually happens, THEN a small
-            // delta so the grow's own tween has visibly moved — not a fixed absolute time, same
-            // rationale as MID_FLIGHT_DELTA_MS's own KDoc above.
-            composeTestRule.mainClock.advanceTimeByFrame()
-            composeTestRule.mainClock.advanceTimeBy(MID_FLIGHT_DELTA_MS)
-            midBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
-
-            // Liveness: a reading pushed mid-grow must render through the SAME live composable,
-            // not a placeholder or a stale value frozen at swap time.
-            dataSource.readings.value =
-                dataSource.readings.value +
-                (PidIds.RPM to Reading(PidIds.RPM, MID_GROW_RPM_VALUE, Instant.EPOCH, stale = false))
-            composeTestRule.mainClock.advanceTimeByFrame()
-            composeTestRule.onNodeWithTag("gauge-rpm-value").assertTextEquals(MID_GROW_RPM_TEXT)
-
-            composeTestRule.mainClock.advanceTimeBy(SWAP_SETTLE_MS)
-        } finally {
-            composeTestRule.mainClock.autoAdvance = true
-        }
-        composeTestRule.waitForIdle()
-
-        val growEndBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
-        assertMidFlight(full = growEndBounds, mid = midBounds, settled = growStartBounds)
-    }
-
-    /**
-     * AC: "Snap path under animator-scale 0." Mirrors
-     * `animator duration scale 0 snaps to the picker-card end state the instant the long-press
-     * registers` above, for the grow direction: [rememberPickerShrinkAnimationSpec] resolves to
-     * `snap()` under `ANIMATOR_DURATION_SCALE = 0` regardless of which direction drives it (it's
-     * the SAME spec function — GaugeSlot's own KDoc), so the grow-in `Animatable` should already
-     * be at its settled (full-size) target the instant the swapped-in tile first appears, rather
-     * than lingering at (or near) the tapped candidate's mini-card size for even one visible
-     * frame. Polls in small steps (same pattern as the long-press version) rather than assuming
-     * a fixed frame count, since exactly how many frames elapse between the tap and the `key(id)`
-     * remount picking it up isn't a timing contract this test should depend on.
-     */
-    @Test
-    fun `animator duration scale 0 snaps a swap-in grow to full size the instant it mounts`() {
-        val context = composeTestRule.activity
-        val originalScale =
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
-        Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 0f)
-        try {
-            setDashboard(newViewModel())
-            composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-            composeTestRule.waitForIdle()
-            val miniCardBounds =
-                composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performScrollTo().getBoundsInRoot()
-
-            composeTestRule.mainClock.autoAdvance = false
-            try {
-                composeTestRule.onNodeWithTag("gauge-picker-card-rpm").performTouchInput { click() }
-                var waited = 0L
-                while (composeTestRule.onAllNodesWithTag("gauge-rpm").fetchSemanticsNodes().isEmpty()) {
-                    check(waited < LONG_PRESS_POLL_TIMEOUT_MS) { "swap-in tile never mounted" }
-                    composeTestRule.mainClock.advanceTimeBy(LONG_PRESS_POLL_STEP_MS)
-                    waited += LONG_PRESS_POLL_STEP_MS
-                }
-
-                val justMountedBounds = composeTestRule.onNodeWithTag("gauge-rpm").getBoundsInRoot()
-                assertTrue(
-                    "expected the grow to already be (near) full size under animator-scale 0, but height " +
-                        "${justMountedBounds.height} is still close to the mini-card's ${miniCardBounds.height}",
-                    justMountedBounds.height > miniCardBounds.height * MIN_SNAPPED_GROW_HEIGHT_FACTOR,
-                )
-            } finally {
-                composeTestRule.mainClock.autoAdvance = true
-            }
-            composeTestRule.waitForIdle()
-        } finally {
-            Settings.Global.putFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, originalScale)
-        }
-    }
-
-    /**
-     * [full]/[mid]/[settled] are the same node's bounds captured before the long-press, partway
-     * through the shrink, and after it settles. Asserts [mid] is strictly BETWEEN the other two on
-     * both height (catches a broken/incomplete scale) and vertical center position (catches a
-     * broken/zeroed translation — height alone wouldn't: scale and translation are independent
-     * `graphicsLayer` properties, see `pickerShrinkLayer`'s KDoc).
-     */
-    private fun assertMidFlight(
-        full: DpRect,
-        mid: DpRect,
-        settled: DpRect,
-    ) {
-        assertTrue(
-            "mid-flight height (${mid.height}) should be smaller than the full tile's (${full.height})",
-            mid.height < full.height,
-        )
-        assertTrue(
-            "mid-flight height (${mid.height}) should still be larger than the settled card's (${settled.height})",
-            mid.height > settled.height,
-        )
-        val fullCenterY = (full.top + full.bottom).value / 2f
-        val settledCenterY = (settled.top + settled.bottom).value / 2f
-        val midCenterY = (mid.top + mid.bottom).value / 2f
-        val settledDelta = settledCenterY - fullCenterY
-        val midDelta = midCenterY - fullCenterY
-        assertEquals(
-            "mid-flight center must have moved toward the settled position, not away from it",
-            sign(settledDelta),
-            sign(midDelta),
-            0.0f,
-        )
-        assertTrue(
-            "mid-flight center (delta $midDelta) must not have already reached the settled position (delta $settledDelta)",
-            abs(midDelta) < abs(settledDelta),
-        )
     }
 
     private fun setDashboard(viewModel: DashboardViewModel) {
@@ -688,41 +342,13 @@ class GaugeSwapPickerTest {
     private fun newViewModel(repository: SettingsRepository = PickerInMemorySettingsRepository()): DashboardViewModel =
         DashboardViewModel(FixedReadingsVehicleDataSource(fixedReadings()), clock, repository)
 
-    /** Drains the picker's local "confirm, rise, dismiss" beat (see `GaugePicker.kt`). */
-    private fun settlePickerAnimation() {
-        composeTestRule.waitForIdle()
-        composeTestRule.mainClock.advanceTimeBy(SWAP_SETTLE_MS)
-        composeTestRule.waitForIdle()
-    }
-
     private fun hasZone(zone: ThresholdZone) =
         SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, zone.name.lowercase())
 
     private companion object {
-        const val SWAP_SETTLE_MS = 500L
-        const val LONG_PRESS_POLL_STEP_MS = 50L
-        const val LONG_PRESS_POLL_TIMEOUT_MS = 3000L
-
-        // Review round-1 M2: a SMALL delta from wherever performTouchInput { longClick() }'s own
-        // gesture leaves mainClock — not a fixed absolute time (see the test's KDoc for why the
-        // original version of this constant put the assertion a few ms past settle instead).
-        const val MID_FLIGHT_DELTA_MS = 30L
-        const val MID_SHRINK_COOLANT_VALUE = 245.0
-        const val MID_SHRINK_COOLANT_TEXT = "245°F"
-        const val ASPECT_TOLERANCE = 0.05f
-
-        // OBD-47: a distinct rpm value from RPM_VALUE/RPM_TEXT below, so a mid-grow assertion
-        // that accidentally read the PRE-swap seed value (rather than a genuinely fresh push)
-        // would fail loudly instead of coincidentally matching.
-        const val MID_GROW_RPM_VALUE = 4100.0
-        const val MID_GROW_RPM_TEXT = "4100 RPM"
-
-        // A real snap() lands the grow-in Animatable at its target on its very first frame — the
-        // settled tile is many times taller than a 96dp-wide mini-card; a broken (tween-driven)
-        // implementation would still be near mini-card height at this instant. Not 1:1 against a
-        // measured full-tile height (like the shrink test's own factor-of-2 check) for the same
-        // reason that test uses one: just "clearly already grown," robust to exact layout math.
-        const val MIN_SNAPPED_GROW_HEIGHT_FACTOR = 2
+        // Pages are [current, rpm, speed] for a default-order picker (GaugeCatalog.candidateGaugesFor).
+        const val RPM_PAGE = 1
+        const val SPEED_PAGE = 2
 
         const val COOLANT_VALUE = 235.0
         const val TRANS_VALUE = 150.0

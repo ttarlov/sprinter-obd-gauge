@@ -5,7 +5,7 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.revel.obdgauge.app.settings.AppSettings
@@ -80,13 +80,15 @@ class GaugeSwapDemoTest {
 
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
+        // rpm is the second page of the in-tile swap pager ([current, rpm, speed]); scroll to it.
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(1)
+        composeTestRule.waitForIdle()
 
         // A real, non-placeholder rpm value carries the " RPM" suffix (formatGaugeValue) — the
         // placeholder text (NO_READING_TEXT, "—") never does, so this one assertion covers both
         // "it's live data" and "the unit is right".
         composeTestRule
-            .onNodeWithTag("gauge-picker-card-rpm-value")
-            .performScrollTo()
+            .onNodeWithTag("gauge-swap-page-rpm-value")
             .assertTextContains("RPM", substring = true)
     }
 }

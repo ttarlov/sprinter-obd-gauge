@@ -29,7 +29,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,18 +37,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.revel.obdgauge.app.gauge.grid.GaugeGrid
 import com.revel.obdgauge.app.gauge.grid.GridEngine
@@ -71,9 +65,9 @@ import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import kotlinx.coroutines.flow.StateFlow
 
-// internal (not private): GaugePicker.kt's GaugePickerChrome/pickerShrink* helpers reuse these so
-// the picker frame and the OBD-44 shrink target both match the tile's own corner
-// radius/padding/background exactly — "still THAT tile" (issues/OBD-42.md).
+// internal (not private): GaugePicker.kt's SwapPagerCard reuses these so each in-tile swap page
+// matches the real tile's own corner radius/padding/background exactly — "still THAT tile"
+// (issues/OBD-42.md).
 internal const val TILE_CORNER_RADIUS_DP = 16
 internal const val TILE_PADDING_DP = 16
 internal const val TILE_BACKGROUND_ALPHA = 0.18f
@@ -236,7 +230,7 @@ fun GaugeDashboard(
                         sparklines = sparklines,
                         gaugeOrder = gaugeOrder,
                         gridLayout = gridLayout,
-                        placedIds = placedIds,
+                        placedIds = placedIds.toSet(),
                         pickerTileId = pickerTileId,
                         onLongPress = { id -> pickerTileId = id },
                         onDismissPicker = dismissPicker,
@@ -244,12 +238,11 @@ fun GaugeDashboard(
                     )
                 }
             }
-            // OBD-64: the whole edit surface for the tile being picked — resize chips, Remove, and
-            // Add — a compact bar over the dashboard, NOT crammed into the narrow in-slot swap
-            // chrome (which can't fit them without clipping in a 4-column landscape tile). The
-            // in-slot swap carousel (OBD-42/44) is untouched. Keeping Add here (rather than as an
-            // always-visible "+" grid cell) is what keeps the normal, non-editing dashboard clean:
-            // it renders exactly the placed gauges, at full height.
+            // OBD-64: the resize/Remove/Add edit bar for the tile being picked — BUTTONS (tapped,
+            // not swiped), so they stay in a compact bar floating over the bottom of the dashboard
+            // rather than joining the in-tile swap pager (OBD-65). The pager owns the swap itself;
+            // this bar owns size/remove/add. A floating overlay (not the vertical flow) keeps the
+            // picked tile full-size so its pager fills the whole slot.
             val pickingId = pickerTileId
             val pickingPlacement = pickingId?.let(canonicalLayout::placementFor)
             if (pickingId != null && pickingPlacement != null) {
@@ -298,16 +291,12 @@ fun GaugeDashboard(
  * per-gauge composition identity the pre-grid layout gave, which OBD-47's grow-in and OBD-44's
  * "never remounted across picker mode" both depend on.
  *
- * OBD-47: [growOrigins] is what lets the freshly-mounted id still animate in like a continuation
- * of the tap that caused it, despite that teardown/remount — it's a plain `remember`ed map (not
- * `key(id)`-scoped, so it's the SAME instance across a swap, unlike anything declared inside one
- * tile's own subtree) from an incoming gauge id to the on-screen rect its swap should grow FROM.
- * `GaugeSlot` writes into it (via [recordGrowOrigin]) the instant a candidate is tapped —
- * synchronously, in the same call as the `onSelectCandidate` that eventually mutates
- * [gaugeOrder] — so the entry is always present by the time (this frame or several frames later,
- * depending on how fast persistence round-trips) that id's own `GaugeSlot` actually mounts; and
- * reads out of it (via [consumeGrowOrigin], a read-and-remove) exactly once at that mount. See
- * `GaugeSlot`'s KDoc for the rest of the grow-in mechanics.
+ * OBD-65: swapping is now an in-tile [SwapPager] (see `GaugeSlot`) — the picked tile's content
+ * becomes a pager of candidate gauges, tapping a candidate page persists the swap via
+ * [onSelectCandidate]. The pre-OBD-65 shrink-into-a-carousel animation and its grow-in origin
+ * registry are retired (the tile no longer shrinks into a chrome), so this dispatch is plain: each
+ * id's [GaugeSlot] renders either the live tile or, while picking, the pager. [placedIds] feeds the
+ * pager's candidate list.
  */
 @Composable
 @Suppress("LongParameterList") // one param per input the per-tile GaugeSlot calls below actually need.
@@ -317,30 +306,18 @@ private fun GaugeTileGrid(
     sparklines: Map<String, StateFlow<List<SparklinePoint>>>,
     gaugeOrder: List<GaugeOrderEntry>,
     gridLayout: GridLayout?,
-    placedIds: List<String>,
+    placedIds: Set<String>,
     pickerTileId: String?,
     onLongPress: (String) -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (oldId: String, newId: String) -> Unit,
 ) {
-    // OBD-47: plain (non-snapshot) map — writes only ever need to be visible to the READ that
-    // happens inside a later `remember(id) { }` at that same id's own mount, never to drive
-    // recomposition on their own, so there is nothing a SnapshotStateMap would buy here.
-    val growOrigins = remember { mutableMapOf<String, Rect>() }
-    val recordGrowOrigin: (id: String, boundsInRoot: Rect) -> Unit = { id, bounds -> growOrigins[id] = bounds }
-    val consumeGrowOrigin: (id: String) -> Rect? = { id -> growOrigins.remove(id) }
-
     val columns = if (isLandscape) GRID_COLUMNS_LANDSCAPE else GRID_COLUMNS_PORTRAIT
     val layout =
         remember(gridLayout, gaugeOrder, columns) {
             val base = gridLayout ?: GridMigration.fromGaugeOrder(gaugeOrder, columns)
             GridEngine.withColumns(base, columns)
         }
-    // OBD-64: `placedIds` (the persisted set) drives the swap candidate math. The normal grid
-    // renders exactly the placed gauges — no synthetic "+" cell — so the non-editing dashboard is
-    // the clean Phase-2 look (4 tiles → one full-height landscape row). Add lives behind long-press
-    // in the edit bar (see GaugeDashboard).
-    val placedIdSet = remember(placedIds) { placedIds.toSet() }
 
     GaugeGrid(
         columns = columns,
@@ -352,64 +329,29 @@ private fun GaugeTileGrid(
             id = id,
             uiState = uiState,
             sparkline = sparklines[id],
-            placedIds = placedIdSet,
+            placedIds = placedIds,
             isPicking = pickerTileId == id,
             onLongPress = { onLongPress(id) },
             onDismissPicker = onDismissPicker,
             onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
-            recordGrowOrigin = recordGrowOrigin,
-            consumeGrowOrigin = consumeGrowOrigin,
             modifier = Modifier.fillMaxSize(),
         )
     }
 }
 
 /**
- * Dispatches to [BoostTile] for the boost id (arc + neutral color), [GaugeTile] otherwise — and,
- * when [isPicking] is true, layers [GaugePickerChrome] (OBD-42's carousel of OTHER candidates)
- * behind it. Unlike the pre-OBD-44 version, there is no [AnimatedContent] swap between "normal
- * tile" and "picker mode" here: exactly ONE [GaugeTile]/[BoostTile] instance is composed for
- * [id], always — OBD-44's AC ("single surface, no content pop/crossfade... stays live mid-
- * shrink") requires that the composable rendering the live value is never torn down and remounted
- * across the picker-mode boundary. What changes is purely visual: [progress] (0 normal → 1 fully
- * picking) drives that one instance's own [pickerShrinkLayer] transform from filling this whole
- * slot down to sitting inside [currentSlotBounds] — the picker chrome's reserved slot for the
- * current gauge, measured via `onGloballyPositioned` and converted into this Box's own local
- * coordinate space (via [outerCoordinates]) so the two composables agree on where "the mini-card
- * position" actually is on screen. A swap-select (picking a DIFFERENT candidate) is *not*
- * animated across the tile-identity boundary; see [GaugeTileGrid]'s KDoc for why — that path
- * keeps OBD-42's local "rise" treatment entirely inside [GaugePickerChrome].
+ * Renders one grid slot: while [isPicking], the tile's content becomes an in-place [SwapPager]
+ * (OBD-65) that fills the slot's own bounds — page 0 the current gauge, following pages the swap
+ * candidates ([candidateGaugesFor] over [placedIds]) — so swiping to another gauge works at any
+ * tile size and the pager (not the tile's tap detector) owns the horizontal drag. Tapping a
+ * candidate page persists the swap via [onSelectCandidate]; tapping page 0 or outside dismisses.
+ * When NOT picking it dispatches to [BoostTile] (arc + neutral color) for the boost id, [GaugeTile]
+ * otherwise — the normal interactive tile whose long-press ([onLongPress]) enters pick mode.
  *
- * ### OBD-47: swap-in grow animation
- * A tap in [GaugePickerChrome]'s carousel doesn't just call [onSelectCandidate] — it fires
- * [recordGrowOrigin] first (via `onSelectCandidate` below wrapping both), stashing the tapped
- * candidate's own on-screen rect (or, if that's somehow unavailable, this slot's current-card
- * ghost rect — see [currentSlotBoundsInRoot] below — never a pop) in [GaugeTileGrid]'s
- * `growOrigins` registry, keyed by the id about to be swapped IN. That id's own `GaugeSlot`
- * instance — a fresh composable mount, `key(id)`-torn-down-and-rebuilt, per this function's own
- * KDoc above — reads it back exactly once via [consumeGrowOrigin] at its own `remember(id) { }`,
- * i.e. once per mount, never replayed by a later recomposition of the SAME id (its own long-press
- * included) or corrupted by some OTHER slot's unrelated swap (registry keys are per-id).
- *
- * That captured rect is in Compose-ROOT space (survives the source subtree's teardown, unlike a
- * live `LayoutCoordinates` reference, which [GaugePickerChrome]'s own KDoc explains further) —
- * [growTargetBoundsInLocalSpace] converts it into THIS tile's own local frame once its
- * [tileCoordinates] are known, the same frame [pickerShrinkLayer] itself needs. [growAnimatable]
- * then plays [progress] 1→0 over it using the IDENTICAL [rememberPickerShrinkAnimationSpec] (same
- * 300 ms, same easing, same animator-scale-0 `snap()`) the long-press shrink uses — driving the
- * SAME [pickerShrinkLayer]/[pickerShrinkContentCounterScale]/[pickerShrinkVisuals]/
- * [pickerShrinkBorder] stack [GaugeTile]/[BoostTile] already apply for the shrink direction, just
- * fed a different (progress, targetBounds) pair while a grow is in flight. [GaugePickerChrome]
- * itself is NOT rendered during this — its own mount condition stays keyed to [progress]
- * (renamed nowhere; still exactly [isPicking]'s shrink progress), which is `0f` the whole time a
- * freshly-mounted tile is only growing, never picking.
- *
- * Long-press during grow-in is IGNORED (not queued): [effectiveOnLongPress] below no-ops while
- * [isGrowingIn] is true, so a long-press that lands mid-grow is simply swallowed — the tile
- * finishes growing to full size first; the user can long-press again once it's settled. Chosen
- * over queueing because queueing would mean a picker opening on its own some ~300 ms after an
- * input the user may not even remember giving, which reads as the UI acting unprompted; ignoring
- * it costs nothing but a repeat tap.
+ * OBD-65 retired the pre-existing shrink-into-a-mini-card chrome (OBD-44/46) and the grow-in origin
+ * registry (OBD-47): the tile no longer shrinks into a carousel, it is simply replaced by the pager
+ * while picking and restored after, so none of that transform machinery is needed. The swap itself
+ * is a clean instant replace (the pager's own snap/swipe carries the motion).
  */
 @Composable
 @Suppress("LongParameterList") // one param per input GaugeSlot's dispatch/callbacks actually need.
@@ -422,145 +364,71 @@ private fun GaugeSlot(
     onLongPress: () -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (String) -> Unit,
-    recordGrowOrigin: (id: String, boundsInRoot: Rect) -> Unit,
-    consumeGrowOrigin: (id: String) -> Rect?,
     modifier: Modifier = Modifier,
 ) {
-    // MINOR M3: placeholder fallback — see GaugeSlot's own KDoc file history (OBD-42/44 review
-    // rounds) for why: DashboardUiState.Loading only seeds the four core tiles.
+    // MINOR M3: placeholder fallback — DashboardUiState.Loading only seeds the four core tiles.
     // B8 (round-1 review): `?: false`, not `?: true` — an id absent from GAUGE_CATALOG entirely
-    // is exactly the "cannot vouch for it" case PidCatalog.isVerified treats as unverified; this
-    // now matches GaugeTileUiState's own default (see its KDoc).
+    // is exactly the "cannot vouch for it" case PidCatalog.isVerified treats as unverified.
     val tile =
         uiState.tileFor(id) ?: GaugeTileUiState.placeholder(
             id,
             GAUGE_CATALOG_BY_ID[id]?.label ?: id,
             verified = GAUGE_CATALOG_BY_ID[id]?.verified ?: false,
         )
-    val progress = rememberPickerShrinkProgress(isPicking, label = "gauge-picker-shrink-$id")
 
-    // fullSize/currentSlotBounds: this tile's own coordinates and the chrome ghost's, converted
-    // into them — unchanged OBD-44/46 machinery. currentSlotBoundsInRoot/incomingGrowOrigin/
-    // growProgress are OBD-47's own additions — all explained in this function's own KDoc above.
-    var tileCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
-    var currentSlotBounds by remember { mutableStateOf<Rect?>(null) }
-    var currentSlotBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
-    val incomingGrowOrigin = remember(id) { consumeGrowOrigin(id) }
-    val growProgress = rememberGaugeGrowInProgress(id, incomingGrowOrigin)
-    val isGrowingIn = growProgress > 0f
-
-    // propagateMinConstraints = true: makes GaugeTile/BoostTile below fill this Box exactly like
-    // the pre-OBD-44 AnimatedContent used to (Box otherwise loosens a plain child's constraints).
+    // propagateMinConstraints = true: makes the child (tile or pager) fill this Box exactly.
     Box(modifier = modifier, propagateMinConstraints = true) {
-        if (progress > 0f) {
-            GaugePickerChrome(
-                currentId = id,
-                currentTile = tile,
-                candidates =
-                    remember(id, placedIds) {
-                        candidateGaugesFor(id, placedIds).filterNot { it.id == id }
-                    },
+        if (isPicking) {
+            // candidateGaugesFor puts the current gauge first, so it is page 0 of the pager.
+            val pages = remember(id, placedIds) { candidateGaugesFor(id, placedIds) }
+            SwapPager(
+                slotId = id,
+                pages = pages,
                 tileFor = uiState::tileFor,
-                alpha = progress,
                 onDismiss = onDismissPicker,
-                // Fallback to the current-card ghost's own root-space rect if the tapped
-                // candidate somehow never reported its own bounds — never a pop (this fn's KDoc).
-                onSelectCandidate = { newId, tappedBoundsInRoot ->
-                    recordGrowOrigin(newId, tappedBoundsInRoot ?: currentSlotBoundsInRoot ?: Rect.Zero)
-                    onSelectCandidate(newId)
-                },
-                isPicking = isPicking,
-                onCurrentSlotPositioned = { slotCoordinates ->
-                    val (localBounds, rootBounds) = currentSlotBoundsFrom(tileCoordinates, slotCoordinates)
-                    localBounds?.let { currentSlotBounds = it }
-                    rootBounds?.let { currentSlotBoundsInRoot = it }
-                },
+                onSelect = onSelectCandidate,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
+            if (id == PidIds.BOOST) {
+                BoostTile(tile, sparkline, Modifier, onLongPress, onDismissPicker)
+            } else {
+                GaugeTile(tile, sparkline, Modifier, onLongPress, onDismissPicker)
+            }
+            UnverifiedBadgeOverlay(
+                tile = tile,
+                settled = true,
+                rawFrame = uiState.rawFrames[id],
                 modifier = Modifier.matchParentSize(),
             )
         }
-        val fullSize = tileCoordinates?.size?.toSize()
-        val growTargetBounds = growTargetBoundsInLocalSpace(incomingGrowOrigin, tileCoordinates)
-        val liveMod = Modifier.onGloballyPositioned { tileCoordinates = it }
-        // Either/or, never a blend (this fn's KDoc): isPicking stays false — so `progress` stays
-        // 0 — for as long as isGrowingIn is true, since long-presses are ignored while growing.
-        val progEff = if (isGrowingIn) growProgress else progress
-        val boundsEff = if (isGrowingIn) growTargetBounds else currentSlotBounds
-        val pressEff: () -> Unit = if (isGrowingIn) ({}) else onLongPress
-        if (id == PidIds.BOOST) {
-            BoostTile(tile, sparkline, liveMod, pressEff, onDismissPicker, isPicking, progEff, fullSize, boundsEff)
-        } else {
-            GaugeTile(tile, sparkline, liveMod, pressEff, onDismissPicker, isPicking, progEff, fullSize, boundsEff)
-        }
-
-        UnverifiedBadgeOverlay(
-            tile = tile,
-            settled = progEff == 0f,
-            rawFrame = uiState.rawFrames[id],
-            modifier = Modifier.matchParentSize(),
-        )
     }
 }
 
 /**
- * Review round-1 M3: a test-only hook, no-op by default (production code never overrides it —
- * `LocalGaugeTileMountProbe.current` is only ever assigned in `GaugeSwapPickerTest`). `GaugeTile`/
- * `BoostTile` fire it exactly once per `remember { }` — i.e. once per composition MOUNT, never on
- * a plain in-place recomposition — so a test can assert the count stays at 1 across a long-press +
- * dismiss cycle, directly pinning OBD-44's core architectural guarantee (`GaugeSlot`'s KDoc):
- * this composable is never torn down and remounted across the picker-mode boundary. Guards
- * against a regression as narrow as wrapping either tile's call site in `key(isPicking) { }`,
- * which `waitForIdle()`-based value/tag assertions alone would not catch (the value would still
- * eventually read correctly after a fresh remount — only the *liveness-during-the-animation* and
- * *never-recreated* properties would be lost).
- */
-internal val LocalGaugeTileMountProbe = compositionLocalOf<() -> Unit> { {} }
-
-/**
  * One temp/numeric tile: label, large value, threshold-colored background, stale treatment,
- * optional sparkline. OBD-44: also the single composable instance that plays the picker-mode
- * shrink/grow for its own tile — see [GaugeSlot]'s KDoc. [isPicking]/[shrinkProgress]/[fullSize]/
- * [targetBounds] are all `false`/`0f`/`null`/`null` by default so every pre-OBD-44 call site
- * (including [DashboardScreenshotTest]'s two references, which never enter picker mode) renders
- * byte-identical to before: [pickerShrinkLayer] and the picker-aware tag/interaction switch below
- * both no-op whenever [shrinkProgress] is `0f`.
+ * optional sparkline. [onLongPress] enters pick mode for this tile; [onTap] dismisses some *other*
+ * tile's open picker (see [gaugeTileInteraction]).
  */
 @Composable
-@Suppress("LongParameterList") // one param per OBD-44 shrink input, all defaulted for non-picker call sites.
 fun GaugeTile(
     state: GaugeTileUiState,
     sparkline: StateFlow<List<SparklinePoint>>? = null,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
-    isPicking: Boolean = false,
-    shrinkProgress: Float = 0f,
-    fullSize: Size? = null,
-    targetBounds: Rect? = null,
 ) {
-    val mountProbe = LocalGaugeTileMountProbe.current
-    remember { mountProbe() }
     val zoneColor = zoneColor(state.zone)
-    val visuals = pickerShrinkVisuals(zoneColor, shrinkProgress, fullSize, targetBounds)
+    val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
     Box(
         modifier =
             modifier
-                .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
-                .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
-                .background(visuals.backgroundColor, visuals.shape)
-                .pickerShrinkBorder(
-                    progress = shrinkProgress,
-                    fullSize = fullSize,
-                    targetBounds = targetBounds,
-                    visuals = visuals,
-                ).padding(visuals.contentPadding),
+                .gaugeTileInteraction(state.id, state.zone, onLongPress, onTap)
+                .background(zoneColor.copy(alpha = TILE_BACKGROUND_ALPHA), shape)
+                .padding(TILE_PADDING_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            // Review round-1 BLOCKER B1: counter-scales pickerShrinkLayer's anisotropic outer
-            // squash so this content renders uniformly (no smear) — see its KDoc.
-            modifier = Modifier.pickerShrinkContentCounterScale(shrinkProgress, fullSize, targetBounds),
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = state.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -574,7 +442,7 @@ fun GaugeTile(
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag(pickerAwareValueTag(state.id, isPicking)),
+                modifier = Modifier.testTag("gauge-${state.id}-value"),
             )
             state.staleText?.let { staleText ->
                 Text(
@@ -598,42 +466,26 @@ fun GaugeTile(
 
 /**
  * Boost tile: same shell as [GaugeTile] plus the [BoostArc] sweep indicator — see its KDoc for
- * [onLongPress]/[onTap] and the OBD-44 shrink params.
+ * [onLongPress]/[onTap].
  */
 @Composable
-@Suppress("LongParameterList") // one param per OBD-44 shrink input, all defaulted for non-picker call sites.
 private fun BoostTile(
     state: GaugeTileUiState,
     sparkline: StateFlow<List<SparklinePoint>>?,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
-    isPicking: Boolean = false,
-    shrinkProgress: Float = 0f,
-    fullSize: Size? = null,
-    targetBounds: Rect? = null,
 ) {
-    val mountProbe = LocalGaugeTileMountProbe.current
-    remember { mountProbe() }
-    val visuals = pickerShrinkVisuals(GaugeNeutral, shrinkProgress, fullSize, targetBounds)
+    val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
     Box(
         modifier =
             modifier
-                .pickerShrinkLayer(shrinkProgress, fullSize, targetBounds, visuals.shape, visuals.elevation)
-                .pickerAwareInteraction(state.id, state.zone, isPicking, onLongPress, onTap)
-                .background(visuals.backgroundColor, visuals.shape)
-                .pickerShrinkBorder(
-                    progress = shrinkProgress,
-                    fullSize = fullSize,
-                    targetBounds = targetBounds,
-                    visuals = visuals,
-                ).padding(visuals.contentPadding),
+                .gaugeTileInteraction(state.id, state.zone, onLongPress, onTap)
+                .background(GaugeNeutral.copy(alpha = TILE_BACKGROUND_ALPHA), shape)
+                .padding(TILE_PADDING_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.pickerShrinkContentCounterScale(shrinkProgress, fullSize, targetBounds),
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = state.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -659,7 +511,7 @@ private fun BoostTile(
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag(pickerAwareValueTag(state.id, isPicking)),
+                modifier = Modifier.testTag("gauge-${state.id}-value"),
             )
             sparkline?.let { flow ->
                 GaugeSparklineStrip(
@@ -739,9 +591,7 @@ private fun AddGaugePalette(
                             tileFor(pid.id) ?: GaugeTileUiState.placeholder(pid.id, pid.label, verified = pid.verified)
                         GaugeMiniCard(
                             tile = tile,
-                            isCurrent = false,
                             onClick = { onAdd(pid.id) },
-                            tagged = false,
                             modifier = Modifier.width(MINI_CARD_WIDTH_DP.dp).testTag("gauge-add-option-${pid.id}"),
                         )
                     }
