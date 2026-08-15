@@ -1,8 +1,11 @@
 package com.revel.obdgauge.app.gauge
 
+import com.revel.obdgauge.app.gauge.grid.GridEngine
+import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.service.ConnectionServiceController
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
+import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidDefinition
@@ -15,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -22,6 +26,9 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.Clock
@@ -214,6 +221,93 @@ class DashboardViewModelTest {
             assertEquals(before, viewModel.gaugeOrder.value)
         }
 
+    // --- OBD-64: grid as the single source of truth (eager seed + mutations) -----------------
+
+    @Test
+    fun `gridLayout is eagerly seeded from gaugeOrder at the canonical 4 columns when absent`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+
+            val grid = viewModel.gridLayout.value!!
+            assertEquals(GRID_CANONICAL_COLUMNS, grid.columns)
+            assertEquals(DEFAULT_GAUGE_ORDER.filter { it.visible }.map { it.id }, grid.ids)
+        }
+
+    @Test
+    fun `the eager seed does not overwrite an already-persisted grid`() =
+        runTest(testDispatcher) {
+            val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+            val stored =
+                GridEngine.repack(GRID_CANONICAL_COLUMNS, listOf(GridPlacement(PidIds.BOOST, 0, 0, colSpan = 2)))
+            val repository = InMemorySettingsRepository(AppSettings(gridLayout = stored))
+            val viewModel = DashboardViewModel(fake, fixedClock, repository)
+            backgroundScope.launch { viewModel.gridLayout.collect {} }
+            advanceUntilIdle()
+
+            assertEquals(stored, viewModel.gridLayout.value)
+        }
+
+    @Test
+    fun `addGauge places a previously-unplaced gauge on the persisted grid`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+
+            viewModel.addGauge(SPEED_PID_ID)
+            advanceUntilIdle()
+
+            assertTrue(SPEED_PID_ID in viewModel.gridLayout.value!!.ids)
+        }
+
+    @Test
+    fun `removeGauge drops a tile from the persisted grid`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+
+            viewModel.removeGauge(PidIds.COOLANT)
+            advanceUntilIdle()
+
+            assertFalse(PidIds.COOLANT in viewModel.gridLayout.value!!.ids)
+        }
+
+    @Test
+    fun `resizeGauge changes a tile's span and keeps the canonical column count`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+
+            viewModel.resizeGauge(PidIds.COOLANT, colSpan = 2, rowSpan = 2)
+            advanceUntilIdle()
+
+            val grid = viewModel.gridLayout.value!!
+            val coolant = grid.placementFor(PidIds.COOLANT)!!
+            assertEquals(2, coolant.colSpan)
+            assertEquals(2, coolant.rowSpan)
+            assertEquals(GRID_CANONICAL_COLUMNS, grid.columns)
+        }
+
+    @Test
+    fun `swapGauge renames the placement in place on the persisted grid`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.gridLayout.value!!.placementFor(PidIds.COOLANT)!!
+
+            viewModel.swapGauge(PidIds.COOLANT, PidIds.RPM)
+            advanceUntilIdle()
+
+            val grid = viewModel.gridLayout.value!!
+            assertNull(grid.placementFor(PidIds.COOLANT))
+            // Same cell + span, only the id changed.
+            assertEquals(before.copy(id = PidIds.RPM), grid.placementFor(PidIds.RPM))
+        }
+
+    /** A VM whose eager-seed has run and whose `gridLayout` flow has a live collector. */
+    private fun TestScope.seededViewModel(): DashboardViewModel {
+        val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
+        val viewModel = DashboardViewModel(fake, fixedClock, InMemorySettingsRepository())
+        backgroundScope.launch { viewModel.gridLayout.collect {} }
+        advanceUntilIdle()
+        return viewModel
+    }
+
     private fun withDashboard(
         scenario: Scenario,
         assertions: (DashboardUiState) -> Unit,
@@ -267,8 +361,10 @@ private class RecordingVehicleDataSource(
  * exercise reading/formatting scenario data, not OBD-21's settings persistence itself (see
  * `SettingsRepositoryTest` and the live-recolor test for that).
  */
-private class InMemorySettingsRepository : SettingsRepository {
-    private val state = MutableStateFlow(AppSettings())
+private class InMemorySettingsRepository(
+    initial: AppSettings = AppSettings(),
+) : SettingsRepository {
+    private val state = MutableStateFlow(initial)
     override val settings = state
 
     override suspend fun update(transform: (AppSettings) -> AppSettings) {

@@ -131,6 +131,37 @@ class GaugeCatalogTest {
         assertEquals(GAUGE_CATALOG.map { it.id }.toSet(), candidates.map { it.id }.toSet())
     }
 
+    // OBD-64: the grid-keyed overloads — "shown elsewhere" is decided by the placed-id set now.
+
+    @Test
+    fun `candidateGaugesFor(placedIds) lists the current gauge first, then unplaced catalog ids`() {
+        val placed = setOf(PidIds.COOLANT, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
+        val candidates = candidateGaugesFor(PidIds.COOLANT, placed)
+
+        assertEquals(PidIds.COOLANT, candidates.first().id)
+        // trans/oil/boost are placed elsewhere — not offered; rpm/speed are unplaced — offered.
+        assertFalse(candidates.any { it.id == PidIds.TRANS_TEMP })
+        assertTrue(candidates.any { it.id == PidIds.RPM })
+        assertTrue(candidates.any { it.id == SPEED_PID_ID })
+        assertEquals(1, candidates.count { it.id == PidIds.COOLANT })
+    }
+
+    @Test
+    fun `addableGaugesFor offers exactly the catalog ids not already placed`() {
+        val placed = setOf(PidIds.COOLANT, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
+
+        val addable = addableGaugesFor(placed).map { it.id }.toSet()
+
+        assertEquals(setOf(PidIds.RPM, SPEED_PID_ID), addable)
+    }
+
+    @Test
+    fun `addableGaugesFor is empty once every catalog id is placed`() {
+        val allPlaced = GAUGE_CATALOG.map { it.id }.toSet()
+
+        assertTrue(addableGaugesFor(allPlaced).isEmpty())
+    }
+
     private companion object {
         const val ARBITRARY_RPM_VALUE = 3000.0
         const val ARBITRARY_SPEED_VALUE = 65.0

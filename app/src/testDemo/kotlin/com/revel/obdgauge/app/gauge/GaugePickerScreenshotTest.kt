@@ -1,5 +1,6 @@
 package com.revel.obdgauge.app.gauge
 
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
@@ -50,6 +51,25 @@ class GaugePickerScreenshotTest {
         composeTestRule.waitForIdle()
 
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_picker_mode.png")
+    }
+
+    // OBD-64: the add palette open over the dashboard — reached via long-press → the edit bar's
+    // "＋ Add" button, showing the addable gauges (rpm/speed) as live mini-cards.
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `add palette open, landscape`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(sampleUiState())
+            }
+        }
+
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-edit-add").performTouchInput { click() }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_add_palette.png")
     }
 
     // Same pattern as DashboardScreenshotTest's sampleUiState, but requesting GAUGE_CATALOG

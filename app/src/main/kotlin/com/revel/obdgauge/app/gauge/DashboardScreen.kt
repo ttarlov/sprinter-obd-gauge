@@ -1,16 +1,28 @@
+// OBD-64 adds the add-cell, add-palette, and picker edit-bar composables to this dashboard file,
+// nudging it past detekt's per-file function count — they're all one screen's cohesive chrome, so
+// suppressing here (as GaugePicker.kt already does for its own picker primitives) keeps the feature
+// readable in one place rather than scattering it across files for the counter's sake.
+@file:Suppress("TooManyFunctions")
+
 package com.revel.obdgauge.app.gauge
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -25,6 +37,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -54,6 +67,7 @@ import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
 import com.revel.obdgauge.app.ui.theme.GaugeValueTextStyle
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkState
+import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import kotlinx.coroutines.flow.StateFlow
 
@@ -66,12 +80,21 @@ internal const val TILE_BACKGROUND_ALPHA = 0.18f
 private const val TILE_SPACING_DP = 12
 private const val SPARKLINE_TOP_PADDING_DP = 4
 
+// OBD-64: add-palette / edit-bar chrome.
+private const val ADD_PALETTE_SCRIM_ALPHA = 0.6f
+private const val ADD_PALETTE_ELEVATION_DP = 6
+
 // OBD-63: grid width per orientation. Landscape (dash-mount primary) is 4 wide so the migrated
 // default (4 core gauges, 1×1) fills one row exactly like the pre-grid dashboard; portrait is 2
 // wide so tiles stay legible when stacked. GridEngine.withColumns repacks the resolved layout into
 // whichever applies for the current orientation.
 private const val GRID_COLUMNS_LANDSCAPE = 4
 private const val GRID_COLUMNS_PORTRAIT = 2
+
+// OBD-64: the column count the PERSISTED grid is always stored at (see DashboardViewModel's eager
+// seed + mutations). Equals landscape so the migrated default fills one row exactly like the
+// pre-grid dashboard; DashboardScreen repacks this canonical layout into each orientation's width.
+internal const val GRID_CANONICAL_COLUMNS = 4
 
 // Gear glyph for the settings entry point — plain text/emoji, matching this codebase's
 // icon-free style (no material-icons dependency).
@@ -125,7 +148,10 @@ private const val SETTINGS_GLYPH = "⚙"
  *   for a dismiss-without-choosing.
  */
 @Composable
-@Suppress("LongParameterList") // one param per input this composable's layout/picker wiring actually needs.
+// LongParameterList: one param per input this composable's layout/picker/edit wiring needs.
+// LongMethod: the Box hosts the scrim, tile grid, edit-bar, and add-palette overlays — one screen's
+// worth of sibling overlays whose shared picker/add state must live in this single scope (OBD-64).
+@Suppress("LongParameterList", "LongMethod")
 fun GaugeDashboard(
     uiState: DashboardUiState,
     modifier: Modifier = Modifier,
@@ -134,13 +160,27 @@ fun GaugeDashboard(
     sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
     onSettingsClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
+    onAddGauge: (id: String) -> Unit = {},
+    onRemoveGauge: (id: String) -> Unit = {},
+    onResizeGauge: (id: String, colSpan: Int, rowSpan: Int) -> Unit = { _, _, _ -> },
     onConnect: (() -> Unit)? = null,
 ) {
-    val visibleIds = gaugeOrder.filter { it.visible }.map { it.id }
+    // OBD-64: the ids actually placed on the (canonical) grid — the single source of truth for
+    // which gauges show, which the add-palette and swap-picker candidate lists both key off. Falls
+    // back to a migration of `gaugeOrder` only when no grid is passed (old call sites / previews).
+    val canonicalLayout =
+        remember(gridLayout, gaugeOrder) {
+            gridLayout ?: GridMigration.fromGaugeOrder(gaugeOrder, GRID_CANONICAL_COLUMNS)
+        }
+    val placedIds = canonicalLayout.ids
+    val addableGauges = remember(placedIds) { addableGaugesFor(placedIds.toSet()) }
 
     var pickerTileId by remember { mutableStateOf<String?>(null) }
+    var showAddPalette by remember { mutableStateOf(false) }
     val dismissPicker: () -> Unit = { pickerTileId = null }
+    val dismissAddPalette: () -> Unit = { showAddPalette = false }
     BackHandler(enabled = pickerTileId != null, onBack = dismissPicker)
+    BackHandler(enabled = showAddPalette, onBack = dismissAddPalette)
 
     // Review round-1 M1: a completed swap replaces the picking id's gaugeOrder entry, which
     // tears that id's key(id)-scoped subtree down (GaugeTileGrid's KDoc) — including
@@ -152,9 +192,16 @@ fun GaugeDashboard(
     // torn-down composable's own cleanup — this runs whenever the visible id set changes and
     // clears pickerTileId the instant it's no longer valid, independent of GaugePickerTile's
     // 220 ms local rise animation (which stays purely cosmetic, not load-bearing for this).
-    LaunchedEffect(visibleIds) {
-        if (pickerTileId != null && pickerTileId !in visibleIds) {
+    LaunchedEffect(placedIds) {
+        if (pickerTileId != null && pickerTileId !in placedIds) {
             pickerTileId = null
+        }
+    }
+    // OBD-64: if a mutation (or an add) leaves nothing addable, the edit bar's Add button hides —
+    // close a palette left open rather than showing an empty sheet with a live-armed back handler.
+    LaunchedEffect(addableGauges.isEmpty()) {
+        if (addableGauges.isEmpty()) {
+            showAddPalette = false
         }
     }
 
@@ -189,12 +236,47 @@ fun GaugeDashboard(
                         sparklines = sparklines,
                         gaugeOrder = gaugeOrder,
                         gridLayout = gridLayout,
+                        placedIds = placedIds,
                         pickerTileId = pickerTileId,
                         onLongPress = { id -> pickerTileId = id },
                         onDismissPicker = dismissPicker,
                         onSelectCandidate = { oldId, newId -> onSwapGauge(oldId, newId) },
                     )
                 }
+            }
+            // OBD-64: the whole edit surface for the tile being picked — resize chips, Remove, and
+            // Add — a compact bar over the dashboard, NOT crammed into the narrow in-slot swap
+            // chrome (which can't fit them without clipping in a 4-column landscape tile). The
+            // in-slot swap carousel (OBD-42/44) is untouched. Keeping Add here (rather than as an
+            // always-visible "+" grid cell) is what keeps the normal, non-editing dashboard clean:
+            // it renders exactly the placed gauges, at full height.
+            val pickingId = pickerTileId
+            val pickingPlacement = pickingId?.let(canonicalLayout::placementFor)
+            if (pickingId != null && pickingPlacement != null) {
+                PickerEditBar(
+                    currentId = pickingId,
+                    currentColSpan = pickingPlacement.colSpan,
+                    currentRowSpan = pickingPlacement.rowSpan,
+                    canAdd = addableGauges.isNotEmpty(),
+                    onResize = { colSpan, rowSpan -> onResizeGauge(pickingId, colSpan, rowSpan) },
+                    onRemove = {
+                        dismissPicker()
+                        onRemoveGauge(pickingId)
+                    },
+                    onAdd = { showAddPalette = true },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+            if (showAddPalette && addableGauges.isNotEmpty()) {
+                AddGaugePalette(
+                    addable = addableGauges,
+                    tileFor = uiState::tileFor,
+                    onAdd = { id ->
+                        onAddGauge(id)
+                        dismissAddPalette()
+                    },
+                    onDismiss = dismissAddPalette,
+                )
             }
         }
     }
@@ -235,6 +317,7 @@ private fun GaugeTileGrid(
     sparklines: Map<String, StateFlow<List<SparklinePoint>>>,
     gaugeOrder: List<GaugeOrderEntry>,
     gridLayout: GridLayout?,
+    placedIds: List<String>,
     pickerTileId: String?,
     onLongPress: (String) -> Unit,
     onDismissPicker: () -> Unit,
@@ -253,6 +336,11 @@ private fun GaugeTileGrid(
             val base = gridLayout ?: GridMigration.fromGaugeOrder(gaugeOrder, columns)
             GridEngine.withColumns(base, columns)
         }
+    // OBD-64: `placedIds` (the persisted set) drives the swap candidate math. The normal grid
+    // renders exactly the placed gauges — no synthetic "+" cell — so the non-editing dashboard is
+    // the clean Phase-2 look (4 tiles → one full-height landscape row). Add lives behind long-press
+    // in the edit bar (see GaugeDashboard).
+    val placedIdSet = remember(placedIds) { placedIds.toSet() }
 
     GaugeGrid(
         columns = columns,
@@ -264,7 +352,7 @@ private fun GaugeTileGrid(
             id = id,
             uiState = uiState,
             sparkline = sparklines[id],
-            gaugeOrder = gaugeOrder,
+            placedIds = placedIdSet,
             isPicking = pickerTileId == id,
             onLongPress = { onLongPress(id) },
             onDismissPicker = onDismissPicker,
@@ -329,7 +417,7 @@ private fun GaugeSlot(
     id: String,
     uiState: DashboardUiState,
     sparkline: StateFlow<List<SparklinePoint>>?,
-    gaugeOrder: List<GaugeOrderEntry>,
+    placedIds: Set<String>,
     isPicking: Boolean,
     onLongPress: () -> Unit,
     onDismissPicker: () -> Unit,
@@ -369,8 +457,8 @@ private fun GaugeSlot(
                 currentId = id,
                 currentTile = tile,
                 candidates =
-                    remember(id, gaugeOrder) {
-                        candidateGaugesFor(id, gaugeOrder).filterNot { it.id == id }
+                    remember(id, placedIds) {
+                        candidateGaugesFor(id, placedIds).filterNot { it.id == id }
                     },
                 tileFor = uiState::tileFor,
                 alpha = progress,
@@ -551,7 +639,18 @@ private fun BoostTile(
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.testTag("gauge-${state.id}-label"),
             )
-            BoostArc(psi = state.rawValue)
+            // OBD-64: the arc yields vertical space to the value. In a tall tile the column's
+            // content fits, so weight has no leftover to claim and the arc stays its natural 120dp
+            // (pre-OBD-64 look, unchanged). In a SHORT tile — which now happens whenever the grid
+            // holds >4 gauges / the "+" cell adds a row — the label + value are measured first and
+            // the arc's box shrinks (clipped, `fill = false`) instead of squeezing the value text
+            // to zero height, so the PSI number is always readable.
+            Box(
+                modifier = Modifier.weight(1f, fill = false).clipToBounds(),
+                contentAlignment = Alignment.Center,
+            ) {
+                BoostArc(psi = state.rawValue)
+            }
             val valueColor = if (state.isStale) GaugeStaleDim else MaterialTheme.colorScheme.onBackground
             Text(
                 text = state.valueText,
@@ -590,6 +689,107 @@ private fun GaugeSparklineStrip(
 ) {
     val points by flow.collectAsStateWithLifecycle()
     SparklineChart(points = points, color = color, modifier = modifier.testTag("gauge-$id-sparkline"))
+}
+
+/**
+ * OBD-64: the add palette — a scrim + a small sheet listing every gauge not yet on the grid
+ * ([addable]), each a live [GaugeMiniCard] (so it "feels alive," matching the swap picker) tagged
+ * `gauge-add-option-<id>`. Tapping one calls [onAdd]; tapping the scrim (or the system back
+ * gesture, handled by the caller) calls [onDismiss]. The sheet swallows its own taps so a tap on a
+ * card's gap doesn't fall through to the dismiss scrim.
+ */
+@Composable
+private fun AddGaugePalette(
+    addable: List<PidDefinition>,
+    tileFor: (String) -> GaugeTileUiState?,
+    onAdd: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .testTag("gauge-add-palette-scrim")
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = ADD_PALETTE_SCRIM_ALPHA))
+                .pointerInput(Unit) { detectTapGestures(onTap = { currentOnDismiss() }) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = ADD_PALETTE_ELEVATION_DP.dp,
+            modifier =
+                Modifier
+                    .testTag("gauge-add-palette")
+                    .padding(TILE_SPACING_DP.dp)
+                    .pointerInput(Unit) { detectTapGestures(onTap = {}) },
+        ) {
+            Column(
+                modifier = Modifier.padding(TILE_PADDING_DP.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(text = "Add gauge", style = MaterialTheme.typography.titleMedium)
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(TILE_SPACING_DP.dp),
+                    contentPadding = PaddingValues(top = TILE_SPACING_DP.dp),
+                ) {
+                    items(addable, key = { it.id }) { pid ->
+                        val tile =
+                            tileFor(pid.id) ?: GaugeTileUiState.placeholder(pid.id, pid.label, verified = pid.verified)
+                        GaugeMiniCard(
+                            tile = tile,
+                            isCurrent = false,
+                            onClick = { onAdd(pid.id) },
+                            tagged = false,
+                            modifier = Modifier.width(MINI_CARD_WIDTH_DP.dp).testTag("gauge-add-option-${pid.id}"),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * OBD-64: the bottom edit bar shown while a tile is in picker mode — the resize chips, Remove, and
+ * (when [canAdd]) an Add control for [currentId], hosted here (over the dashboard) rather than
+ * inside the narrow in-slot swap chrome. Swallows its own background taps so tapping the bar's gaps
+ * doesn't fall through to the dismiss scrim beneath it.
+ */
+@Composable
+@Suppress("LongParameterList") // one param per span/callback the bar forwards to PickerEditControls.
+private fun PickerEditBar(
+    currentId: String,
+    currentColSpan: Int,
+    currentRowSpan: Int,
+    canAdd: Boolean,
+    onResize: (colSpan: Int, rowSpan: Int) -> Unit,
+    onRemove: () -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = ADD_PALETTE_ELEVATION_DP.dp,
+        modifier =
+            modifier
+                .padding(TILE_SPACING_DP.dp)
+                .testTag("gauge-edit-bar")
+                .pointerInput(Unit) { detectTapGestures(onTap = {}) },
+    ) {
+        PickerEditControls(
+            currentId = currentId,
+            currentColSpan = currentColSpan,
+            currentRowSpan = currentRowSpan,
+            canAdd = canAdd,
+            onResize = onResize,
+            onRemove = onRemove,
+            onAdd = onAdd,
+            modifier = Modifier.padding(horizontal = TILE_PADDING_DP.dp, vertical = MINI_CARD_SPACING_DP.dp),
+        )
+    }
 }
 
 /** Zone→theme-color mapping backing each tile's background. Internal so tests can pin it. */

@@ -2,7 +2,9 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.revel.obdgauge.app.gauge.grid.GridEngine
 import com.revel.obdgauge.app.gauge.grid.GridLayout
+import com.revel.obdgauge.app.gauge.grid.GridMigration
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
@@ -17,6 +19,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
@@ -55,6 +58,32 @@ class DashboardViewModel
         // GAUGE_CATALOG (OBD-42's swap-picker superset), not DASHBOARD_PIDS: a gauge swapped
         // into a slot (e.g. rpm) needs its own rolling history too, not just the core four.
         private val sparklineHistory = SparklineHistoryHolder(GAUGE_CATALOG.map { it.id })
+
+        init {
+            // OBD-64: eager-seed the canonical grid ONCE, then treat `gridLayout` as the single
+            // live source of truth for which gauges show, where, and at what size. Before this
+            // phase `gridLayout` was left null and the screen derived a throwaway layout from
+            // `gaugeOrder` every recomposition; a persisted seed is what lets add/remove/resize
+            // mutate a real stored layout instead. Idempotent: the transform re-checks null under
+            // the repository lock, and the outer `first()` skips the write entirely once seeded, so
+            // this never rewrites an existing layout on later launches. Canonical = 4 columns
+            // (`GRID_CANONICAL_COLUMNS`), matching landscape, so the migrated default still fills
+            // one row exactly like the pre-grid dashboard; the screen repacks per orientation.
+            viewModelScope.launch {
+                if (settingsRepository.settings.first().gridLayout == null) {
+                    settingsRepository.update { settings ->
+                        if (settings.gridLayout != null) {
+                            settings
+                        } else {
+                            settings.copy(
+                                gridLayout =
+                                    GridMigration.fromGaugeOrder(settings.gaugeOrder, GRID_CANONICAL_COLUMNS),
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // start()/stop() are driven by [uiState]'s own subscription (onStart/onCompletion,
         // upstream of stateIn) rather than the ViewModel's own init/onCleared lifetime — that
@@ -125,8 +154,55 @@ class DashboardViewModel
             newId: String,
         ) {
             if (oldId == newId) return
-            viewModelScope.launch { settingsRepository.update { it.withGaugeSwapped(oldId, newId) } }
+            // OBD-64: the swap now lands on the grid too — `GridEngine.replaceId` renames the
+            // placement in place (same cell, same span), the source of truth for rendering. The
+            // `gaugeOrder` rewrite (`withGaugeSwapped`) is kept in lockstep so any code still
+            // reading `gaugeOrder` (settings screen, backfill) stays consistent.
+            viewModelScope.launch {
+                settingsRepository.update { settings ->
+                    settings
+                        .withGaugeSwapped(oldId, newId)
+                        .copy(gridLayout = GridEngine.replaceId(canonicalGrid(settings), oldId, newId))
+                }
+            }
         }
+
+        /**
+         * OBD-64: adds [id] to the grid in the first free canonical slot (a no-op if already
+         * placed). The add-palette's only mutator.
+         */
+        fun addGauge(id: String) = mutateGrid { GridEngine.addInFirstFreeSlot(it, id) }
+
+        /**
+         * OBD-64: removes [id] from the grid and repacks the rest closed (a no-op if absent). The
+         * removed id becomes an add-palette candidate again. Note this touches only `gridLayout` —
+         * `gaugeOrder` keeps the entry so a later re-add restores its former visibility default.
+         */
+        fun removeGauge(id: String) = mutateGrid { GridEngine.remove(it, id) }
+
+        /**
+         * OBD-64: resizes [id]'s tile to [colSpan]×[rowSpan] and repacks; spans are clamped by the
+         * engine. A no-op if [id] is absent.
+         */
+        fun resizeGauge(
+            id: String,
+            colSpan: Int,
+            rowSpan: Int,
+        ) = mutateGrid { GridEngine.resize(it, id, colSpan, rowSpan) }
+
+        /**
+         * Applies [op] to the stored *canonical* (4-column) layout and persists it — every grid
+         * mutation reads the persisted layout (falling back to a fresh migration only if the eager
+         * seed somehow hasn't run yet), never the orientation-repacked copy the screen renders.
+         */
+        private fun mutateGrid(op: (GridLayout) -> GridLayout) {
+            viewModelScope.launch {
+                settingsRepository.update { settings -> settings.copy(gridLayout = op(canonicalGrid(settings))) }
+            }
+        }
+
+        private fun canonicalGrid(settings: AppSettings): GridLayout =
+            settings.gridLayout ?: GridMigration.fromGaugeOrder(settings.gaugeOrder, GRID_CANONICAL_COLUMNS)
 
         override fun onCleared() {
             // Belt-and-suspenders: makes teardown deterministic on ViewModel clear rather than

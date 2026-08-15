@@ -127,6 +127,35 @@ class GridEngineTest {
     }
 
     @Test
+    fun `replaceId renames a placement in place, keeping its cell and span`() {
+        val start =
+            GridEngine.repack(
+                4,
+                listOf(GridPlacement("big", 0, 0, colSpan = 2, rowSpan = 2)) + tiles("a", "b"),
+            )
+        val bigBefore = start.placementFor("big")!!
+
+        val replaced = GridEngine.replaceId(start, "big", "huge")
+
+        assertNull("old id is gone", replaced.placementFor("big"))
+        val huge = replaced.placementFor("huge")!!
+        // Same cell, same span — nothing repacked, only the id changed.
+        assertEquals(bigBefore.copy(id = "huge"), huge)
+        // The other tiles didn't move either.
+        assertEquals(start.placementFor("a"), replaced.placementFor("a"))
+        assertEquals(start.placementFor("b"), replaced.placementFor("b"))
+        assertValid(replaced)
+    }
+
+    @Test
+    fun `replaceId is a no-op for an absent old id or a self-swap`() {
+        val start = GridEngine.repack(4, tiles("a", "b"))
+
+        assertEquals(start, GridEngine.replaceId(start, "nope", "x"))
+        assertEquals(start, GridEngine.replaceId(start, "a", "a"))
+    }
+
+    @Test
     fun `reorder moves a tile in packing order`() {
         val start = GridEngine.repack(4, tiles("a", "b", "c", "d"))
 

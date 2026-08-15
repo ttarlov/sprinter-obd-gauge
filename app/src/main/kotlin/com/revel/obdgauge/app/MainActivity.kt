@@ -168,6 +168,9 @@ class MainActivity : ComponentActivity() {
                         sparklines = sparklines,
                         onSettingsClick = { showSettings = true },
                         onSwapGauge = viewModel::swapGauge,
+                        onAddGauge = viewModel::addGauge,
+                        onRemoveGauge = viewModel::removeGauge,
+                        onResizeGauge = viewModel::resizeGauge,
                         // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
                         onConnect = if (linkController.isPresent) ::requestConnect else null,
                     )

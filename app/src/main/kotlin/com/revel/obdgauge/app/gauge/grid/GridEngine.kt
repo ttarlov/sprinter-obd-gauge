@@ -17,6 +17,7 @@ package com.revel.obdgauge.app.gauge.grid
  * (OBD-63+) build on them so a dropped tile stays exactly where it was dropped. They are here now,
  * tested, so the model that persists is the one those phases need — no migration later.
  */
+@Suppress("TooManyFunctions") // cohesive pure-engine primitives (repack + its derived ops); splitting adds no clarity.
 object GridEngine {
     /**
      * Recomputes every placement's `(col, row)` from the packing order and spans, ignoring the
@@ -58,6 +59,23 @@ object GridEngine {
         layout: GridLayout,
         id: String,
     ): GridLayout = repack(layout.columns, layout.placements.filterNot { it.id == id })
+
+    /**
+     * Renames the placement currently holding [oldId] to [newId] **in place** — keeping its exact
+     * `(col, row, colSpan, rowSpan)`, no repack. This is OBD-42's "swap" as a grid op (OBD-64): the
+     * tile stays the same size and position, only which gauge it shows changes. A no-op if [oldId]
+     * is absent or equals [newId]. Unlike [remove]+[addInFirstFreeSlot], nothing else moves.
+     */
+    fun replaceId(
+        layout: GridLayout,
+        oldId: String,
+        newId: String,
+    ): GridLayout {
+        if (oldId == newId || layout.placementFor(oldId) == null) return layout
+        return layout.copy(
+            placements = layout.placements.map { if (it.id == oldId) it.copy(id = newId) else it },
+        )
+    }
 
     /** Changes [id]'s span and repacks; a no-op if [id] is absent. Spans are clamped by [repack]. */
     fun resize(

@@ -112,6 +112,41 @@ fun candidateGaugesFor(
     return listOfNotNull(current) + others
 }
 
+/**
+ * OBD-64: the grid-native swap-candidate list — the same shape as the [gaugeOrder]-keyed
+ * [candidateGaugesFor] above, but "already shown elsewhere" is now decided by [placedIds] (the
+ * ids the persisted `GridLayout` actually places) rather than by `gaugeOrder`'s visibility. Once
+ * the grid is the single source of truth for which gauges show (OBD-64), this is the overload the
+ * picker uses: [currentId] first (its own dismiss card), then every [catalog] entry that passes
+ * [isEligible] and isn't placed on some *other* tile. [currentId] is always exempt even though it
+ * is itself in [placedIds].
+ */
+fun candidateGaugesFor(
+    currentId: String,
+    placedIds: Set<String>,
+    catalog: List<PidDefinition> = GAUGE_CATALOG,
+    isEligible: (PidDefinition) -> Boolean = { true },
+): List<PidDefinition> {
+    val placedElsewhere = placedIds - currentId
+    val current = catalog.firstOrNull { it.id == currentId }
+    val others =
+        catalog.filter { pid ->
+            pid.id != currentId && pid.id !in placedElsewhere && isEligible(pid)
+        }
+    return listOfNotNull(current) + others
+}
+
+/**
+ * OBD-64: the gauges the "+" add-cell/palette may offer — every [catalog] entry not already on the
+ * grid ([placedIds]) that passes [isEligible]. Empty exactly when everything the catalog knows is
+ * already placed, which is when the "+" cell hides.
+ */
+fun addableGaugesFor(
+    placedIds: Set<String>,
+    catalog: List<PidDefinition> = GAUGE_CATALOG,
+    isEligible: (PidDefinition) -> Boolean = { true },
+): List<PidDefinition> = catalog.filter { it.id !in placedIds && isEligible(it) }
+
 private const val RPM_UNUSED_PARSE_RESULT = 0.0
 private const val RPM_STANDARD_MODE = 1
 private const val RPM_PID = 0x0C

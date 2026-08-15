@@ -602,6 +602,109 @@ internal fun GaugePickerChrome(
     }
 }
 
+/** Size presets the picker offers, each `(colSpan × rowSpan)` with a compact label. */
+internal val SIZE_PRESETS: List<Triple<String, Int, Int>> =
+    listOf(
+        Triple("1×1", 1, 1),
+        Triple("2×1", 2, 1),
+        Triple("1×2", 1, 2),
+        Triple("2×2", 2, 2),
+    )
+
+private const val EDIT_CHIP_CORNER_RADIUS_DP = 8
+private const val EDIT_CHIP_BORDER_WIDTH_DP = 1
+private const val EDIT_CHIP_H_PADDING_DP = 10
+private const val EDIT_CHIP_V_PADDING_DP = 6
+private const val EDIT_CHIP_SELECTED_ALPHA = 0.22f
+
+/**
+ * OBD-64: the row of resize chips (1×1 / 2×1 / 1×2 / 2×2), a Remove control, and — when [canAdd] —
+ * an "＋ Add" control for the tile being picked. Rendered by `GaugeDashboard` (`DashboardScreen.kt`)
+ * as a compact bar that appears while a tile is in picker mode — NOT inside the narrow in-slot swap
+ * chrome, which cannot fit the chips plus the carousel in a 4-column-landscape tile without
+ * clipping. This keeps the OBD-42/44/47 in-slot shrink/carousel entirely untouched, and keeps the
+ * normal, non-editing dashboard clean (exactly the placed gauges — no always-visible add cell). Each
+ * chip calls [onResize] with its span; the chip matching the tile's current
+ * ([currentColSpan]×[currentRowSpan]) is highlighted. [onAdd] opens the add palette; the control is
+ * hidden when [canAdd] is false (every catalog gauge already placed). Plain [detectTapGestures] taps
+ * (not `clickable`) so no semantics-merge boundary folds the per-chip testTags — the same discipline
+ * the rest of this file follows.
+ */
+@Composable
+@Suppress("LongParameterList") // one param per span/callback the chips + remove/add controls need.
+internal fun PickerEditControls(
+    currentId: String,
+    currentColSpan: Int,
+    currentRowSpan: Int,
+    canAdd: Boolean,
+    onResize: (colSpan: Int, rowSpan: Int) -> Unit,
+    onRemove: () -> Unit,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MINI_CARD_SPACING_DP.dp),
+        modifier = modifier.testTag("gauge-edit-controls-$currentId"),
+    ) {
+        if (canAdd) {
+            EditChip(
+                label = "＋ Add",
+                selected = false,
+                onClick = onAdd,
+                borderColor = MaterialTheme.colorScheme.primary,
+                fillColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("gauge-edit-add"),
+            )
+        }
+        SIZE_PRESETS.forEach { (label, colSpan, rowSpan) ->
+            EditChip(
+                label = label,
+                selected = colSpan == currentColSpan && rowSpan == currentRowSpan,
+                onClick = { onResize(colSpan, rowSpan) },
+                borderColor = MaterialTheme.colorScheme.outline,
+                fillColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("gauge-resize-${colSpan}x$rowSpan-$currentId"),
+            )
+        }
+        EditChip(
+            label = "✕",
+            selected = false,
+            onClick = onRemove,
+            borderColor = MaterialTheme.colorScheme.error,
+            fillColor = MaterialTheme.colorScheme.error,
+            modifier = Modifier.testTag("gauge-remove-$currentId"),
+        )
+    }
+}
+
+/** One tappable chip in [PickerEditControls] — a bordered, optionally filled rounded label. */
+@Composable
+@Suppress("LongParameterList") // label/selected/onClick/colors/modifier are all load-bearing.
+private fun EditChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    borderColor: Color,
+    fillColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnClick by rememberUpdatedState(onClick)
+    val shape = RoundedCornerShape(EDIT_CHIP_CORNER_RADIUS_DP.dp)
+    val fill = if (selected) fillColor.copy(alpha = EDIT_CHIP_SELECTED_ALPHA) else Color.Transparent
+    Box(
+        modifier =
+            modifier
+                .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick() }) }
+                .background(fill, shape)
+                .border(width = EDIT_CHIP_BORDER_WIDTH_DP.dp, color = borderColor, shape = shape)
+                .padding(horizontal = EDIT_CHIP_H_PADDING_DP.dp, vertical = EDIT_CHIP_V_PADDING_DP.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
 /**
  * The scrollable row of OTHER candidate mini-cards, split out of [GaugePickerChrome] purely to
  * keep that function under detekt's `LongMethod` threshold. [selectedId]/[onCandidateTapped]
