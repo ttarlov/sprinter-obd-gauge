@@ -21,6 +21,12 @@ val GaugeGreen = Color(0xFF4CAF6D)
 val GaugeAmber = Color(0xFFE0A526)
 val GaugeRed = Color(0xFFE0524A)
 val GaugeNeutral = Color(0xFF9ECAFF)
+
+// OBD-66: the "selected threshold square" highlight on the gear editor's back face — a clear,
+// saturated blue frame (Taras's sketch), deliberately its own token rather than reusing the
+// theme's primary (which shifts light↔dark) so the selection frame reads identically on the
+// dark dash surface the editor is used against.
+val ThresholdSelectBlue = Color(0xFF3B82F6)
 val GaugeTrackNeutral = Color(0xFF3A4150)
 val GaugeStaleDim = Color(0xFF6B7280)
 

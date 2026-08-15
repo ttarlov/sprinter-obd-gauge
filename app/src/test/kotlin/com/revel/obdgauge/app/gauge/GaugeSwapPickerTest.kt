@@ -156,6 +156,31 @@ class GaugeSwapPickerTest {
     }
 
     @Test
+    fun `OBD-66 the pager opens centered on the current gauge in the stable ribbon, not page 0`() {
+        setDashboard(newViewModel())
+
+        // Free up coolant (catalog index 0) by swapping the coolant tile to speed, leaving oil.
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(SPEED_PAGE)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-swap-page-$SPEED_PID_ID").performTouchInput { click() }
+        composeTestRule.waitForIdle()
+
+        // Open the picker on the oil tile. The stable ribbon candidates are [coolant, oilTemp, rpm],
+        // so oil sits at index 1 — the pager opens FOCUSED on oil (its OBD-66 gear shows), NOT on
+        // page 0 (coolant). Coolant, being earlier in the ribbon, is a LEFT swipe away.
+        composeTestRule.onNodeWithTag("gauge-oilTemp").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-threshold-gear-oilTemp").assertExists()
+        composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").assertDoesNotExist()
+        // Coolant is reachable by scrolling LEFT (a lower index) of the current gauge.
+        composeTestRule.onNodeWithTag("gauge-swap-pager-oilTemp").performScrollToIndex(0)
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-swap-page-coolant").assertExists()
+    }
+
+    @Test
     fun `tap a candidate page swaps the tile and persists, surviving a recreated repository`() {
         val file = temporaryFolder.newFile("gauge-swap.preferences_pb").also { it.delete() }
         val firstScope = CoroutineScope(UnconfinedTestDispatcher() + SupervisorJob())
@@ -346,7 +371,9 @@ class GaugeSwapPickerTest {
         SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, zone.name.lowercase())
 
     private companion object {
-        // Pages are [current, rpm, speed] for a default-order picker (GaugeCatalog.candidateGaugesFor).
+        // OBD-66 stable ribbon: for a default-grid coolant picker the pages are the GAUGE_CATALOG
+        // order [coolant, rpm, speed] — coolant is catalog index 0 so it still leads here, with rpm
+        // and speed at these indices. (candidateGaugesFor keeps every candidate at its catalog slot.)
         const val RPM_PAGE = 1
         const val SPEED_PAGE = 2
 

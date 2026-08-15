@@ -134,16 +134,28 @@ class GaugeCatalogTest {
     // OBD-64: the grid-keyed overloads — "shown elsewhere" is decided by the placed-id set now.
 
     @Test
-    fun `candidateGaugesFor(placedIds) lists the current gauge first, then unplaced catalog ids`() {
+    fun `candidateGaugesFor(placedIds) returns current plus unplaced ids in stable catalog order`() {
         val placed = setOf(PidIds.COOLANT, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
-        val candidates = candidateGaugesFor(PidIds.COOLANT, placed)
+        val candidates = candidateGaugesFor(PidIds.COOLANT, placed).map { it.id }
 
-        assertEquals(PidIds.COOLANT, candidates.first().id)
-        // trans/oil/boost are placed elsewhere — not offered; rpm/speed are unplaced — offered.
-        assertFalse(candidates.any { it.id == PidIds.TRANS_TEMP })
-        assertTrue(candidates.any { it.id == PidIds.RPM })
-        assertTrue(candidates.any { it.id == SPEED_PID_ID })
-        assertEquals(1, candidates.count { it.id == PidIds.COOLANT })
+        // OBD-66: current + unplaced-elsewhere ids, each at its GAUGE_CATALOG slot (coolant is first
+        // in the catalog, so here it happens to lead) — trans/oil/boost placed elsewhere are dropped.
+        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID), candidates)
+    }
+
+    @Test
+    fun `candidateGaugesFor(placedIds) is a stable ribbon - a lower-index candidate sits LEFT of current`() {
+        // Current gauge = speed (last in the catalog ribbon); coolant is unplaced so it is offered.
+        // Because ordering is the stable GAUGE_CATALOG order, coolant (index 0) lands BEFORE speed:
+        // reachable by scrolling LEFT of the current gauge, later ids would be RIGHT.
+        val placed = setOf(SPEED_PID_ID, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
+        val candidates = candidateGaugesFor(SPEED_PID_ID, placed).map { it.id }
+
+        // Ribbon order: coolant(0), rpm(4), speed(5) — coolant and rpm precede the current speed.
+        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID), candidates)
+        val currentIndex = candidates.indexOf(SPEED_PID_ID)
+        assertEquals(2, currentIndex)
+        assertTrue(candidates.indexOf(PidIds.COOLANT) < currentIndex)
     }
 
     @Test

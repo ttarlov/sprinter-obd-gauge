@@ -113,13 +113,17 @@ fun candidateGaugesFor(
 }
 
 /**
- * OBD-64: the grid-native swap-candidate list — the same shape as the [gaugeOrder]-keyed
- * [candidateGaugesFor] above, but "already shown elsewhere" is now decided by [placedIds] (the
- * ids the persisted `GridLayout` actually places) rather than by `gaugeOrder`'s visibility. Once
- * the grid is the single source of truth for which gauges show (OBD-64), this is the overload the
- * picker uses: [currentId] first (its own dismiss card), then every [catalog] entry that passes
- * [isEligible] and isn't placed on some *other* tile. [currentId] is always exempt even though it
- * is itself in [placedIds].
+ * OBD-64/OBD-66: the grid-native swap-candidate list — the same membership as the [gaugeOrder]-keyed
+ * [candidateGaugesFor] above ("already shown elsewhere" decided by [placedIds], the ids the persisted
+ * `GridLayout` places), but returned in the **stable [catalog] ribbon order** rather than
+ * current-first. This is the overload the in-tile pager uses: [currentId] itself plus every [catalog]
+ * entry that passes [isEligible] and isn't placed on some *other* tile, each kept at its natural
+ * [catalog] index. [currentId] is always included even though it is itself in [placedIds].
+ *
+ * OBD-66 made the order stable (a left↔right ribbon) so gauges keep consistent spatial positions
+ * across opens/swaps: a candidate earlier in [catalog] than [currentId] is a LEFT swipe away, a later
+ * one a RIGHT swipe. The pager opens centered on [currentId] at its ribbon slot (see `SwapPager`'s
+ * `initialPage`) — so the current gauge is no longer necessarily the first page.
  */
 fun candidateGaugesFor(
     currentId: String,
@@ -128,12 +132,9 @@ fun candidateGaugesFor(
     isEligible: (PidDefinition) -> Boolean = { true },
 ): List<PidDefinition> {
     val placedElsewhere = placedIds - currentId
-    val current = catalog.firstOrNull { it.id == currentId }
-    val others =
-        catalog.filter { pid ->
-            pid.id != currentId && pid.id !in placedElsewhere && isEligible(pid)
-        }
-    return listOfNotNull(current) + others
+    return catalog.filter { pid ->
+        pid.id == currentId || (pid.id !in placedElsewhere && isEligible(pid))
+    }
 }
 
 /**

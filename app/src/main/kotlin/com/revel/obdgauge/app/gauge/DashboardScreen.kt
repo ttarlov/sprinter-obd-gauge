@@ -7,7 +7,13 @@
 package com.revel.obdgauge.app.gauge
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,12 +34,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -94,6 +102,22 @@ internal const val GRID_CANONICAL_COLUMNS = 4
 // icon-free style (no material-icons dependency).
 private const val SETTINGS_GLYPH = "⚙"
 
+// OBD-66: the danger-zone pulse. A tile whose live value is at/above its RED threshold breathes
+// its red background/border between these alphas on a ~1s reverse loop — attention-grabbing at a
+// glance off a dash mount without the strobe of a hard on/off flash.
+private const val DANGER_PULSE_PERIOD_MS = 900
+private const val DANGER_PULSE_MIN_ALPHA = 0.18f
+private const val DANGER_PULSE_MAX_ALPHA = 0.55f
+private const val DANGER_PULSE_BORDER_WIDTH_DP = 2
+
+/**
+ * OBD-66: whether the danger-zone RED pulse animates. Defaults on (the real dashboard). Tests that
+ * render a RED tile flip it off so the otherwise-never-idle `rememberInfiniteTransition` can't hang
+ * `waitForIdle()` — the pulse is a device-only visual, so a static red tile is the right thing to
+ * assert against (and to screenshot). See `GaugeTile`.
+ */
+val LocalDangerPulseEnabled = staticCompositionLocalOf { true }
+
 /**
  * The full gauge dashboard. Landscape (a phone on a dash mount, the primary target) lays the
  * visible tiles out in a single row; portrait stacks them in a scrollable column so content
@@ -152,12 +176,15 @@ fun GaugeDashboard(
     gaugeOrder: List<GaugeOrderEntry> = DEFAULT_GAUGE_ORDER,
     gridLayout: GridLayout? = null,
     sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
+    thresholds: Map<String, GaugeThresholds> = ThresholdConfig.seed,
     onSettingsClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
     onAddGauge: (id: String) -> Unit = {},
     onRemoveGauge: (id: String) -> Unit = {},
     onResizeGauge: (id: String, colSpan: Int, rowSpan: Int) -> Unit = { _, _, _ -> },
+    onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit = { _, _ -> },
     onConnect: (() -> Unit)? = null,
+    dangerPulseEnabled: Boolean = true,
 ) {
     // OBD-64: the ids actually placed on the (canonical) grid — the single source of truth for
     // which gauges show, which the add-palette and swap-picker candidate lists both key off. Falls
@@ -224,18 +251,22 @@ fun GaugeDashboard(
                     }
                 }
                 BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    GaugeTileGrid(
-                        isLandscape = maxWidth >= maxHeight,
-                        uiState = uiState,
-                        sparklines = sparklines,
-                        gaugeOrder = gaugeOrder,
-                        gridLayout = gridLayout,
-                        placedIds = placedIds.toSet(),
-                        pickerTileId = pickerTileId,
-                        onLongPress = { id -> pickerTileId = id },
-                        onDismissPicker = dismissPicker,
-                        onSelectCandidate = { oldId, newId -> onSwapGauge(oldId, newId) },
-                    )
+                    CompositionLocalProvider(LocalDangerPulseEnabled provides dangerPulseEnabled) {
+                        GaugeTileGrid(
+                            isLandscape = maxWidth >= maxHeight,
+                            uiState = uiState,
+                            sparklines = sparklines,
+                            gaugeOrder = gaugeOrder,
+                            gridLayout = gridLayout,
+                            placedIds = placedIds.toSet(),
+                            pickerTileId = pickerTileId,
+                            thresholds = thresholds,
+                            onLongPress = { id -> pickerTileId = id },
+                            onDismissPicker = dismissPicker,
+                            onSelectCandidate = { oldId, newId -> onSwapGauge(oldId, newId) },
+                            onSetThreshold = onSetThreshold,
+                        )
+                    }
                 }
             }
             // OBD-64: the resize/Remove/Add edit bar for the tile being picked — BUTTONS (tapped,
@@ -308,9 +339,11 @@ private fun GaugeTileGrid(
     gridLayout: GridLayout?,
     placedIds: Set<String>,
     pickerTileId: String?,
+    thresholds: Map<String, GaugeThresholds>,
     onLongPress: (String) -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (oldId: String, newId: String) -> Unit,
+    onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
 ) {
     val columns = if (isLandscape) GRID_COLUMNS_LANDSCAPE else GRID_COLUMNS_PORTRAIT
     val layout =
@@ -331,9 +364,11 @@ private fun GaugeTileGrid(
             sparkline = sparklines[id],
             placedIds = placedIds,
             isPicking = pickerTileId == id,
+            thresholds = thresholds,
             onLongPress = { onLongPress(id) },
             onDismissPicker = onDismissPicker,
             onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
+            onSetThreshold = onSetThreshold,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -341,10 +376,11 @@ private fun GaugeTileGrid(
 
 /**
  * Renders one grid slot: while [isPicking], the tile's content becomes an in-place [SwapPager]
- * (OBD-65) that fills the slot's own bounds — page 0 the current gauge, following pages the swap
- * candidates ([candidateGaugesFor] over [placedIds]) — so swiping to another gauge works at any
- * tile size and the pager (not the tile's tap detector) owns the horizontal drag. Tapping a
- * candidate page persists the swap via [onSelectCandidate]; tapping page 0 or outside dismisses.
+ * (OBD-65) that fills the slot's own bounds — the current gauge plus the swap candidates in the
+ * stable [candidateGaugesFor] ribbon (over [placedIds]), opened centered on the current gauge
+ * (OBD-66) — so swiping to another gauge works at any tile size and the pager (not the tile's tap
+ * detector) owns the horizontal drag. Tapping a candidate page persists the swap via
+ * [onSelectCandidate]; tapping the current gauge's page or outside dismisses.
  * When NOT picking it dispatches to [BoostTile] (arc + neutral color) for the boost id, [GaugeTile]
  * otherwise — the normal interactive tile whose long-press ([onLongPress]) enters pick mode.
  *
@@ -361,9 +397,11 @@ private fun GaugeSlot(
     sparkline: StateFlow<List<SparklinePoint>>?,
     placedIds: Set<String>,
     isPicking: Boolean,
+    thresholds: Map<String, GaugeThresholds>,
     onLongPress: () -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (String) -> Unit,
+    onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // MINOR M3: placeholder fallback — DashboardUiState.Loading only seeds the four core tiles.
@@ -379,14 +417,17 @@ private fun GaugeSlot(
     // propagateMinConstraints = true: makes the child (tile or pager) fill this Box exactly.
     Box(modifier = modifier, propagateMinConstraints = true) {
         if (isPicking) {
-            // candidateGaugesFor puts the current gauge first, so it is page 0 of the pager.
+            // candidateGaugesFor returns the stable GAUGE_CATALOG ribbon; SwapPager opens centered
+            // on the current gauge at its ribbon slot (OBD-66).
             val pages = remember(id, placedIds) { candidateGaugesFor(id, placedIds) }
             SwapPager(
                 slotId = id,
                 pages = pages,
                 tileFor = uiState::tileFor,
+                thresholds = thresholds,
                 onDismiss = onDismissPicker,
                 onSelect = onSelectCandidate,
+                onSetThreshold = onSetThreshold,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -420,12 +461,21 @@ fun GaugeTile(
 ) {
     val zoneColor = zoneColor(state.zone)
     val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
+    // OBD-66: at/above the danger (RED) threshold the tile pulses its red fill + border.
+    val pulseActive = state.zone == ThresholdZone.RED && LocalDangerPulseEnabled.current
+    val bgAlpha = dangerPulseAlpha(pulseActive, state.id)
     Box(
         modifier =
             modifier
                 .gaugeTileInteraction(state.id, state.zone, onLongPress, onTap)
-                .background(zoneColor.copy(alpha = TILE_BACKGROUND_ALPHA), shape)
-                .padding(TILE_PADDING_DP.dp),
+                .background(zoneColor.copy(alpha = bgAlpha), shape)
+                .then(
+                    if (pulseActive) {
+                        Modifier.border(DANGER_PULSE_BORDER_WIDTH_DP.dp, GaugeRed.copy(alpha = bgAlpha), shape)
+                    } else {
+                        Modifier
+                    },
+                ).padding(TILE_PADDING_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -640,6 +690,29 @@ private fun PickerEditBar(
             modifier = Modifier.padding(horizontal = TILE_PADDING_DP.dp, vertical = MINI_CARD_SPACING_DP.dp),
         )
     }
+}
+
+/**
+ * OBD-66: the tile background alpha, breathing between [DANGER_PULSE_MIN_ALPHA] and
+ * [DANGER_PULSE_MAX_ALPHA] on a ~1s reverse loop when [active], otherwise the static
+ * [TILE_BACKGROUND_ALPHA]. The infinite transition is created ONLY when [active] — an
+ * always-running transition would keep every tile's frame clock busy (and hang `waitForIdle`),
+ * which is why the caller gates [active] on both the RED zone and [LocalDangerPulseEnabled].
+ */
+@Composable
+private fun dangerPulseAlpha(
+    active: Boolean,
+    id: String,
+): Float {
+    if (!active) return TILE_BACKGROUND_ALPHA
+    val transition = rememberInfiniteTransition(label = "gauge-danger-pulse-$id")
+    val alpha by transition.animateFloat(
+        initialValue = DANGER_PULSE_MIN_ALPHA,
+        targetValue = DANGER_PULSE_MAX_ALPHA,
+        animationSpec = infiniteRepeatable(tween(DANGER_PULSE_PERIOD_MS), RepeatMode.Reverse),
+        label = "gauge-danger-pulse-alpha-$id",
+    )
+    return alpha
 }
 
 /** Zone→theme-color mapping backing each tile's background. Internal so tests can pin it. */

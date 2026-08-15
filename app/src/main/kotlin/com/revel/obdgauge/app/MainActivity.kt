@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
                 val gridLayout by viewModel.gridLayout.collectAsStateWithLifecycle()
+                val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
                 val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
 
                 // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
@@ -166,11 +167,13 @@ class MainActivity : ComponentActivity() {
                         gaugeOrder = gaugeOrder,
                         gridLayout = gridLayout,
                         sparklines = sparklines,
+                        thresholds = thresholds,
                         onSettingsClick = { showSettings = true },
                         onSwapGauge = viewModel::swapGauge,
                         onAddGauge = viewModel::addGauge,
                         onRemoveGauge = viewModel::removeGauge,
                         onResizeGauge = viewModel::resizeGauge,
+                        onSetThreshold = viewModel::setThreshold,
                         // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
                         onConnect = if (linkController.isPresent) ::requestConnect else null,
                     )

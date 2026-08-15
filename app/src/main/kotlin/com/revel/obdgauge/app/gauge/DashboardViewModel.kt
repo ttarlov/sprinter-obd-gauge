@@ -128,6 +128,22 @@ class DashboardViewModel
                 .map { it.gridLayout }
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), AppSettings().gridLayout)
 
+        /**
+         * OBD-66: the effective per-gauge threshold table ([ThresholdConfig.seed] + user overrides)
+         * the dashboard's in-tile gear editor reads to pre-fill its stepper and to preserve the
+         * *other* boundary when persisting one. Same value `uiState` already classifies against —
+         * exposed separately here only because the editor needs the boundaries themselves, not just
+         * the resulting zone color.
+         */
+        val thresholds: StateFlow<Map<String, GaugeThresholds>> =
+            settingsRepository.settings
+                .map { it.effectiveThresholds() }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    ThresholdConfig.seed,
+                )
+
         /** OBD-21's keep-screen-on toggle; `MainActivity` applies it to the window. */
         val keepScreenOn: StateFlow<Boolean> =
             settingsRepository.settings
@@ -163,6 +179,25 @@ class DashboardViewModel
                     settings
                         .withGaugeSwapped(oldId, newId)
                         .copy(gridLayout = GridEngine.replaceId(canonicalGrid(settings), oldId, newId))
+                }
+            }
+        }
+
+        /**
+         * OBD-66: persists gauge [id]'s threshold override from the in-tile gear editor, through the
+         * exact same [SettingsRepository.update] path [swapGauge] and OBD-21's settings screen use —
+         * so an edit here live-recolors the dashboard (and stays in sync with the settings screen's
+         * own threshold fields, both writing the one [AppSettings.thresholdOverrides] map). [next] is
+         * the full replacement band for [id] (the editor folds a single boundary edit into the
+         * gauge's current effective band before calling this — see `ThresholdEditing.kt`).
+         */
+        fun setThreshold(
+            id: String,
+            next: GaugeThresholds,
+        ) {
+            viewModelScope.launch {
+                settingsRepository.update { settings ->
+                    settings.copy(thresholdOverrides = settings.thresholdOverrides + (id to next))
                 }
             }
         }

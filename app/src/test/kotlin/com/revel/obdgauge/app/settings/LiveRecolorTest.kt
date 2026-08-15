@@ -62,7 +62,7 @@ class LiveRecolorTest {
     fun `raising a threshold in the settings screen recolors the dashboard tile without restart`() {
         val file = temporaryFolder.newFile("live-recolor.preferences_pb").also { it.delete() }
         val repository = DataStoreSettingsRepository(PreferenceDataStoreFactory.create(scope = scope) { file })
-        // 225 F is AMBER under ThresholdConfig.seed's coolant band (green <220, red >230).
+        // 220 F is AMBER under ThresholdConfig.seed's OBD-66 coolant band (green <215, red ≥225).
         val dataSource = FixedReadingVehicleDataSource(coolantValue = COOLANT_AMBER_VALUE)
         val clock = Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)
         val dashboardViewModel = DashboardViewModel(dataSource, clock, repository)
@@ -113,7 +113,7 @@ class LiveRecolorTest {
     }
 
     private companion object {
-        const val COOLANT_AMBER_VALUE = 225.0
+        const val COOLANT_AMBER_VALUE = 220.0
     }
 }
 

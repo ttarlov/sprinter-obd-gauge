@@ -43,7 +43,7 @@ class GaugePickerScreenshotTest {
     fun `coolant tile in picker mode, landscape`() {
         composeTestRule.setContent {
             ObdGaugeTheme {
-                GaugeDashboard(sampleUiState())
+                GaugeDashboard(sampleUiState(), dangerPulseEnabled = false)
             }
         }
 
@@ -53,6 +53,25 @@ class GaugePickerScreenshotTest {
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_picker_mode.png")
     }
 
+    // OBD-66: the gear/3D-flip threshold editor's back face — long-press coolant, then tap the gear
+    // on the focused (centered) card to flip it over and reveal the YELLOW/RED squares + stepper.
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `threshold editor back face, landscape`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(sampleUiState(), dangerPulseEnabled = false)
+            }
+        }
+
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").performTouchInput { click() }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_threshold_editor.png")
+    }
+
     // OBD-64: the add palette open over the dashboard — reached via long-press → the edit bar's
     // "＋ Add" button, showing the addable gauges (rpm/speed) as live mini-cards.
     @Config(qualifiers = "w800dp-h360dp-land")
@@ -60,7 +79,7 @@ class GaugePickerScreenshotTest {
     fun `add palette open, landscape`() {
         composeTestRule.setContent {
             ObdGaugeTheme {
-                GaugeDashboard(sampleUiState())
+                GaugeDashboard(sampleUiState(), dangerPulseEnabled = false)
             }
         }
 

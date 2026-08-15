@@ -4,35 +4,39 @@ import com.revel.obdgauge.testing.datasource.ScenarioChannel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+/**
+ * OBD-66 re-baselined the seed thresholds to the researched caution/danger temperatures for a
+ * loaded Sprinter/Revel on grades (all °F):
+ * - coolant: green <215 / amber 215–225 / red ≥225 (danger boundary inclusive)
+ * - trans:   green <215 / amber 215–240 / red ≥240
+ * - oil:     green <245 / amber 245–260 / red ≥260
+ * The RED boundary is inclusive so a reading sitting exactly on the danger line already reads —
+ * and pulses — RED (see `ThresholdConfig`/`GaugeTile`).
+ */
 class ThresholdConfigTest {
     @Test
-    fun `coolant below 220 is green`() {
-        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.COOLANT, 219.9))
+    fun `coolant below 215 is green`() {
+        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.COOLANT, 214.9))
     }
 
     @Test
-    fun `coolant at 220 is amber`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.COOLANT, 220.0))
+    fun `coolant at 215 is amber (green boundary is exclusive)`() {
+        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.COOLANT, 215.0))
     }
 
     @Test
-    fun `coolant at 230 is amber`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.COOLANT, 230.0))
+    fun `coolant just below 225 is amber`() {
+        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.COOLANT, 224.9))
     }
 
     @Test
-    fun `coolant above 230 is red`() {
-        assertEquals(ThresholdZone.RED, ThresholdConfig.classify(ScenarioChannel.COOLANT, 230.1))
+    fun `coolant at 225 is red (danger boundary is inclusive)`() {
+        assertEquals(ThresholdZone.RED, ThresholdConfig.classify(ScenarioChannel.COOLANT, 225.0))
     }
 
     @Test
-    fun `trans below 200 is green`() {
-        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 199.9))
-    }
-
-    @Test
-    fun `trans at 200 is amber (green boundary is exclusive)`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 200.0))
+    fun `trans below 215 is green`() {
+        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 214.9))
     }
 
     @Test
@@ -41,28 +45,28 @@ class ThresholdConfigTest {
     }
 
     @Test
-    fun `trans at 250 is amber (red boundary is exclusive)`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 250.0))
+    fun `trans just below 240 is amber`() {
+        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 239.9))
     }
 
     @Test
-    fun `trans above 250 is red`() {
-        assertEquals(ThresholdZone.RED, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 250.1))
+    fun `trans at 240 is red (danger boundary is inclusive)`() {
+        assertEquals(ThresholdZone.RED, ThresholdConfig.classify(ScenarioChannel.TRANS_TEMP, 240.0))
     }
 
     @Test
-    fun `oil at 235 is green (inclusive normal band)`() {
-        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 235.0))
+    fun `oil below 245 is green`() {
+        assertEquals(ThresholdZone.GREEN, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 244.9))
     }
 
     @Test
-    fun `oil above 235 (TOWN_HEAT_SOAK tail 240) is amber`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 240.0))
+    fun `oil at 245 is amber`() {
+        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 245.0))
     }
 
     @Test
-    fun `oil never reaches red`() {
-        assertEquals(ThresholdZone.AMBER, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 1000.0))
+    fun `oil at 260 is red (danger boundary is inclusive)`() {
+        assertEquals(ThresholdZone.RED, ThresholdConfig.classify(ScenarioChannel.OIL_TEMP, 260.0))
     }
 
     @Test

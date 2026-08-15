@@ -8,7 +8,9 @@ import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
+import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidIds
+import com.revel.obdgauge.model.Reading
 import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -50,6 +52,9 @@ class DashboardScreenshotTest {
                 GaugeDashboard(
                     sampleUiState(),
                     sparklines = sampleSparklines(),
+                    // OBD-66: the TOWN_HEAT_SOAK tail now puts coolant at its danger line (RED). Pulse
+                    // off so the reference is a stable single frame, not a point on the pulse cycle.
+                    dangerPulseEnabled = false,
                 )
             }
         }
@@ -64,6 +69,7 @@ class DashboardScreenshotTest {
                 GaugeDashboard(
                     sampleUiState(),
                     sparklines = sampleSparklines(),
+                    dangerPulseEnabled = false,
                 )
             }
         }
@@ -123,6 +129,28 @@ class DashboardScreenshotTest {
         )
     }
 
+    // OBD-66: a tile parked in the danger (RED) zone — a hand-built all-red state so the reference
+    // documents the danger look plainly. Pulse off so it's a stable single frame (the pulse itself
+    // is a device-only visual, asserted structurally in DashboardScreenTest, not by pixels).
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `dashboard danger zone tile`() {
+        val now = Instant.EPOCH
+        val readings =
+            mapOf(
+                PidIds.COOLANT to Reading(PidIds.COOLANT, DANGER_COOLANT, now, stale = false),
+                PidIds.TRANS_TEMP to Reading(PidIds.TRANS_TEMP, DANGER_TRANS, now, stale = false),
+                PidIds.OIL_TEMP to Reading(PidIds.OIL_TEMP, SAFE_OIL, now, stale = false),
+                PidIds.BOOST to Reading(PidIds.BOOST, SAFE_BOOST, now, stale = false),
+            )
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(toDashboardUiState(readings, LinkState.Ready, now), dangerPulseEnabled = false)
+            }
+        }
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_danger_zone.png")
+    }
+
     private fun captureGrid(
         fileName: String,
         grid: GridLayout,
@@ -133,6 +161,7 @@ class DashboardScreenshotTest {
                     sampleUiState(),
                     gridLayout = grid,
                     sparklines = sampleSparklines(),
+                    dangerPulseEnabled = false,
                 )
             }
         }
@@ -187,6 +216,12 @@ class DashboardScreenshotTest {
         const val BOOST = PidIds.BOOST
         const val RPM = PidIds.RPM
         const val SPEED = SPEED_PID_ID
+
+        // OBD-66 danger-zone fixture: coolant/trans above their RED lines, oil/boost safe.
+        const val DANGER_COOLANT = 235.0
+        const val DANGER_TRANS = 250.0
+        const val SAFE_OIL = 200.0
+        const val SAFE_BOOST = 8.0
 
         const val SPARKLINE_SAMPLE_COUNT = 20
 

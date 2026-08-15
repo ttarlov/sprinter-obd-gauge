@@ -56,17 +56,23 @@ class DashboardScreenTest {
     }
 
     @Test
-    fun `TOWN_HEAT_SOAK tail renders amber on coolant, oil, and trans per seed thresholds`() {
+    fun `TOWN_HEAT_SOAK tail zones follow the OBD-66 seed thresholds`() {
+        // OBD-66 seeds: coolant amber≥215/red≥225, trans amber≥215/red≥240, oil amber≥245/red≥260.
+        // So the heat-soak tail (coolant 225, oil 240, trans 215) sits coolant at the danger line
+        // (RED), oil still under its amber caution (GREEN), and trans in amber. Pulse disabled so
+        // the assertion is about zone, not the RED tile's animated frame.
         composeTestRule.setContent {
-            ObdGaugeTheme { GaugeDashboard(dashboardUiStateFor(Scenario.TOWN_HEAT_SOAK)) }
+            ObdGaugeTheme {
+                GaugeDashboard(dashboardUiStateFor(Scenario.TOWN_HEAT_SOAK), dangerPulseEnabled = false)
+            }
         }
 
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals("225°F")
         composeTestRule.onNodeWithTag("gauge-oilTemp-value").assertTextEquals("240°F")
         composeTestRule.onNodeWithTag("gauge-transTemp-value").assertTextEquals("215°F")
         composeTestRule.onNodeWithTag("gauge-boost-value").assertTextEquals("1.0 PSI")
-        composeTestRule.onNodeWithTag("gauge-coolant").assert(hasZone(ThresholdZone.AMBER))
-        composeTestRule.onNodeWithTag("gauge-oilTemp").assert(hasZone(ThresholdZone.AMBER))
+        composeTestRule.onNodeWithTag("gauge-coolant").assert(hasZone(ThresholdZone.RED))
+        composeTestRule.onNodeWithTag("gauge-oilTemp").assert(hasZone(ThresholdZone.GREEN))
         composeTestRule.onNodeWithTag("gauge-transTemp").assert(hasZone(ThresholdZone.AMBER))
         composeTestRule.onNodeWithTag("gauge-boost").assert(hasZone(ThresholdZone.NEUTRAL))
     }

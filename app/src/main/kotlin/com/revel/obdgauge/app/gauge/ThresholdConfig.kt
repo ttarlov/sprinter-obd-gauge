@@ -44,28 +44,40 @@ data class GaugeThresholds(
 
 /**
  * Seed threshold table for the four OBD-10 gauges, keyed by [PidIds] id (matches
- * [com.revel.obdgauge.model.PidDefinition.id] shape). Values per `docs/01-build-plan.md`
- * §2A and `issues/OBD-10.md`:
- * - coolant: green <220 / amber 220-230 / red >230
- * - trans: green <200 / amber 200-250 / red >250 (the build plan's "amber 200-240 / red
- *   >250" leaves 240-250 unspecified; folded into amber here rather than left undefined)
- * - oil: normal (green) <=235 / amber >235, no red band
- * - boost: neutral, no color coding
+ * [com.revel.obdgauge.model.PidDefinition.id] shape).
  *
- * User-editable overrides land in OBD-21; this object is the seed/default table.
+ * OBD-66 re-baselined these to the researched caution/danger temperatures for a loaded
+ * Sprinter/Revel working grades (all values in each gauge's declared wire unit — FAHRENHEIT for
+ * coolant/trans/oil, see `DashboardPids.DASHBOARD_PIDS`). The YELLOW (amber) threshold is
+ * [GaugeThresholds.greenMax] — the value AT/ABOVE which the tile leaves green for amber (the
+ * green band stays exclusive, so a reading sitting exactly on it reads amber). The RED (danger)
+ * threshold is [GaugeThresholds.redMin], made **inclusive** ([GaugeThresholds.redInclusive]) so a
+ * reading sitting exactly on the danger line already reads — and pulses — RED, matching OBD-66's
+ * "pulse when the value is at/above the danger threshold" contract.
+ * - coolant: green <215 / amber 215–225 / red ≥225
+ * - trans:   green <215 / amber 215–240 / red ≥240
+ * - oil:     green <245 / amber 245–260 / red ≥260
+ * - boost:   neutral, no color coding
+ *
+ * These are the DEFAULTS; OBD-21's settings screen and OBD-66's per-gauge gear editor both layer
+ * user overrides on top (see `AppSettings.effectiveThresholds`).
  */
 object ThresholdConfig {
-    private const val COOLANT_GREEN_MAX = 220.0
-    private const val COOLANT_RED_MIN = 230.0
-    private const val TRANS_GREEN_MAX = 200.0
-    private const val TRANS_RED_MIN = 250.0
-    private const val OIL_GREEN_MAX = 235.0
+    private const val COOLANT_GREEN_MAX = 215.0
+    private const val COOLANT_RED_MIN = 225.0
+    private const val TRANS_GREEN_MAX = 215.0
+    private const val TRANS_RED_MIN = 240.0
+    private const val OIL_GREEN_MAX = 245.0
+    private const val OIL_RED_MIN = 260.0
 
     val seed: Map<String, GaugeThresholds> =
         mapOf(
-            PidIds.COOLANT to GaugeThresholds(greenMax = COOLANT_GREEN_MAX, redMin = COOLANT_RED_MIN),
-            PidIds.TRANS_TEMP to GaugeThresholds(greenMax = TRANS_GREEN_MAX, redMin = TRANS_RED_MIN),
-            PidIds.OIL_TEMP to GaugeThresholds(greenMax = OIL_GREEN_MAX, greenInclusive = true),
+            PidIds.COOLANT to
+                GaugeThresholds(greenMax = COOLANT_GREEN_MAX, redMin = COOLANT_RED_MIN, redInclusive = true),
+            PidIds.TRANS_TEMP to
+                GaugeThresholds(greenMax = TRANS_GREEN_MAX, redMin = TRANS_RED_MIN, redInclusive = true),
+            PidIds.OIL_TEMP to
+                GaugeThresholds(greenMax = OIL_GREEN_MAX, redMin = OIL_RED_MIN, redInclusive = true),
             PidIds.BOOST to GaugeThresholds(),
         )
 

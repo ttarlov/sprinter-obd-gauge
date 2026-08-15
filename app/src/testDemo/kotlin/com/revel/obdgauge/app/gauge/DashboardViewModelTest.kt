@@ -73,10 +73,12 @@ class DashboardViewModelTest {
         }
 
     @Test
-    fun `TOWN_HEAT_SOAK tail crosses amber on coolant, oil, and trans per seed thresholds`() =
+    fun `TOWN_HEAT_SOAK tail zones follow the OBD-66 seed thresholds`() =
         withDashboard(Scenario.TOWN_HEAT_SOAK) { state ->
-            assertEquals(ThresholdZone.AMBER, state.coolant.zone)
-            assertEquals(ThresholdZone.AMBER, state.oilTemp.zone)
+            // OBD-66 seeds: coolant red≥225, oil amber≥245, trans amber≥215. So the heat-soak tail
+            // (coolant 225 / oil 240 / trans 215) is RED / GREEN / AMBER respectively.
+            assertEquals(ThresholdZone.RED, state.coolant.zone)
+            assertEquals(ThresholdZone.GREEN, state.oilTemp.zone)
             assertEquals(ThresholdZone.AMBER, state.transTemp.zone)
             assertEquals("225°F", state.coolant.valueText)
             assertEquals("240°F", state.oilTemp.valueText)

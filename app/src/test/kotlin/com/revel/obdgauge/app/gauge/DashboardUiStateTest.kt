@@ -18,7 +18,7 @@ class DashboardUiStateTest {
     @Test
     fun `selecting Celsius display does not change which zone a Fahrenheit-wire reading falls into`() {
         // Coolant's wire unit is FAHRENHEIT (DASHBOARD_PIDS_BY_ID). 235 F is RED per
-        // ThresholdConfig.seed (green under 220, red over 230) — but 235 F converted to
+        // ThresholdConfig.seed (OBD-66 coolant band: green <215, red ≥225) — but 235 F converted to
         // Celsius (~112.8 C) falls under every seed boundary, so if classification ever ran
         // against the display-converted value instead of the wire-unit reading, this would
         // misclassify as GREEN instead of RED.
