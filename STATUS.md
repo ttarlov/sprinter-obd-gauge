@@ -4,7 +4,7 @@
 >
 > Lives at `~/projects/sprinter-obd-gauge/STATUS.md` — already the future repo root; Sprint 0 runs `git init` here and thereafter updates land as status commits.
 
-**Last updated:** 2026-08-13 (OBD-60 MERGED 299f15b — TRANS TEMP IDENTIFIED: record 21 30 byte 11, °C = raw − 50, from a 2495-sample logged drive). 40 merged / 56 issues. 4 solid tiles (coolant/oil/RPM/trans) + boost est. Van APK @ 299f15b installed on the Pixel. Full stack live: contracts, fakes, dashboard+banner+sparklines+settings+shrink-picker, BLE link+console, protocol layer with coolant/oil/RPM/**trans** decoded + speed-density boost estimate, dual-channel builds. No open branches.
+**Last updated:** 2026-08-16 (**OBD-67 MERGED to main `3cc2b3a` — FREEFORM REARRANGE GRID.** Long-press → jiggle rearrange mode: freeform drag-to-move (drop-to-place / same-size-swap / snap-back), per-tile × / ⇄ / ⚙ badges, top-bar "＋ Add", chip-resize that pushes neighbors + shift-left on right-column overflow, and INDEPENDENT PER-ORIENTATION layouts (landscape 4-col + portrait 2-col, `gridLayoutsByColumns`; add/remove syncs the gauge set). 13 device-driven fix rounds; Taras device-approved; final code review clean; logging stripped. develop synced to `3cc2b3a`; clean van prod-debug reinstalled on the Pixel; main-channel APK rebuilt in builds/main/. **NOT pushed to GitHub yet** (per-action OK required). Prior context: OBD-60 trans temp (byte 11, raw−50); GPS speed tile (OBD-61/61b); boost est. **OBD-69 FILED (open): idle battery-saver** — ObdConnectionService's 12h wakelock drains the Garmin overnight; fix = 20-min idle watchdog → stopSelf. OBD-68 (drag-to-resize) still deferred, lower value now chip-resize pushes/shifts. No open branches.
 
 ---
 
