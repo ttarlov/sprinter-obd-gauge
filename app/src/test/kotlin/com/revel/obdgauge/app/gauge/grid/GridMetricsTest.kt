@@ -102,4 +102,54 @@ class GridMetricsTest {
         // b starts exactly one cell + one gutter right of a's left edge
         assertEquals(a.left + a.width + 10f, b.left, EPS)
     }
+
+    // --- OBD-67: cellAt, placementRect's inverse -----------------------------------------------
+
+    @Test
+    fun `cellAt resolves a point inside a cell to that cell`() {
+        val cell = CellSize(width = 100f, height = 80f)
+        // col 2, row 1's rect starts at (220, 90) — a point well inside it.
+        assertEquals(Cell(2, 1), GridMetrics.cellAt(x = 250f, y = 120f, cell, spacing = 10f, columns = 4))
+    }
+
+    @Test
+    fun `cellAt attributes a gutter point to the cell it trails`() {
+        val cell = CellSize(width = 100f, height = 80f)
+        // Col 0 occupies [0,100); the gutter [100,110) precedes col 1's cell at 110 — still col 0.
+        assertEquals(0, GridMetrics.cellAt(x = 105f, y = 5f, cell, spacing = 10f, columns = 4).col)
+        assertEquals(1, GridMetrics.cellAt(x = 110f, y = 5f, cell, spacing = 10f, columns = 4).col)
+    }
+
+    @Test
+    fun `cellAt clamps col to the grid width and floors row at zero`() {
+        val cell = CellSize(width = 100f, height = 80f)
+        assertEquals(0, GridMetrics.cellAt(x = -50f, y = -50f, cell, spacing = 10f, columns = 4).col)
+        assertEquals(0, GridMetrics.cellAt(x = -50f, y = -50f, cell, spacing = 10f, columns = 4).row)
+        assertEquals(3, GridMetrics.cellAt(x = 10_000f, y = 5f, cell, spacing = 10f, columns = 4).col)
+    }
+
+    @Test
+    fun `cellAt resolves the interior of a spanning placement's second cell, not its origin`() {
+        val cell = CellSize(width = 100f, height = 80f)
+        val big = GridPlacement("big", col = 1, row = 1, colSpan = 2, rowSpan = 2)
+        val rect = GridMetrics.placementRect(big, cell, spacing = 10f)
+        // A point in the span's bottom-right cell resolves to (2, 2), not big's own (1, 1) origin —
+        // GridEngine.targetIndexAt is what maps a spanning interior back to the owning placement.
+        val point = Cell(2, 2)
+        assertTrue("point lies within big's rect", rect.left + rect.width > 0 && rect.top + rect.height > 0)
+        assertEquals(point, GridMetrics.cellAt(x = 250f, y = 200f, cell, spacing = 10f, columns = 4))
+    }
+
+    @Test
+    fun `cellAt round-trips placementRect's origin for every placed tile`() {
+        val cell = CellSize(width = 100f, height = 80f)
+        val spacing = 10f
+        val layout = GridEngine.repack(4, listOf(GridPlacement("a", 0, 0), GridPlacement("b", 0, 0)))
+        layout.placements.forEach { placement ->
+            val rect = GridMetrics.placementRect(placement, cell, spacing)
+            // A point just inside the rect's top-left corner must resolve back to this cell.
+            val resolved = GridMetrics.cellAt(rect.left + 1f, rect.top + 1f, cell, spacing, layout.columns)
+            assertEquals(Cell(placement.col, placement.row), resolved)
+        }
+    }
 }

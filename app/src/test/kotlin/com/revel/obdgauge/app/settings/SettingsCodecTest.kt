@@ -69,8 +69,8 @@ class SettingsCodecTest {
     }
 
     @Test
-    fun `OBD-62 the grid layout round-trips, and defaults to null when missing`() {
-        val grid =
+    fun `OBD-68 the per-column-count grid layouts round-trip, and default to empty when missing`() {
+        val landscape =
             com.revel.obdgauge.app.gauge.grid.GridEngine.repack(
                 4,
                 listOf(
@@ -82,12 +82,56 @@ class SettingsCodecTest {
                         .GridPlacement(PidIds.OIL_TEMP, 0, 0),
                 ),
             )
+        val portrait =
+            com.revel.obdgauge.app.gauge.grid.GridEngine.repack(
+                2,
+                listOf(
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.COOLANT, 0, 0),
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.OIL_TEMP, 0, 0),
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.BOOST, 0, 0),
+                ),
+            )
         val preferences = mutablePreferencesOf()
-        encodeAppSettings(AppSettings(gridLayout = grid), preferences)
-        assertEquals(grid, decodeAppSettings(preferences.toPreferences()).gridLayout)
+        encodeAppSettings(AppSettings(gridLayoutsByColumns = mapOf(4 to landscape, 2 to portrait)), preferences)
 
-        // Absent: no grid persisted decodes to null (the dashboard then migrates from gaugeOrder).
-        assertEquals(null, decodeAppSettings(emptyPreferences()).gridLayout)
+        val decoded = decodeAppSettings(preferences.toPreferences()).gridLayoutsByColumns
+        assertEquals(landscape, decoded[4])
+        assertEquals(portrait, decoded[2])
+
+        // Absent: no grid persisted decodes to an empty map (the dashboard then migrates from
+        // gaugeOrder for whichever column count it needs).
+        assertEquals(emptyMap<Int, Any>(), decodeAppSettings(emptyPreferences()).gridLayoutsByColumns)
+    }
+
+    @Test
+    fun `OBD-68 a pre-OBD-68 single-layout string decodes as a one-entry map keyed by its own columns`() {
+        // Simulates an existing install's persisted data: encoded with the OLD single-layout
+        // GridLayoutCodec.encode, under the SAME preferences key OBD-68 reuses (see
+        // SettingsCodec's KEY_GRID_LAYOUTS comment) — never actually written via encodeAppSettings
+        // here, to faithfully reproduce "old data written by old code."
+        val singleLayout =
+            com.revel.obdgauge.app.gauge.grid.GridEngine.repack(
+                4,
+                listOf(
+                    com.revel.obdgauge.app.gauge.grid
+                        .GridPlacement(PidIds.COOLANT, 0, 0),
+                ),
+            )
+        val oldFormatString =
+            com.revel.obdgauge.app.gauge.grid.GridLayoutCodec
+                .encode(singleLayout)
+        val preferences = mutablePreferencesOf()
+        preferences[
+            androidx.datastore.preferences.core
+                .stringPreferencesKey("grid_layout"),
+        ] = oldFormatString
+
+        val decoded = decodeAppSettings(preferences.toPreferences()).gridLayoutsByColumns
+
+        assertEquals(mapOf(4 to singleLayout), decoded)
     }
 
     @Test

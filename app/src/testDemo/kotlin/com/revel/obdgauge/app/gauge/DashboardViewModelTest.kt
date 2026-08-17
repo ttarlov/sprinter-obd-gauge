@@ -1,6 +1,7 @@
 package com.revel.obdgauge.app.gauge
 
 import com.revel.obdgauge.app.gauge.grid.GridEngine
+import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.service.ConnectionServiceController
 import com.revel.obdgauge.app.service.PollKeepAlive
@@ -223,92 +224,350 @@ class DashboardViewModelTest {
             assertEquals(before, viewModel.gaugeOrder.value)
         }
 
-    // --- OBD-64: grid as the single source of truth (eager seed + mutations) -----------------
+    // --- OBD-64/68: grid as the single source of truth (per-orientation eager seed + mutations)
+    // (OBD-68 round-4 pivot: one persisted GridLayout per column count, not one canonical layout
+    // repacked per orientation — see `issues/OBD-67.md`'s round-4 pivot note and
+    // `GridLayoutSetTest`'s pure sync-invariant suite, which these ViewModel tests only confirm
+    // the wiring/persistence for.)
 
     @Test
-    fun `gridLayout is eagerly seeded from gaugeOrder at the canonical 4 columns when absent`() =
+    fun `both required column-count layouts are eagerly seeded from gaugeOrder when absent`() =
         runTest(testDispatcher) {
             val viewModel = seededViewModel()
 
-            val grid = viewModel.gridLayout.value!!
-            assertEquals(GRID_CANONICAL_COLUMNS, grid.columns)
-            assertEquals(DEFAULT_GAUGE_ORDER.filter { it.visible }.map { it.id }, grid.ids)
+            val layouts = viewModel.gridLayoutsByColumns.value
+            assertEquals(setOf(GRID_CANONICAL_COLUMNS, GRID_PORTRAIT_COLUMNS), layouts.keys)
+            val expectedIds = DEFAULT_GAUGE_ORDER.filter { it.visible }.map { it.id }.toSet()
+            assertEquals(expectedIds, layouts.getValue(GRID_CANONICAL_COLUMNS).ids.toSet())
+            assertEquals(expectedIds, layouts.getValue(GRID_PORTRAIT_COLUMNS).ids.toSet())
         }
 
     @Test
-    fun `the eager seed does not overwrite an already-persisted grid`() =
+    fun `the eager seed does not overwrite an already-persisted layout, but fills the missing orientation`() =
         runTest(testDispatcher) {
             val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
             val stored =
                 GridEngine.repack(GRID_CANONICAL_COLUMNS, listOf(GridPlacement(PidIds.BOOST, 0, 0, colSpan = 2)))
-            val repository = InMemorySettingsRepository(AppSettings(gridLayout = stored))
+            val repository =
+                InMemorySettingsRepository(AppSettings(gridLayoutsByColumns = mapOf(GRID_CANONICAL_COLUMNS to stored)))
             val viewModel = DashboardViewModel(fake, fixedClock, repository)
-            backgroundScope.launch { viewModel.gridLayout.collect {} }
+            backgroundScope.launch { viewModel.gridLayoutsByColumns.collect {} }
             advanceUntilIdle()
 
-            assertEquals(stored, viewModel.gridLayout.value)
+            val layouts = viewModel.gridLayoutsByColumns.value
+            assertEquals(stored, layouts.getValue(GRID_CANONICAL_COLUMNS)) // untouched
+            assertTrue("portrait must be seeded to fill the gap", GRID_PORTRAIT_COLUMNS in layouts)
         }
 
     @Test
-    fun `addGauge places a previously-unplaced gauge on the persisted grid`() =
+    fun `addGauge places a previously-unplaced gauge on every stored orientation's layout`() =
         runTest(testDispatcher) {
             val viewModel = seededViewModel()
 
             viewModel.addGauge(SPEED_PID_ID)
             advanceUntilIdle()
 
-            assertTrue(SPEED_PID_ID in viewModel.gridLayout.value!!.ids)
+            assertTrue(SPEED_PID_ID in viewModel.canonicalGrid().ids)
+            assertTrue(
+                SPEED_PID_ID in
+                    viewModel.gridLayoutsByColumns.value
+                        .getValue(GRID_PORTRAIT_COLUMNS)
+                        .ids,
+            )
         }
 
     @Test
-    fun `removeGauge drops a tile from the persisted grid`() =
+    fun `removeGauge drops a tile from every stored orientation's layout`() =
         runTest(testDispatcher) {
             val viewModel = seededViewModel()
 
             viewModel.removeGauge(PidIds.COOLANT)
             advanceUntilIdle()
 
-            assertFalse(PidIds.COOLANT in viewModel.gridLayout.value!!.ids)
+            assertFalse(PidIds.COOLANT in viewModel.canonicalGrid().ids)
+            assertFalse(
+                PidIds.COOLANT in
+                    viewModel.gridLayoutsByColumns.value
+                        .getValue(GRID_PORTRAIT_COLUMNS)
+                        .ids,
+            )
         }
 
+    // OBD-67 round-10 device-verified fix: was `resizeGauge(..., colSpan = 2, rowSpan = 2, ...)`,
+    // which this test's seeded layout (the 4 core gauges packed edge-to-edge across one row —
+    // coolant at col 0, transTemp at col 1) can never legitimately satisfy IN PLACE: growing
+    // coolant to 2 columns wide collides with transTemp sitting right next to it. That was a
+    // silent assumption baked into the OLD repack-based `GridEngine.resize` (which "succeeded" by
+    // reshuffling transTemp/oilTemp/boost out of the way) — exactly the bug `resizeInPlace` fixes
+    // (see its own KDoc). Resizing to 1×2 instead grows DOWN into rearrange mode's always-empty
+    // row below, which nothing else occupies, so it's a genuinely satisfiable in-place resize.
+    // Also now asserts every OTHER gauge in the SAME orientation is untouched — the direct,
+    // ViewModel-level pin of the actual regression (this existing test's original form couldn't
+    // have caught a "resize reshuffled everyone else" bug, since it never checked anyone but
+    // coolant and the untouched-OTHER-orientation case).
     @Test
-    fun `resizeGauge changes a tile's span and keeps the canonical column count`() =
+    fun `resizeGauge changes a tile's span in ONLY the given orientation's layout`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+            val transTempBefore = before.placementFor(PidIds.TRANS_TEMP)!!
+            val oilTempBefore = before.placementFor(PidIds.OIL_TEMP)!!
+            val boostBefore = before.placementFor(PidIds.BOOST)!!
+
+            viewModel.resizeGauge(PidIds.COOLANT, colSpan = 1, rowSpan = 2, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            val landscape = viewModel.canonicalGrid()
+            val coolant = landscape.placementFor(PidIds.COOLANT)!!
+            assertEquals(1, coolant.colSpan)
+            assertEquals(2, coolant.rowSpan)
+            assertEquals(GRID_CANONICAL_COLUMNS, landscape.columns)
+            // No repack, no reflow: every other gauge in this SAME orientation stays exactly put.
+            assertEquals(transTempBefore, landscape.placementFor(PidIds.TRANS_TEMP))
+            assertEquals(oilTempBefore, landscape.placementFor(PidIds.OIL_TEMP))
+            assertEquals(boostBefore, landscape.placementFor(PidIds.BOOST))
+            // Portrait's own span for the same gauge is untouched — positions/spans are
+            // independent per orientation now.
+            val portraitCoolant =
+                viewModel.gridLayoutsByColumns.value
+                    .getValue(
+                        GRID_PORTRAIT_COLUMNS,
+                    ).placementFor(PidIds.COOLANT)!!
+            assertEquals(1, portraitCoolant.colSpan)
+            assertEquals(1, portraitCoolant.rowSpan)
+        }
+
+    // OBD-67 round-12 (user decision, replacing round-10's rejection behavior — see
+    // GridEngine.resizeWithPush's KDoc for the full "silent-but-correct" diagnosis that led here):
+    // a resize that WOULD collide now PUSHES the occupant to a free slot instead of rejecting.
+    // Growing coolant 2 wide collides with transTemp immediately to its right; transTemp relocates
+    // to the next free slot (row 0 fills solid across all 4 columns once coolant claims 2 of
+    // them, so transTemp lands at the start of row 1) while oilTemp/boost — never in the way —
+    // stay exactly put.
+    @Test
+    fun `resizeGauge pushes a colliding tile to a free slot instead of rejecting`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val oilTempBefore = viewModel.canonicalGrid().placementFor(PidIds.OIL_TEMP)!!
+            val boostBefore = viewModel.canonicalGrid().placementFor(PidIds.BOOST)!!
+
+            viewModel.resizeGauge(PidIds.COOLANT, colSpan = 2, rowSpan = 1, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            val landscape = viewModel.canonicalGrid()
+            val coolant = landscape.placementFor(PidIds.COOLANT)!!
+            assertEquals(0, coolant.col)
+            assertEquals(2, coolant.colSpan)
+            val transTemp = landscape.placementFor(PidIds.TRANS_TEMP)!!
+            assertEquals(0, transTemp.col)
+            assertEquals(1, transTemp.row)
+            assertEquals(1, transTemp.colSpan) // displaced, not resized — only its position moved
+            assertEquals(oilTempBefore, landscape.placementFor(PidIds.OIL_TEMP))
+            assertEquals(boostBefore, landscape.placementFor(PidIds.BOOST))
+        }
+
+    // OBD-67 round-13 device-verified (user decision, replacing round-12's rejection here — see
+    // GridEngine.resizeWithPush's own KDoc for the "shift left" refinement): user's own words —
+    // "I can resize any way I want, but only when the gauge is on the LEFT side. If a gauge is in
+    // the RIGHT column it only resizes up/down, not side to side" — a right-column tile widening
+    // now shifts left to fit rather than doing nothing. transTemp sits at col 1 of 4; growing it
+    // to the full 4-column width shifts it to col 0, displacing every other gauge onto a new row.
+    @Test
+    fun `resizeGauge shifts a right-of-center tile left to fit a wide span, pushing others`() =
         runTest(testDispatcher) {
             val viewModel = seededViewModel()
 
-            viewModel.resizeGauge(PidIds.COOLANT, colSpan = 2, rowSpan = 2)
+            viewModel.resizeGauge(PidIds.TRANS_TEMP, colSpan = 4, rowSpan = 1, columns = GRID_CANONICAL_COLUMNS)
             advanceUntilIdle()
 
-            val grid = viewModel.gridLayout.value!!
-            val coolant = grid.placementFor(PidIds.COOLANT)!!
-            assertEquals(2, coolant.colSpan)
-            assertEquals(2, coolant.rowSpan)
+            val landscape = viewModel.canonicalGrid()
+            val transTemp = landscape.placementFor(PidIds.TRANS_TEMP)!!
+            assertEquals(0, transTemp.col) // shifted left: 0 + 4 == the grid's own column count
+            assertEquals(4, transTemp.colSpan)
+            // Every other core gauge was in the way (row 0 is now solid transTemp) — displaced
+            // onto row 1, not resized.
+            assertEquals(1, landscape.placementFor(PidIds.COOLANT)!!.row)
+            assertEquals(1, landscape.placementFor(PidIds.OIL_TEMP)!!.row)
+            assertEquals(1, landscape.placementFor(PidIds.BOOST)!!.row)
+        }
+
+    // OBD-67 round-13: the one resize still refused — a span wider than the grid itself, which
+    // no shift or push could ever fit. Not reachable via the real size chips (max 2×2), but the
+    // engine itself still has to honor this as a real mathematical edge.
+    @Test
+    fun `resizeGauge still rejects a span wider than the grid itself`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid().placementFor(PidIds.TRANS_TEMP)!!
+
+            viewModel.resizeGauge(PidIds.TRANS_TEMP, colSpan = 5, rowSpan = 1, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            assertEquals(before, viewModel.canonicalGrid().placementFor(PidIds.TRANS_TEMP))
+        }
+
+    // --- OBD-68: moveGauge/addGaugeAt, rearrange mode's freeform drag-drop commit --------------
+
+    @Test
+    fun `moveGauge drops the tile at the explicit cell in the given orientation, keeping others put`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+            val movedId = before.ids.last()
+            val untouchedId = before.ids.first()
+            val untouchedBefore = before.placementFor(untouchedId)!!
+
+            // well below the seeded row — always free
+            viewModel.moveGauge(movedId, col = 0, row = 5, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            val grid = viewModel.canonicalGrid()
+            val moved = grid.placementFor(movedId)!!
+            assertEquals(0, moved.col)
+            assertEquals(5, moved.row)
+            assertEquals(untouchedBefore, grid.placementFor(untouchedId)) // no repack, no reflow
             assertEquals(GRID_CANONICAL_COLUMNS, grid.columns)
         }
 
     @Test
-    fun `swapGauge renames the placement in place on the persisted grid`() =
+    fun `moveGauge only touches the given orientation's layout, not the other's`() =
         runTest(testDispatcher) {
             val viewModel = seededViewModel()
-            val before = viewModel.gridLayout.value!!.placementFor(PidIds.COOLANT)!!
+            val portraitBefore = viewModel.gridLayoutsByColumns.value.getValue(GRID_PORTRAIT_COLUMNS)
+            val movedId = viewModel.canonicalGrid().ids.first()
+
+            viewModel.moveGauge(movedId, col = 0, row = 9, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            assertEquals(portraitBefore, viewModel.gridLayoutsByColumns.value.getValue(GRID_PORTRAIT_COLUMNS))
+        }
+
+    @Test
+    fun `moveGauge is a no-op for an absent id`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+
+            viewModel.moveGauge("ghost", col = 0, row = 0, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            assertEquals(before, viewModel.canonicalGrid())
+        }
+
+    @Test
+    fun `moveGauge swaps two same-footprint tiles when the target cell is occupied`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+            val (draggedId, targetId) = before.ids[0] to before.ids[1]
+            val draggedOrigin = before.placementFor(draggedId)!!.let { it.col to it.row }
+            val targetOrigin = before.placementFor(targetId)!!.let { it.col to it.row }
+
+            viewModel.moveGauge(
+                draggedId,
+                col = targetOrigin.first,
+                row = targetOrigin.second,
+                columns = GRID_CANONICAL_COLUMNS,
+            )
+            advanceUntilIdle()
+
+            val grid = viewModel.canonicalGrid()
+            assertEquals(targetOrigin, grid.placementFor(draggedId)!!.let { it.col to it.row })
+            assertEquals(draggedOrigin, grid.placementFor(targetId)!!.let { it.col to it.row })
+        }
+
+    @Test
+    fun `moveGauge snaps back (no-op) when the drop doesn't fit or clean-swap`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+            val movedId = before.ids.first()
+
+            // out of bounds
+            viewModel.moveGauge(movedId, col = GRID_CANONICAL_COLUMNS, row = 0, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            assertEquals(before, viewModel.canonicalGrid())
+        }
+
+    @Test
+    fun `addGaugeAt places at the explicit cell and syncs the gauge into the other orientation`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+
+            viewModel.addGaugeAt(SPEED_PID_ID, col = 1, row = 5, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+
+            val landscape = viewModel.canonicalGrid()
+            val speed = landscape.placementFor(SPEED_PID_ID)!!
+            assertEquals(1, speed.col)
+            assertEquals(5, speed.row)
+            // The invariant: portrait must also carry the new gauge, even though it got no chosen
+            // cell there (addInFirstFreeSlot picks one).
+            assertTrue(
+                SPEED_PID_ID in
+                    viewModel.gridLayoutsByColumns.value
+                        .getValue(GRID_PORTRAIT_COLUMNS)
+                        .ids,
+            )
+        }
+
+    @Test
+    fun `addGaugeAt is a no-op when the gauge is already placed or the cell is taken`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val before = viewModel.canonicalGrid()
+            val alreadyPlaced = before.ids.first()
+
+            viewModel.addGaugeAt(alreadyPlaced, col = 1, row = 5, columns = GRID_CANONICAL_COLUMNS)
+            advanceUntilIdle()
+            assertEquals(before, viewModel.canonicalGrid())
+
+            viewModel.addGaugeAt(
+                SPEED_PID_ID,
+                col = before.placementFor(alreadyPlaced)!!.col,
+                row = 0,
+                columns = GRID_CANONICAL_COLUMNS,
+            )
+            advanceUntilIdle()
+            assertEquals(before, viewModel.canonicalGrid())
+        }
+
+    @Test
+    fun `swapGauge renames the placement in place on every stored orientation's layout`() =
+        runTest(testDispatcher) {
+            val viewModel = seededViewModel()
+            val beforeLandscape = viewModel.canonicalGrid().placementFor(PidIds.COOLANT)!!
+            val beforePortrait =
+                viewModel.gridLayoutsByColumns.value
+                    .getValue(
+                        GRID_PORTRAIT_COLUMNS,
+                    ).placementFor(PidIds.COOLANT)!!
 
             viewModel.swapGauge(PidIds.COOLANT, PidIds.RPM)
             advanceUntilIdle()
 
-            val grid = viewModel.gridLayout.value!!
-            assertNull(grid.placementFor(PidIds.COOLANT))
-            // Same cell + span, only the id changed.
-            assertEquals(before.copy(id = PidIds.RPM), grid.placementFor(PidIds.RPM))
+            val landscape = viewModel.canonicalGrid()
+            val portrait = viewModel.gridLayoutsByColumns.value.getValue(GRID_PORTRAIT_COLUMNS)
+            assertNull(landscape.placementFor(PidIds.COOLANT))
+            assertNull(portrait.placementFor(PidIds.COOLANT))
+            // Same cell + span PER ORIENTATION, only the id changed — each layout keeps its own
+            // geometry, the sync invariant is about the id set, not positions.
+            assertEquals(beforeLandscape.copy(id = PidIds.RPM), landscape.placementFor(PidIds.RPM))
+            assertEquals(beforePortrait.copy(id = PidIds.RPM), portrait.placementFor(PidIds.RPM))
         }
 
-    /** A VM whose eager-seed has run and whose `gridLayout` flow has a live collector. */
+    /** A VM whose eager-seed has run and whose `gridLayoutsByColumns` flow has a live collector. */
     private fun TestScope.seededViewModel(): DashboardViewModel {
         val fake = FakeVehicleDataSource(scenario = Scenario.IDLE, scope = this)
         val viewModel = DashboardViewModel(fake, fixedClock, InMemorySettingsRepository())
-        backgroundScope.launch { viewModel.gridLayout.collect {} }
+        backgroundScope.launch { viewModel.gridLayoutsByColumns.collect {} }
         advanceUntilIdle()
         return viewModel
     }
+
+    private fun DashboardViewModel.canonicalGrid(): GridLayout =
+        gridLayoutsByColumns.value.getValue(GRID_CANONICAL_COLUMNS)
 
     private fun withDashboard(
         scenario: Scenario,

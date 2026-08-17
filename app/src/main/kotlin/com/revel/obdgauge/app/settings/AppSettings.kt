@@ -81,12 +81,17 @@ data class AppSettings(
     // Settings UI for it in v1.
     val speedCorrectionFactor: Double = 1.0,
     /**
-     * OBD-62: the resizable-grid layout. `null` until the user has a grid persisted — the dashboard
-     * derives one from [gaugeOrder] via `GridMigration.fromGaugeOrder` in that case, so this stays
-     * additive and a fresh/old install renders exactly as before. Once the grid feature writes a
-     * layout, this becomes the source of truth for tile positions and spans.
+     * OBD-68 (was a single [com.revel.obdgauge.app.gauge.grid.GridLayout] under OBD-62/67 — see
+     * the round-4 pivot note in `issues/OBD-67.md`): one freeform grid layout PER COLUMN COUNT,
+     * keyed by [com.revel.obdgauge.app.gauge.grid.GridLayout.columns] (landscape=4, portrait=2 in
+     * this app). A single canonical layout repacked per orientation at render time couldn't hold
+     * independent freeform placements for both — landscape and portrait are different canvases,
+     * arranged independently, but must always agree on WHICH gauges are present (see
+     * `GridLayoutSet`'s KDoc for that sync invariant). Empty until a grid is persisted — the
+     * dashboard derives layouts from [gaugeOrder] via `GridMigration.fromGaugeOrder` in that case,
+     * so this stays additive and a fresh/old install renders exactly as before.
      */
-    val gridLayout: com.revel.obdgauge.app.gauge.grid.GridLayout? = null,
+    val gridLayoutsByColumns: Map<Int, com.revel.obdgauge.app.gauge.grid.GridLayout> = emptyMap(),
 )
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */

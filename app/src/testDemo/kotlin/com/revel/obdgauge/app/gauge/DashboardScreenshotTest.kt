@@ -1,13 +1,17 @@
 package com.revel.obdgauge.app.gauge
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.revel.obdgauge.app.gauge.grid.GridEngine
 import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
+import com.revel.obdgauge.model.LinkError
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.Reading
@@ -151,6 +155,55 @@ class DashboardScreenshotTest {
         composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "gauge_danger_zone.png")
     }
 
+    // OBD-67 round-7 device-verified regression coverage: rounds 5/6 only exercised the
+    // CONNECTED banner state (LinkState.Ready renders no banner at all — see ConnectionBanner's
+    // own KDoc), so a pixel diff against those references could never have caught the "Retry"
+    // label wrapping one-letter-per-line in the disconnected/error state — the exact state a
+    // parked/bench dashboard actually shows. These two pin that state's banner as a single short
+    // row, in both normal and rearrange mode (round 6 made the top chrome row's HEIGHT invariant
+    // between modes; this is the same assertion made concrete for the one state that actually
+    // stresses the banner's own internal layout).
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `disconnected banner stays a single short row`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(disconnectedBannerUiState(), onConnect = {}, dangerPulseEnabled = false)
+            }
+        }
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "dashboard_disconnected_banner.png")
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `disconnected banner stays a single short row in rearrange mode too`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme {
+                GaugeDashboard(disconnectedBannerUiState(), onConnect = {}, dangerPulseEnabled = false)
+            }
+        }
+        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onRoot().captureRoboImage(SCREENSHOT_DIR + "dashboard_disconnected_banner_rearrange.png")
+    }
+
+    // LinkState.Error (not just Disconnected) is the more demanding fixture: it renders BOTH the
+    // message Text ("Bluetooth is off") AND the separate "Reconnecting…" Text alongside the
+    // "Retry" connect button, all in the one banner row — the exact combination round 7 found
+    // wrapping on-device. Readings are the same safe fixture `dashboard danger zone tile` uses;
+    // only the connection state differs (values themselves aren't what this test is pinning).
+    private fun disconnectedBannerUiState(): DashboardUiState {
+        val now = Instant.EPOCH
+        val readings =
+            mapOf(
+                PidIds.COOLANT to Reading(PidIds.COOLANT, SAFE_OIL, now, stale = false),
+                PidIds.TRANS_TEMP to Reading(PidIds.TRANS_TEMP, SAFE_OIL, now, stale = false),
+                PidIds.OIL_TEMP to Reading(PidIds.OIL_TEMP, SAFE_OIL, now, stale = false),
+                PidIds.BOOST to Reading(PidIds.BOOST, SAFE_BOOST, now, stale = false),
+            )
+        return toDashboardUiState(readings, LinkState.Error(LinkError.BluetoothOff), now)
+    }
+
     private fun captureGrid(
         fileName: String,
         grid: GridLayout,
@@ -159,7 +212,10 @@ class DashboardScreenshotTest {
             ObdGaugeTheme {
                 GaugeDashboard(
                     sampleUiState(),
-                    gridLayout = grid,
+                    // OBD-68: gridOf's placements are already repacked at 4 columns (the
+                    // landscape/canonical count these `w800dp...-land` screenshots render at) —
+                    // keyed there directly, no other orientation needed for a single reference.
+                    gridLayoutsByColumns = mapOf(GRID_CANONICAL_COLUMNS to grid),
                     sparklines = sampleSparklines(),
                     dangerPulseEnabled = false,
                 )

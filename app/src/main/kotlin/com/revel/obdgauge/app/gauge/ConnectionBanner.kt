@@ -13,9 +13,11 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.revel.obdgauge.model.LinkError
 import com.revel.obdgauge.model.LinkState
@@ -87,10 +89,18 @@ fun ConnectionBanner(
                 strokeWidth = SPINNER_STROKE_DP.dp,
             )
         }
+        // OBD-67 round-6 device-verified fix: this Text previously had no line limit, so a
+        // squeezed container (the header row's Done button narrowing this banner's own weight(1f)
+        // share — see DashboardScreen.kt's round-6 fix) made it soft-wrap to 2+ lines, growing the
+        // whole top chrome row taller and shrinking the grid's viewport (and thus every tile) by a
+        // few percent. Single-line + ellipsize is defense-in-depth on top of that root-cause fix:
+        // this banner must never grow taller from its own text, regardless of what squeezes it.
         Text(
             text = message,
             color = contentColor,
             style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.testTag("connection-banner-message"),
         )
         if (isError) {
@@ -98,18 +108,45 @@ fun ConnectionBanner(
                 text = "Reconnecting…",
                 color = contentColor,
                 style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("connection-banner-reconnecting"),
             )
         }
         val connectLabel = connectActionLabel(connection)
         if (onConnect != null && connectLabel != null) {
-            TextButton(
-                onClick = onConnect,
-                modifier = Modifier.testTag("connection-banner-connect"),
-            ) {
-                Text(text = connectLabel, color = contentColor, style = MaterialTheme.typography.labelLarge)
-            }
+            ConnectActionButton(connectLabel, contentColor, onConnect)
         }
+    }
+}
+
+// OBD-67 round-7 device-verified fix: this Text was the ACTUAL text still wrapping after round
+// 6 — round 6 only capped the message and "Reconnecting…" Texts in ConnectionBanner itself,
+// missing this one. On the real disconnected/error device state (message + "Reconnecting…" +
+// this button all sharing one now-narrower row — see DashboardScreen.kt's round-6 fix reserving
+// the Done button's width in every mode), "Retry"/"Connect" wrapped one letter per line,
+// ballooning the banner to ~180px tall in BOTH modes (consistent, per round 6, but consistently
+// TALL, not the short single row it should be). A button label must never wrap. Split into its
+// own composable (rather than inlined in ConnectionBanner) partly to keep that fix's own KDoc
+// next to the exact Text it documents, and partly to keep ConnectionBanner itself under
+// detekt's LongMethod budget now that every Text in this file carries a line-limit comment.
+@Composable
+private fun ConnectActionButton(
+    label: String,
+    contentColor: Color,
+    onConnect: () -> Unit,
+) {
+    TextButton(
+        onClick = onConnect,
+        modifier = Modifier.testTag("connection-banner-connect"),
+    ) {
+        Text(
+            text = label,
+            color = contentColor,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

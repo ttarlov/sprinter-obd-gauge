@@ -29,7 +29,11 @@ private val KEY_PRESSURE_UNIT = stringPreferencesKey("pressure_unit")
 private val KEY_KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
 private val KEY_POLL_RATE = stringPreferencesKey("poll_rate")
 private val KEY_SPEED_CORRECTION_FACTOR = doublePreferencesKey("speed_correction_factor")
-private val KEY_GRID_LAYOUT = stringPreferencesKey("grid_layout")
+
+// OBD-68: same on-disk key a pre-OBD-68 single-layout install already used — GridLayoutCodec.
+// decodeMap gracefully reads that old single-layout string as a one-entry map (see its KDoc), so
+// this key rename is Kotlin-identifier-only, not a storage migration.
+private val KEY_GRID_LAYOUTS = stringPreferencesKey("grid_layout")
 
 private const val ENTRY_SEPARATOR = ";"
 private const val FIELD_SEPARATOR = ":"
@@ -60,9 +64,12 @@ fun decodeAppSettings(preferences: Preferences): AppSettings {
         speedCorrectionFactor =
             preferences[KEY_SPEED_CORRECTION_FACTOR]?.takeIf { it.isFinite() }
                 ?: defaults.speedCorrectionFactor,
-        // OBD-62: absent (no grid persisted yet) or malformed → the null default; the dashboard
-        // then migrates from gaugeOrder. Never throws.
-        gridLayout = preferences[KEY_GRID_LAYOUT]?.let(GridLayoutCodec::decode) ?: defaults.gridLayout,
+        // OBD-68: absent (no grid persisted yet) or malformed → the empty-map default; the
+        // dashboard then migrates from gaugeOrder for whichever column counts it needs. A
+        // pre-OBD-68 single-layout string decodes here too (decodeMap's one-entry fallback) — see
+        // KEY_GRID_LAYOUTS' own comment. Never throws.
+        gridLayoutsByColumns =
+            preferences[KEY_GRID_LAYOUTS]?.let(GridLayoutCodec::decodeMap) ?: defaults.gridLayoutsByColumns,
     )
 }
 
@@ -78,7 +85,9 @@ fun encodeAppSettings(
     preferences[KEY_KEEP_SCREEN_ON] = settings.keepScreenOn
     preferences[KEY_POLL_RATE] = settings.pollRate.name
     preferences[KEY_SPEED_CORRECTION_FACTOR] = settings.speedCorrectionFactor
-    settings.gridLayout?.let { preferences[KEY_GRID_LAYOUT] = GridLayoutCodec.encode(it) }
+    if (settings.gridLayoutsByColumns.isNotEmpty()) {
+        preferences[KEY_GRID_LAYOUTS] = GridLayoutCodec.encodeMap(settings.gridLayoutsByColumns)
+    }
 }
 
 private fun encodeGaugeOrder(order: List<GaugeOrderEntry>): String =

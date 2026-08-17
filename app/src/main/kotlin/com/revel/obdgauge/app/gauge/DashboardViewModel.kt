@@ -4,7 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.revel.obdgauge.app.gauge.grid.GridEngine
 import com.revel.obdgauge.app.gauge.grid.GridLayout
-import com.revel.obdgauge.app.gauge.grid.GridMigration
+import com.revel.obdgauge.app.gauge.grid.GridLayoutSet
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
@@ -43,6 +43,10 @@ import javax.inject.Inject
  *   a ViewModel built without one behaves exactly as it did before — see [stopUnlessKeptAlive].
  */
 @HiltViewModel
+// One small mutator per grid/threshold/swap operation (OBD-64/66/67) is the cohesive shape this
+// class's whole job takes — splitting it up would scatter the single `mutateGrid`/`settingsRepository`
+// persist path this KDoc describes across multiple classes for no clarity gain.
+@Suppress("TooManyFunctions")
 class DashboardViewModel
     @Inject
     constructor(
@@ -60,26 +64,28 @@ class DashboardViewModel
         private val sparklineHistory = SparklineHistoryHolder(GAUGE_CATALOG.map { it.id })
 
         init {
-            // OBD-64: eager-seed the canonical grid ONCE, then treat `gridLayout` as the single
-            // live source of truth for which gauges show, where, and at what size. Before this
-            // phase `gridLayout` was left null and the screen derived a throwaway layout from
-            // `gaugeOrder` every recomposition; a persisted seed is what lets add/remove/resize
-            // mutate a real stored layout instead. Idempotent: the transform re-checks null under
-            // the repository lock, and the outer `first()` skips the write entirely once seeded, so
-            // this never rewrites an existing layout on later launches. Canonical = 4 columns
-            // (`GRID_CANONICAL_COLUMNS`), matching landscape, so the migrated default still fills
-            // one row exactly like the pre-grid dashboard; the screen repacks per orientation.
+            // OBD-68 (was "eager-seed the ONE canonical grid" under OBD-64 — see the round-4 pivot
+            // note in `issues/OBD-67.md`): eager-seed BOTH required per-column-count layouts ONCE,
+            // then treat `gridLayoutsByColumns` as the live source of truth for which gauges show,
+            // where, and at what size, in EACH orientation independently. Idempotent the same way
+            // the original single-layout seed was: the outer `first()` skips the write entirely
+            // once both counts are already present (`GridLayoutSet.ensureColumns` is itself a
+            // no-op once complete, so even a repeat call under the repository lock changes nothing).
             viewModelScope.launch {
-                if (settingsRepository.settings.first().gridLayout == null) {
+                val needsSeed =
+                    settingsRepository.settings
+                        .first()
+                        .gridLayoutsByColumns.keys != REQUIRED_COLUMN_COUNTS
+                if (needsSeed) {
                     settingsRepository.update { settings ->
-                        if (settings.gridLayout != null) {
-                            settings
-                        } else {
-                            settings.copy(
-                                gridLayout =
-                                    GridMigration.fromGaugeOrder(settings.gaugeOrder, GRID_CANONICAL_COLUMNS),
-                            )
-                        }
+                        settings.copy(
+                            gridLayoutsByColumns =
+                                GridLayoutSet.ensureColumns(
+                                    settings.gridLayoutsByColumns,
+                                    REQUIRED_COLUMN_COUNTS,
+                                    settings.gaugeOrder,
+                                ),
+                        )
                     }
                 }
             }
@@ -119,14 +125,19 @@ class DashboardViewModel
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), DEFAULT_GAUGE_ORDER)
 
         /**
-         * OBD-63: the persisted spanning-grid layout, or `null` until one is written — the
-         * dashboard derives one from [gaugeOrder] in that case (see `GaugeDashboard`). Passed
-         * straight through unresolved so the screen can repack it per orientation.
+         * OBD-68: the persisted per-column-count grid layouts, empty until any are written — the
+         * dashboard derives one per orientation from [gaugeOrder] in that case (see
+         * `GaugeDashboard`). Passed straight through unresolved (keyed by column count) so the
+         * screen picks its own orientation's entry rather than anything being repacked here.
          */
-        val gridLayout: StateFlow<GridLayout?> =
+        val gridLayoutsByColumns: StateFlow<Map<Int, GridLayout>> =
             settingsRepository.settings
-                .map { it.gridLayout }
-                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), AppSettings().gridLayout)
+                .map { it.gridLayoutsByColumns }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    AppSettings().gridLayoutsByColumns,
+                )
 
         /**
          * OBD-66: the effective per-gauge threshold table ([ThresholdConfig.seed] + user overrides)
@@ -170,15 +181,20 @@ class DashboardViewModel
             newId: String,
         ) {
             if (oldId == newId) return
-            // OBD-64: the swap now lands on the grid too — `GridEngine.replaceId` renames the
-            // placement in place (same cell, same span), the source of truth for rendering. The
-            // `gaugeOrder` rewrite (`withGaugeSwapped`) is kept in lockstep so any code still
-            // reading `gaugeOrder` (settings screen, backfill) stays consistent.
+            // OBD-64/68: the swap now lands on the grid too — `GridLayoutSet.replaceIdEverywhere`
+            // renames the placement in place (same cell, same span, per stored layout) in EVERY
+            // orientation's layout — a swap changes which gauge occupies a slot, so it's exactly as
+            // much a gauge-set change as add/remove and needs the same cross-orientation sync (see
+            // `GridLayoutSet`'s KDoc). The `gaugeOrder` rewrite (`withGaugeSwapped`) is kept in
+            // lockstep so any code still reading `gaugeOrder` (settings screen, backfill) stays
+            // consistent. Doesn't route through mutateGridSet: this is the one mutator that also
+            // needs to rewrite `gaugeOrder` on the same AppSettings, not just the grid layouts.
             viewModelScope.launch {
                 settingsRepository.update { settings ->
+                    val ensured = ensuredLayouts(settings)
                     settings
                         .withGaugeSwapped(oldId, newId)
-                        .copy(gridLayout = GridEngine.replaceId(canonicalGrid(settings), oldId, newId))
+                        .copy(gridLayoutsByColumns = GridLayoutSet.replaceIdEverywhere(ensured, oldId, newId))
                 }
             }
         }
@@ -203,41 +219,105 @@ class DashboardViewModel
         }
 
         /**
-         * OBD-64: adds [id] to the grid in the first free canonical slot (a no-op if already
-         * placed). The add-palette's only mutator.
+         * OBD-64/68: adds [id] wherever there's room, in EVERY stored orientation's layout
+         * ([GridLayoutSet.addAnywhereEverywhere]) — the edit-bar "＋ Add" flow's mutator. Unlike
+         * [addGaugeAt] there's no chosen cell, so every layout just gets its own free slot.
          */
-        fun addGauge(id: String) = mutateGrid { GridEngine.addInFirstFreeSlot(it, id) }
+        fun addGauge(id: String) = mutateGridSet { GridLayoutSet.addAnywhereEverywhere(it, id) }
 
         /**
-         * OBD-64: removes [id] from the grid and repacks the rest closed (a no-op if absent). The
-         * removed id becomes an add-palette candidate again. Note this touches only `gridLayout` —
+         * OBD-68: adds [id] at an explicit cell in the [columns]-column layout — the rearrange-mode
+         * empty-cell "＋" flow's mutator — and syncs it into every OTHER stored orientation's layout
+         * too, at a sensible free slot there ([GridLayoutSet.addEverywhere]), so the gauge-set stays
+         * identical across orientations (see `GridLayoutSet`'s KDoc). A no-op for a layout [id] is
+         * already placed on.
+         */
+        fun addGaugeAt(
+            id: String,
+            col: Int,
+            row: Int,
+            columns: Int,
+        ) = mutateGridSet { GridLayoutSet.addEverywhere(it, id, columns, col, row) }
+
+        /**
+         * OBD-64/68: removes [id] from EVERY stored orientation's layout and repacks each closed
+         * ([GridLayoutSet.removeEverywhere]) — a no-op if absent from a given layout. The removed
+         * id becomes an add-palette candidate again. Note this touches only the grid layouts —
          * `gaugeOrder` keeps the entry so a later re-add restores its former visibility default.
          */
-        fun removeGauge(id: String) = mutateGrid { GridEngine.remove(it, id) }
+        fun removeGauge(id: String) = mutateGridSet { GridLayoutSet.removeEverywhere(it, id) }
 
         /**
-         * OBD-64: resizes [id]'s tile to [colSpan]×[rowSpan] and repacks; spans are clamped by the
-         * engine. A no-op if [id] is absent.
+         * OBD-67 round-12 device-verified (user decision): resizes [id]'s tile to
+         * [colSpan]×[rowSpan] in the [columns]-column layout ONLY, PUSHING any tile in the way
+         * to a free slot — via [GridEngine.resizeWithPush], not round-10's `resizeInPlace` (silent
+         * no-op on collision). The round-10/11 device reports ("1×1/2×1 work, 1×2/2×2 don't") were
+         * genuine, CORRECT rejections in a packed layout — technically right, but silent, so it
+         * read as broken. The user's call: make it push instead of reject.
+         *
+         * OBD-67 round-13 device-verified (user decision, refining round-12): a widened span that
+         * would run off the right edge no longer rejects either — the placement SHIFTS LEFT to
+         * fit, per user's own words: "I can resize any way I want, but only when the gauge is on
+         * the LEFT side. If a gauge is in the RIGHT column it only resizes up/down, not side to
+         * side." See [GridEngine.resizeWithPush]'s own KDoc for the shift math and the one span
+         * still refused (wider than the grid itself — impossible via the real size chips, but a
+         * real mathematical edge). Per-orientation, like [moveGauge] — a tile's size, like its
+         * position, is independent per canvas (a 2×2 in landscape doesn't force a 2×2 in
+         * portrait). A no-op if [id] is absent from that layout.
          */
         fun resizeGauge(
             id: String,
             colSpan: Int,
             rowSpan: Int,
-        ) = mutateGrid { GridEngine.resize(it, id, colSpan, rowSpan) }
+            columns: Int,
+        ) = mutateColumnsLayout(columns) { layout -> GridEngine.resizeWithPush(layout, id, colSpan, rowSpan) }
 
         /**
-         * Applies [op] to the stored *canonical* (4-column) layout and persists it — every grid
-         * mutation reads the persisted layout (falling back to a fresh migration only if the eager
-         * seed somehow hasn't run yet), never the orientation-repacked copy the screen renders.
+         * OBD-68 (freeform placement, replacing OBD-67's ordered-reflow drop-commit before it
+         * shipped — device testing found ordered reflow could never place a tile side-to-side into
+         * open space or hold a persistent empty cell; round-4 then made this per-orientation after
+         * device testing found landscape/portrait need independent freeform arrangements, not one
+         * canonical layout repacked between them — see `issues/OBD-67.md`'s pivot notes for both):
+         * rearrange mode's drag-to-move commit — drops [id] at ([col], [row]) via [GridEngine.dropAt]
+         * (move if it fits, swap if the target is exactly one same-footprint tile, otherwise a
+         * no-op/snap-back) in the [columns]-column layout ONLY. [col]/[row]/[columns] are read
+         * directly off whichever orientation is on screen, since that IS the stored layout being
+         * edited now — no repack/translation between orientations to worry about.
          */
-        private fun mutateGrid(op: (GridLayout) -> GridLayout) {
+        fun moveGauge(
+            id: String,
+            col: Int,
+            row: Int,
+            columns: Int,
+        ) = mutateColumnsLayout(columns) { GridEngine.dropAt(it, id, col, row) }
+
+        /**
+         * Ensures both required per-column-count layouts exist (seeding any gap — see
+         * [GridLayoutSet.ensureColumns]), applies [op] to the WHOLE map, and persists it. The
+         * shared path [addGauge]/[addGaugeAt]/[removeGauge] use — anything that can touch more than
+         * one stored layout at once.
+         */
+        private fun mutateGridSet(op: (Map<Int, GridLayout>) -> Map<Int, GridLayout>) {
             viewModelScope.launch {
-                settingsRepository.update { settings -> settings.copy(gridLayout = op(canonicalGrid(settings))) }
+                settingsRepository.update { settings ->
+                    settings.copy(gridLayoutsByColumns = op(ensuredLayouts(settings)))
+                }
             }
         }
 
-        private fun canonicalGrid(settings: AppSettings): GridLayout =
-            settings.gridLayout ?: GridMigration.fromGaugeOrder(settings.gaugeOrder, GRID_CANONICAL_COLUMNS)
+        /**
+         * [mutateGridSet], narrowed to a single orientation: applies [op] to just the [columns]
+         * layout (already guaranteed present by the ensure-step) and leaves every other stored
+         * layout untouched. [moveGauge]/[resizeGauge] — genuinely single-orientation edits — use
+         * this instead of [mutateGridSet] directly.
+         */
+        private fun mutateColumnsLayout(
+            columns: Int,
+            op: (GridLayout) -> GridLayout,
+        ) = mutateGridSet { layouts -> layouts + (columns to op(layouts.getValue(columns))) }
+
+        private fun ensuredLayouts(settings: AppSettings): Map<Int, GridLayout> =
+            GridLayoutSet.ensureColumns(settings.gridLayoutsByColumns, REQUIRED_COLUMN_COUNTS, settings.gaugeOrder)
 
         override fun onCleared() {
             // Belt-and-suspenders: makes teardown deterministic on ViewModel clear rather than
@@ -281,5 +361,10 @@ class DashboardViewModel
 
         private companion object {
             const val STOP_TIMEOUT_MILLIS = 5_000L
+
+            // OBD-68: the two column counts a grid layout must exist for — landscape/canonical and
+            // portrait, `DashboardScreen.kt`'s own orientation constants (internal there for
+            // exactly this cross-file use).
+            val REQUIRED_COLUMN_COUNTS = setOf(GRID_CANONICAL_COLUMNS, GRID_PORTRAIT_COLUMNS)
         }
     }

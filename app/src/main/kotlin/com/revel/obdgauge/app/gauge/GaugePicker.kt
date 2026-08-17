@@ -120,6 +120,11 @@ private const val THRESHOLD_EDITOR_PADDING_DP = 8
  * current gauge's card (identity, not page index) calls [onDismiss]. A tap OUTSIDE the tile still
  * hits `GaugeDashboard`'s scrim.
  *
+ * [initiallyShowThreshold] (OBD-67): the ⚙ badge's trigger — when `true`, seeds the pager's
+ * initially-focused card (the current gauge's own page) straight to its flipped threshold face,
+ * so the badge opens directly onto the editor rather than requiring a second gear tap. Trigger-only:
+ * every other card, and every re-focus after this initial one, still starts unflipped as before.
+ *
  * ### Pop animation
  * On enter, an [Animatable] `enter` runs 0→1 once: the pager content scales from `1/SWAP_CARD_FRACTION`
  * (so the centered card starts ≈ full-tile, a continuation of the gauge that was just there) down to
@@ -140,6 +145,7 @@ internal fun SwapPager(
     onDismiss: () -> Unit,
     onSelect: (id: String) -> Unit,
     onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
+    initiallyShowThreshold: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val currentOnDismiss by rememberUpdatedState(onDismiss)
@@ -236,6 +242,7 @@ internal fun SwapPager(
                     thresholds = thresholds[pid.id] ?: GaugeThresholds(),
                     scale = popScale,
                     alpha = pageAlpha,
+                    initialFlipped = initiallyShowThreshold && isCurrentGauge && editable,
                     onClick = {
                         when {
                             isCurrentGauge -> currentOnDismiss()
@@ -272,12 +279,14 @@ private fun SwapPagerCard(
     alpha: Float,
     onClick: () -> Unit,
     onSetThreshold: (GaugeThresholds) -> Unit,
+    initialFlipped: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     // OBD-66: tapping the gear flips THIS card over its Y axis to reveal the threshold editor.
     // Duration matches the select-pop (SWAP_POP_MS ≈ 220ms) so the flip flows with the pop feel.
-    var flipped by remember(tile.id) { mutableStateOf(false) }
+    // OBD-67: initialFlipped seeds this straight to the back face — the ⚙ badge's trigger.
+    var flipped by remember(tile.id) { mutableStateOf(initialFlipped) }
     // A card that scrolls out of focus (or a select-pop starting) flips back to its gauge face, so
     // exactly one editor face — and one set of `gauge-threshold-*` testTags — is ever live.
     LaunchedEffect(isFocused, editable) {

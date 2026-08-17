@@ -30,11 +30,18 @@ import androidx.compose.ui.semantics.stateDescription
  * them the feature was entirely invisible to accessibility services even though touch already
  * worked.
  *
- * @param onLongPress OBD-42: enters picker mode for this tile — reachable on every tile
- *   ([GaugeSlot] wires this on every id, boost included via [BoostTile]).
+ * @param onLongPress OBD-67: enters whole-board rearrange mode — reachable on every tile
+ *   ([GaugeSlot] wires this on every id, boost included via [BoostTile]). Before OBD-67 this
+ *   opened the swap picker directly for just this tile; that trigger is now the picker's own ⇄
+ *   badge inside rearrange mode (see `RearrangeMode.kt`'s `RearrangeBadges`) — hence the
+ *   `onLongClick` a11y label below reading "Rearrange dashboard", not "Swap gauge".
  * @param onTap OBD-42: fired on a plain tap. A no-op while no tile is picking; while a
  *   *different* tile is picking, this is how tapping "outside" it (onto another live tile)
  *   dismisses that picker — see [GaugeDashboard]'s scrim for the rest of "outside".
+ * @param interactive OBD-67: `false` skips wiring this modifier's own [pointerInput] gesture
+ *   (rearrange mode's tiles supply their own external drag detector instead — see [GaugeSlot]),
+ *   while still attaching the `testTag`/zone [stateDescription] semantics every existing lookup
+ *   depends on, and still exposing the `onClick`/`onLongClick` a11y actions.
  */
 @Composable
 internal fun Modifier.gaugeTileInteraction(
@@ -42,24 +49,28 @@ internal fun Modifier.gaugeTileInteraction(
     zone: ThresholdZone,
     onLongPress: () -> Unit,
     onTap: () -> Unit,
+    interactive: Boolean = true,
 ): Modifier {
     val currentOnTap by rememberUpdatedState(onTap)
     val currentOnLongPress by rememberUpdatedState(onLongPress)
-    return testTag("gauge-$id")
-        .semantics {
-            stateDescription = zone.name.lowercase()
-            onClick(label = null) {
-                currentOnTap()
-                true
+    val base =
+        testTag("gauge-$id")
+            .semantics {
+                stateDescription = zone.name.lowercase()
+                onClick(label = null) {
+                    currentOnTap()
+                    true
+                }
+                onLongClick(label = "Rearrange dashboard") {
+                    currentOnLongPress()
+                    true
+                }
             }
-            onLongClick(label = "Swap gauge") {
-                currentOnLongPress()
-                true
-            }
-        }.pointerInput(Unit) {
-            detectTapGestures(
-                onTap = { currentOnTap() },
-                onLongPress = { currentOnLongPress() },
-            )
-        }
+    if (!interactive) return base
+    return base.pointerInput(Unit) {
+        detectTapGestures(
+            onTap = { currentOnTap() },
+            onLongPress = { currentOnLongPress() },
+        )
+    }
 }

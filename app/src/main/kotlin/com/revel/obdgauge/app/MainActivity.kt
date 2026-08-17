@@ -140,7 +140,7 @@ class MainActivity : ComponentActivity() {
                 // isn't STARTED, rather than collecting for as long as the Activity exists.
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
-                val gridLayout by viewModel.gridLayout.collectAsStateWithLifecycle()
+                val gridLayoutsByColumns by viewModel.gridLayoutsByColumns.collectAsStateWithLifecycle()
                 val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
                 val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
 
@@ -165,15 +165,17 @@ class MainActivity : ComponentActivity() {
                     GaugeDashboard(
                         uiState = uiState,
                         gaugeOrder = gaugeOrder,
-                        gridLayout = gridLayout,
+                        gridLayoutsByColumns = gridLayoutsByColumns,
                         sparklines = sparklines,
                         thresholds = thresholds,
                         onSettingsClick = { showSettings = true },
                         onSwapGauge = viewModel::swapGauge,
                         onAddGauge = viewModel::addGauge,
+                        onAddGaugeAt = viewModel::addGaugeAt,
                         onRemoveGauge = viewModel::removeGauge,
                         onResizeGauge = viewModel::resizeGauge,
                         onSetThreshold = viewModel::setThreshold,
+                        onMoveGauge = viewModel::moveGauge,
                         // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
                         onConnect = if (linkController.isPresent) ::requestConnect else null,
                     )

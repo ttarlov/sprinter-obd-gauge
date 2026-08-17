@@ -12,6 +12,11 @@ internal object GridLayoutCodec {
     private const val ENTRY_SEPARATOR = ";"
     private const val FIELD_SEPARATOR = ":"
 
+    // OBD-68: separates multiple encoded layouts (encodeMap/decodeMap) — distinct from every
+    // separator a single layout's own encoding uses, so it can never collide with real data
+    // (gauge ids are alphanumeric PID names, everything else here is an integer).
+    private const val LAYOUT_SEPARATOR = "|"
+
     // Field order within one `id:col:row:colSpan:rowSpan` placement entry.
     private const val FIELD_ID = 0
     private const val FIELD_COL = 1
@@ -45,4 +50,25 @@ internal object GridLayoutCodec {
                 }
             GridLayout(columns, placements)
         }.getOrNull()
+
+    /**
+     * OBD-68: encodes a `Map<columns, GridLayout>` — one [encode]d layout per entry, joined by
+     * [LAYOUT_SEPARATOR]. Each layout already embeds its own `columns` in its own header, so the
+     * map's keys don't need to be written separately; [decodeMap] rebuilds them from that.
+     */
+    fun encodeMap(layouts: Map<Int, GridLayout>): String = layouts.values.joinToString(LAYOUT_SEPARATOR) { encode(it) }
+
+    /**
+     * The inverse of [encodeMap] — `null` if ANY entry fails to decode (same "worst case is a
+     * silent reset, never a crash" discipline as [decode]). A string with no [LAYOUT_SEPARATOR] at
+     * all (a pre-OBD-68 single-layout encoding, or a blank/absent value) decodes as a single- or
+     * zero-entry map — the free migration path: an old install's one persisted layout becomes a
+     * one-entry map keyed by whatever `columns` it was stored at, and `GridLayoutSet.ensureColumns`
+     * seeds the other orientation from it the same way it would seed any other gap.
+     */
+    fun decodeMap(raw: String): Map<Int, GridLayout>? {
+        if (raw.isBlank()) return emptyMap()
+        val decoded = raw.split(LAYOUT_SEPARATOR).filter { it.isNotBlank() }.map { entry -> decode(entry) }
+        return if (decoded.any { it == null }) null else decoded.filterNotNull().associateBy { it.columns }
+    }
 }

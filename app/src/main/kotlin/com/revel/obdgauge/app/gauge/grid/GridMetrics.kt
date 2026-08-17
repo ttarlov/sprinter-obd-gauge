@@ -16,6 +16,12 @@ data class CellRect(
     val height: Float,
 )
 
+/** A grid cell address — the inverse of [GridPlacement]'s `(col, row)`, for a point in content-space. */
+data class Cell(
+    val col: Int,
+    val row: Int,
+)
+
 /**
  * OBD-63: the pure, Compose-free pixel math behind the spanning grid renderer ([GaugeGrid]). Kept
  * here — plain `Float` in, plain data out — so the spanning arithmetic (cell size, per-placement
@@ -87,4 +93,26 @@ object GridMetrics {
         cell: CellSize,
         spacing: Float,
     ): Float = if (rows <= 0) 0f else cell.height * rows + spacing * (rows - 1)
+
+    /**
+     * OBD-67: the inverse of [placementRect] — a content-space point `(x, y)` to the `(col, row)`
+     * cell it falls in, for drag hit-testing. Each cell's pitch is `cell.width/height + spacing`;
+     * a point landing in the gutter between two cells attributes to the cell it trails (matches
+     * [placementRect]'s own left/top-anchored math, so a point just inside a placement's rect
+     * always round-trips to that placement's cell). [col] is clamped to `[0, columns-1]` and
+     * [row] floored at `0` so a finger dragged past an edge still resolves to a valid, in-bounds
+     * cell rather than a col/row [GridEngine] would reject.
+     */
+    fun cellAt(
+        x: Float,
+        y: Float,
+        cell: CellSize,
+        spacing: Float,
+        columns: Int,
+    ): Cell {
+        require(columns >= 1) { "grid needs at least one column, was $columns" }
+        val col = (x / (cell.width + spacing)).toInt().coerceIn(0, columns - 1)
+        val row = (y / (cell.height + spacing)).toInt().coerceAtLeast(0)
+        return Cell(col, row)
+    }
 }

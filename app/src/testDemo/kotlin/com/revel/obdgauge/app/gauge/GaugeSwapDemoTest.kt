@@ -2,6 +2,7 @@ package com.revel.obdgauge.app.gauge
 
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
@@ -78,7 +79,10 @@ class GaugeSwapDemoTest {
         scheduler.advanceUntilIdle()
         composeTestRule.waitForIdle()
 
+        // OBD-67: long-press only enters rearrange mode now; the ⇄ badge opens the picker.
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-rearrange-swap-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
         // rpm is the second page of the in-tile swap pager ([current, rpm, speed]); scroll to it.
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(1)

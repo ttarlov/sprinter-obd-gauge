@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
@@ -83,8 +84,7 @@ class GaugeSwapPickerTest {
     fun `long-press turns that tile only into a swap pager`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         // The picked tile is now a pager; its normal value node is gone (replaced by pages).
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertExists()
@@ -100,8 +100,7 @@ class GaugeSwapPickerTest {
     fun `pager opens on the current gauge and is horizontally scrollable`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         // Page 0 is the current gauge, showing a live value — "feels alive, not a menu".
         composeTestRule.onNodeWithTag("gauge-swap-page-coolant").assertExists()
@@ -116,8 +115,7 @@ class GaugeSwapPickerTest {
     fun `the centered card is a fraction of the frame so neighbours peek`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         // The centered card (~75% per SWAP_CARD_FRACTION) is clearly narrower than the pager/frame
         // it sits in — the remaining width is the left/right peek where neighbour cards show.
@@ -137,8 +135,7 @@ class GaugeSwapPickerTest {
     fun `pager pages are the current gauge plus catalog candidates, excluding gauges placed elsewhere`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         // Candidates (rpm, speed) are reachable pages with live values.
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
@@ -160,8 +157,7 @@ class GaugeSwapPickerTest {
         setDashboard(newViewModel())
 
         // Free up coolant (catalog index 0) by swapping the coolant tile to speed, leaving oil.
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(SPEED_PAGE)
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("gauge-swap-page-$SPEED_PID_ID").performTouchInput { click() }
@@ -170,8 +166,7 @@ class GaugeSwapPickerTest {
         // Open the picker on the oil tile. The stable ribbon candidates are [coolant, oilTemp, rpm],
         // so oil sits at index 1 — the pager opens FOCUSED on oil (its OBD-66 gear shows), NOT on
         // page 0 (coolant). Coolant, being earlier in the ribbon, is a LEFT swipe away.
-        composeTestRule.onNodeWithTag("gauge-oilTemp").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("oilTemp")
         composeTestRule.onNodeWithTag("gauge-threshold-gear-oilTemp").assertExists()
         composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").assertDoesNotExist()
         // Coolant is reachable by scrolling LEFT (a lower index) of the current gauge.
@@ -256,8 +251,7 @@ class GaugeSwapPickerTest {
     @Test
     fun `dismiss - tapping the current gauge's own page changes nothing`() {
         setDashboard(newViewModel())
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         composeTestRule.onNodeWithTag("gauge-swap-page-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
@@ -270,8 +264,7 @@ class GaugeSwapPickerTest {
     @Test
     fun `dismiss - the back gesture changes nothing`() {
         setDashboard(newViewModel())
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         composeTestRule.activityRule.scenario.onActivity { activity ->
             activity.onBackPressedDispatcher.onBackPressed()
@@ -286,8 +279,7 @@ class GaugeSwapPickerTest {
     @Test
     fun `dismiss - tapping outside the tile changes nothing`() {
         setDashboard(newViewModel())
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         composeTestRule.onNodeWithTag("gauge-picker-scrim").performTouchInput { click() }
         composeTestRule.waitForIdle()
@@ -300,8 +292,7 @@ class GaugeSwapPickerTest {
     @Test
     fun `dismiss - tapping a different live tile also changes nothing`() {
         setDashboard(newViewModel())
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         composeTestRule.onNodeWithTag("gauge-transTemp").performTouchInput { click() }
         composeTestRule.waitForIdle()
@@ -334,8 +325,7 @@ class GaugeSwapPickerTest {
     fun `pager is reachable in portrait too`() {
         setDashboard(newViewModel())
 
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant")
 
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").assertExists()
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
@@ -345,12 +335,24 @@ class GaugeSwapPickerTest {
 
     /** Long-press coolant, scroll the pager to the rpm page, and tap it to swap. */
     private fun swapCoolantToRpm() {
-        composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
-        composeTestRule.waitForIdle()
+        composeTestRule.openSwapPager("coolant") // long-press coolant, then its ⇄ badge
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("gauge-swap-page-rpm").performTouchInput { click() }
         composeTestRule.waitForIdle()
+    }
+
+    /**
+     * OBD-67: long-press now only enters whole-board rearrange mode, not this tile's picker
+     * directly — reach the pager the same way a device user does, via the tile's own ⇄ badge.
+     * Kept as one helper rather than inlined at every call site so this file's picker-structure
+     * assertions (unaffected by OBD-67) don't all need their own two-step touch sequence.
+     */
+    private fun ComposeTestRule.openSwapPager(id: String) {
+        onNodeWithTag("gauge-$id").performTouchInput { longClick() }
+        waitForIdle()
+        onNodeWithTag("gauge-rearrange-swap-$id").performTouchInput { click() }
+        waitForIdle()
     }
 
     private fun setDashboard(viewModel: DashboardViewModel) {

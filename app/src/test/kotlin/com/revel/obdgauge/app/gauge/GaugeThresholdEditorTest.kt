@@ -69,7 +69,10 @@ class GaugeThresholdEditorTest {
         setDashboard()
         composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").assertDoesNotExist()
 
+        // OBD-67: long-press only enters rearrange mode now; the ⇄ badge is what opens the picker.
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("gauge-rearrange-swap-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").assertExists()
@@ -118,11 +121,14 @@ class GaugeThresholdEditorTest {
         composeTestRule.onNodeWithTag("gauge-coolant").assert(hasZone(ThresholdZone.GREEN))
     }
 
-    /** Long-press coolant to enter pick mode, then tap the gear to flip the focused card over. */
+    /**
+     * OBD-67: long-press enters rearrange mode, then the ⚙ badge opens the picker seeded straight
+     * to its flipped threshold face (no separate gear tap needed — that's the badge's whole point).
+     */
     private fun openEditor() {
         composeTestRule.onNodeWithTag("gauge-coolant").performTouchInput { longClick() }
         composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithTag("gauge-threshold-gear-coolant").performTouchInput { click() }
+        composeTestRule.onNodeWithTag("gauge-rearrange-threshold-coolant").performTouchInput { click() }
         composeTestRule.waitForIdle()
     }
 
@@ -132,12 +138,12 @@ class GaugeThresholdEditorTest {
             ObdGaugeTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
-                val gridLayout by viewModel.gridLayout.collectAsStateWithLifecycle()
+                val gridLayoutsByColumns by viewModel.gridLayoutsByColumns.collectAsStateWithLifecycle()
                 val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
                 GaugeDashboard(
                     uiState = uiState,
                     gaugeOrder = gaugeOrder,
-                    gridLayout = gridLayout,
+                    gridLayoutsByColumns = gridLayoutsByColumns,
                     thresholds = thresholds,
                     onSwapGauge = viewModel::swapGauge,
                     onSetThreshold = viewModel::setThreshold,
