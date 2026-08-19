@@ -69,21 +69,34 @@ so the two features don't fight; OBD-70 and OBD-69 may merge close together.
   flavor the source is `FakeVehicleDataSource`, so logging is fully testable without a van.
 - **`Reading` shape** (`core/model/.../Reading.kt:16`): `{ id, value: Double, timestamp: Instant,
   stale: Boolean }`. No unit/label — resolve those by `id` against `PidCatalog.byId(id)` at write time.
-  `Reading` is a frozen Phase-0 contract — do NOT add fields to it.
-- **Column set = "all mapped PIDs":** iterate `PidCatalog.definitions`
-  (`core/protocol/.../PidCatalog.kt:135` — standard 18 mode-01 PIDs + Mercedes mode-22 + trans KWP record
-  + computed `boost`). Column order fixed at session start and written to the header. A PID absent from the
-  readings map that tick → **blank cell** (documents unavailability, e.g. MAP on this van). Builder's
-  judgment (surface in review): optionally skip PIDs flagged unavailable via `PidCatalog.availabilityOf` /
-  `isVerified` to protect poll rate — but "log everything mapped" is the intent, so default to the full set.
+  `Reading` is a frozen Phase-0 contract — do NOT add fields to it. Resolve label/unit for a column by
+  joining `Reading.id` against the **injected `loggablePids`** (each is a `PidDefinition` with id/label/unit)
+  — NOT by calling `PidCatalog` (that's `:core:protocol`, off-limits in `main/`).
+- **Column set = "all mapped PIDs" — delivered via DI, NOT by importing `:core:protocol`.** ⚠️ **Module
+  boundary:** `:app` **main** source set may depend only on `:core:model` + `:core:testing`; it must NOT
+  import `com.revel.obdgauge.protocol.*` (the recorder lives in `main/`, so it can't touch `PidCatalog`).
+  The full mapped set is injected as a `loggablePids: List<PidDefinition>` (or a tiny `LoggablePidSet`
+  wrapper) provided **per flavor**, mirroring the existing flavor-split in `DisplayUnitDataSource`:
+  - `app/src/prod/.../di/` → `@Provides` returns **`PidCatalog.definitions`** (standard 18 mode-01 + Mercedes
+    mode-22 + trans KWP record + computed `boost`). This is the **one sanctioned `:core:protocol`
+    reference** — it lives in `app/src/prod/`, which already depends on `:core:protocol` and already uses
+    `PidCatalog.definitions` (`app/src/prod/.../datasource/DisplayUnitDataSource.kt:86`), so it is
+    path-owned by ui-agent and passes module-isolation. Explicitly authorized exception to the
+    "model+testing only" rule, scoped to this provider.
+  - `app/src/demo/.../di/` → `@Provides` returns the set `FakeVehicleDataSource` actually emits, so demo
+    logging produces a well-formed CSV (Roborazzi + manual demo testing without a van).
+  - The recorder (`main/`) `@Inject`s `loggablePids` and iterates it for both the CSV columns (id/label/unit)
+    and the poll-widening below. Column order fixed at session start, written to the header. A PID absent
+    from the readings map that tick → **blank cell** (documents unavailability, e.g. MAP on this van).
 - **Widen the poll set while recording:** today `DashboardViewModel` calls
-  `dataSource.start(GAUGE_CATALOG)` (6 channels) on subscribe. Recording must poll the full mapped set,
-  then revert. **Coordination hazard — there are now two callers of `start(pids)`** (the dashboard and the
-  recorder). Introduce a single source of truth for the active poll set (e.g. the service owns it and polls
-  the **union** of "dashboard request" ∪ "recording request", restoring `GAUGE_CATALOG` when recording
-  stops). Do NOT let the recorder's `start()` and the dashboard's `start()` clobber each other. Note: the
-  1 Hz CSV cadence is independent of poll rate — the ticker snapshots the latest known value regardless of
-  how fast each PID refreshes.
+  `dataSource.start(GAUGE_CATALOG)` (6 channels) on subscribe. While recording, poll the union
+  `GAUGE_CATALOG ∪ loggablePids`, then revert to `GAUGE_CATALOG` on stop — the app passes the injected
+  `PidDefinition`s straight to `start()` (no protocol ids constructed app-side). **Coordination hazard —
+  there are now two callers of `start(pids)`** (the dashboard and the recorder). Introduce a single source
+  of truth for the active poll set (the service owns it and polls the **union** of "dashboard request" ∪
+  "recording request", restoring `GAUGE_CATALOG` when recording stops). Do NOT let the recorder's `start()`
+  and the dashboard's `start()` clobber each other. Note: the 1 Hz CSV cadence is independent of poll rate —
+  the ticker snapshots the latest known value regardless of how fast each PID refreshes.
 - **The write loop:** a coroutine on an IO dispatcher with `delay(1000)`; each tick reads
   `readings.value`, builds one row `[ISO-8601 local timestamp, elapsed_ms, <value per column or blank>]`,
   appends via a buffered writer (flush periodically so a crash loses ≤ a second or two). Keep the
