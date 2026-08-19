@@ -56,7 +56,11 @@ fixed sweep, so each gauge needs a defined `scaleMin`/`scaleMax` (e.g. RPM 0–4
 boost −15–25 psi). Today only *thresholds* (yellow/red points) exist, not a full-scale range. This feature
 must add per-gauge scale bounds (seeded with researched defaults per channel, like the OBD-66 threshold
 seeds; ideally user-adjustable in the same editor). Flag this as the main new data model + the thing to get
-right — a wrong scale makes an analog gauge useless.
+right — a wrong scale makes an analog gauge useless. **Researched seed values are already filed:**
+`research/gauge-scale-ranges.md` (all 20 `PidCatalog.definitions` channels, scaleMin/max in display units
++ SI, tick intervals, sourced-vs-judgment basis). Note from that research: the **RPM redline is the one
+soft number** (no OM642 factory rev-limiter is publicly documented — 0–5000 is judgment; override from a
+real tach reading if one is captured).
 
 ## Open questions to resolve at scheduling (do not answer now)
 
