@@ -204,4 +204,81 @@ class ObdConnectionServiceTest {
         assertFalse(service.serviceScope.isActive)
         assertNull(service.controller)
     }
+
+    // OBD-69: the idle watchdog trips the existing stop path — foreground dropped, stopSelf, and
+    // (on the onDestroy that follows) the wake lock and keep-alive released. `now` is read relative
+    // to the tracker's current stamp so the demo fake's live emissions can't make the gap look
+    // short: whatever it last stamped, `stamp + past-the-timeout` is still idle.
+    @Test
+    fun `the idle watchdog stops the service and releases the wake lock and keep-alive`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val wakeLock = service.wakeLock
+        assertTrue(wakeLock!!.isHeld)
+        assertTrue(service.keepAlive.active.value)
+
+        val pastTheTimeout = service.idleTracker.lastDataAtMillis + IDLE_MILLIS_WELL_PAST_TIMEOUT
+        val stopped = service.checkIdleAndMaybeStop(pastTheTimeout)
+
+        assertTrue(stopped)
+        assertTrue(shadowOf(service).isStoppedBySelf)
+        assertTrue(shadowOf(service).isForegroundStopped)
+        // The wake lock and keep-alive release on the onDestroy the stopSelf reaches, not before.
+        assertTrue(wakeLock.isHeld)
+
+        controller.destroy()
+
+        assertFalse(wakeLock.isHeld)
+        assertFalse(service.keepAlive.active.value)
+    }
+
+    // OBD-69: a sample within the timeout keeps the service running. `stamp + 1` is inside any
+    // sane timeout, so even if the demo fake stamps again between the read and the check, the gap
+    // stays sub-timeout and the service is not stopped.
+    @Test
+    fun `a recent data sample keeps the service running`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+
+        val justAfterLastData = service.idleTracker.lastDataAtMillis + 1
+        val stopped = service.checkIdleAndMaybeStop(justAfterLastData)
+
+        assertFalse(stopped)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        controller.destroy()
+    }
+
+    // OBD-69 round-1 blocker: a data sample must REFRESH (re-hold) the wake lock, so its 25-min
+    // timeout lapses ~25 min after data stops rather than 25 min after service start — otherwise a
+    // live screen-off drive > 25 min loses the CPU and the poll loop stalls. Exercises the real
+    // production `refreshWakeLock` (the same function onCreate wires into the readings collector).
+    //
+    // Round-2 tightening: the refresh runs WHILE THE LOCK IS ALREADY HELD (the real mid-drive
+    // case — onCreate already acquired it), and then a SINGLE onDestroy release() must clear it. On
+    // the non-reference-counted lock `acquireWakeLock` sets up, that second acquire only resets the
+    // timeout, so one release clears it and this passes. If someone flipped it to
+    // `setReferenceCounted(true)`, the two acquires would stack a count a lone release couldn't
+    // clear — the lock would stay held, `assertFalse` would fail, and the silent wake-lock leak
+    // this feature exists to prevent would be caught. (Robolectric's ShadowWakeLock models the
+    // reference count, so this genuinely discriminates the two — verified by flipping the flag.)
+    @Test
+    fun `refreshing an already-held wake lock does not stack a ref count - one release clears it`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val lock = service.wakeLock!!
+        assertTrue(lock.isHeld)
+
+        refreshWakeLock(service.wakeLock)
+        assertTrue(lock.isHeld)
+
+        controller.destroy()
+
+        assertFalse(lock.isHeld)
+    }
+
+    private companion object {
+        // Comfortably past the 20-min IDLE_TIMEOUT_MILLIS (file-private to ObdConnectionService).
+        const val IDLE_MILLIS_WELL_PAST_TIMEOUT = 25L * 60 * 1000
+    }
 }

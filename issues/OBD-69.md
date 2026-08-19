@@ -4,7 +4,7 @@ title: Idle battery-saver — stop the connection service after 20 min of no don
 module: app
 owner: ui-agent
 sprint: reliability
-status: open
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []
@@ -93,6 +93,22 @@ and the CPU free to Doze costs nothing.
 Gate green; the idle-decision + service-stop path is unit- and Robolectric-tested; the 12 h wake-lock
 timeout is reduced to a ~25 min backstop; and **Taras confirms on the Garmin overnight that the drain is
 gone and reopening reconnects** (`hardware-verify: true` — never auto-closed).
+
+## Hardware checklist
+
+Device-verified by Taras on the Garmin Overlander (API 23) over a real drive, 2026-08-18. **PASS.**
+
+- [x] **Drain fix works** — after the drive the battery-saver behaves correctly; the service stops itself
+  when data stops, so the overnight CPU-held drain is gone (the reported symptom no longer reproduces).
+- [x] **Reconnect on engine restart** — shutting the engine off and restarting it within a session
+  reconnects the app to the dongle within a few minutes, unattended.
+- [x] **Live drive not stalled** — gauges kept updating on the drive; the wake-lock-refresh fix (round-1
+  blocker) held — no mid-drive freeze from the 25-min backstop.
+
+**Known follow-up (not a blocker for this merge → tracked as OBD-71):** after sitting *overnight*, the app
+does not auto-reconnect on the next engine start — it has to be quit and relaunched once, after which it
+reconnects normally. Within-session engine off/on is fine; only the overnight-cold case needs the manual
+restart. Deferred by Taras to a separate fix.
 
 ## Out of scope (v1)
 

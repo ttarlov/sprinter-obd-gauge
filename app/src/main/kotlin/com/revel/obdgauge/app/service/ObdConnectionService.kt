@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -23,6 +24,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Optional
 import javax.inject.Inject
@@ -113,6 +116,13 @@ class ObdConnectionService : Service() {
     internal var controller: ConnectionServiceController? = null
     internal var wakeLock: PowerManager.WakeLock? = null
 
+    /**
+     * OBD-69: last time the dongle produced a data sample; the idle watchdog stops the service when
+     * it ages past [IDLE_TIMEOUT_MILLIS]. `internal` so `ObdConnectionServiceTest` can drive
+     * [checkIdleAndMaybeStop] deterministically without waiting on the coarse watchdog interval.
+     */
+    internal val idleTracker = IdleActivityTracker()
+
     private var lastPosted: ServiceNotificationState? = null
 
     override fun onCreate() {
@@ -139,6 +149,16 @@ class ObdConnectionService : Service() {
                 keepAlive = keepAlive,
                 onStateChanged = ::postNotification,
             ).also { it.start() }
+        // OBD-69: arm the idle watchdog. Count from now, so a session that never sees a single
+        // sample (app open, vehicle off, dongle unreachable) still trips the timeout from start.
+        // (This explicit stamp and launchDataIdleReset's first collected stamp are both ~now and
+        // race harmlessly — @Volatile + latest-value semantics; see round-1 review nit.)
+        idleTracker.record(SystemClock.elapsedRealtime())
+        // The refresh lambda re-holds the wake lock on each data sample: the 25-min timeout then
+        // lapses ~25 min after data STOPS, not 25 min after service start, so a live screen-off
+        // drive keeps the CPU awake indefinitely (round-1 blocker). See [refreshWakeLock].
+        launchDataIdleReset(serviceScope, dataSource, idleTracker) { refreshWakeLock(wakeLock) }
+        launchIdleWatchdog(serviceScope, SystemClock::elapsedRealtime, ::checkIdleAndMaybeStop)
     }
 
     /** B5: an explicit Stop-action tap ends the session; every other start (including a bare
@@ -194,6 +214,26 @@ class ObdConnectionService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * OBD-69: the watchdog's one decision-and-act step, `internal` as the direct test seam (see
+     * [idleTracker]). The timing itself is the pure [shouldStopForIdle]; this only wires its `true`
+     * to the stop path. Stopping reuses the user-stop teardown deliberately: [disconnectLinkOnUserStop]
+     * disarms `:core:ble`'s never-give-up reconnect (or it would keep scanning the missing dongle all
+     * night), `stopForeground` drops the notification, and `stopSelf()` reaches [onDestroy] to release
+     * the wake lock and the poll loop. Reopening the app reconnects via
+     * `MainActivity.connectIfRemembered` — the resume path; auto-resume is out of scope (OBD-69).
+     *
+     * @return `true` if the service is now stopping (idle); `false` if it should keep running. The
+     *   watchdog coroutine breaks its loop on `true` so the stop fires exactly once.
+     */
+    internal fun checkIdleAndMaybeStop(nowMillis: Long): Boolean {
+        if (!shouldStopForIdle(idleTracker.lastDataAtMillis, nowMillis, IDLE_TIMEOUT_MILLIS)) return false
+        disconnectLinkOnUserStop()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        return true
+    }
+
     private fun postNotification(state: ServiceNotificationState) {
         // B7: one-line last-state guard — without it every reading tick re-posts the identical
         // text (measured: 22 posts / 3 distinct texts, ~14,400 binder round-trips/hour at 2Hz).
@@ -202,20 +242,20 @@ class ObdConnectionService : Service() {
         // stuck on whatever `lastPosted` was set to while ungranted. The decision itself is
         // extracted to `shouldPostNotification` (this file, top level) so it's directly testable
         // without Robolectric — see `PostNotificationDedupeTest`.
-        if (!areNotificationsSafeToPost()) return
+        //
+        // [NotificationManagerCompat.notify] on API 33+ requires the POST_NOTIFICATIONS runtime
+        // grant (declared in the manifest, but not auto-granted) — checking `areNotificationsEnabled`
+        // first turns a missing grant into "notification silently doesn't update," never a
+        // `SecurityException` crash. The service (and the poll loop it keeps alive) is unaffected
+        // either way; only the visible notification depends on it. B6: `MainActivity` requests this
+        // permission on first launch. (Inlined for OBD-69 to keep the class under detekt's
+        // TooManyFunctions bar when the idle watchdog added its own method.)
+        val notifications = NotificationManagerCompat.from(this)
+        if (!notifications.areNotificationsEnabled()) return
         if (!shouldPostNotification(state, lastPosted)) return
         lastPosted = state
-        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(state))
+        notifications.notify(NOTIFICATION_ID, buildNotification(state))
     }
-
-    /**
-     * [NotificationManagerCompat.notify] on API 33+ requires the POST_NOTIFICATIONS runtime
-     * grant (declared in the manifest, but not auto-granted) — checking first turns a missing
-     * grant into "notification silently doesn't update," never a `SecurityException` crash. The
-     * service (and the poll loop it keeps alive) is unaffected either way; only the visible
-     * notification depends on this. B6: `MainActivity` requests this permission on first launch.
-     */
-    private fun areNotificationsSafeToPost(): Boolean = NotificationManagerCompat.from(this).areNotificationsEnabled()
 
     private fun buildNotification(state: ServiceNotificationState): Notification =
         NotificationCompat
@@ -265,10 +305,21 @@ private const val REQUEST_CODE_CONTENT = 0
 private const val REQUEST_CODE_STOP = 1
 private const val WAKE_LOCK_TAG = "ObdGauge:ConnectionPoll"
 
-// Safety-net only (ObdConnectionService's KDoc) — 12h covers any plausible single drive/session
-// with generous headroom without tripping Android lint's WakelockTimeout warning for an untimed
-// indefinite acquire().
-private const val WAKE_LOCK_TIMEOUT_MILLIS = 12 * 60 * 60 * 1000L
+// OBD-69: stop the service after this long with no data sample from the dongle, releasing the wake
+// lock so a phone/tablet left running with the vehicle off can Doze instead of holding the CPU
+// awake all night. Named constant now; a user-facing setting is out of scope for v1 (the seam is
+// here). Read by ObdConnectionService.checkIdleAndMaybeStop.
+private const val IDLE_TIMEOUT_MILLIS = 20 * 60 * 1000L
+
+// OBD-69: how often the watchdog coroutine checks the idle timeout. Coarse on purpose — the
+// decision only needs ~minute resolution and each wake is cheap.
+private const val WATCHDOG_INTERVAL_MILLIS = 60 * 1000L
+
+// OBD-69: dropped from 12h to a ~25-min backstop, just above IDLE_TIMEOUT_MILLIS. The idle
+// watchdog is the primary release; this only bounds a watchdog that somehow never ran, so even a
+// bug there cannot hold the CPU awake all night. Still timed (not indefinite), so Android lint's
+// WakelockTimeout check stays satisfied.
+private const val WAKE_LOCK_TIMEOUT_MILLIS = 25 * 60 * 1000L
 
 private fun buildContentPendingIntent(context: Context): PendingIntent =
     PendingIntent.getActivity(
@@ -297,6 +348,71 @@ private fun acquireWakeLock(context: Context): PowerManager.WakeLock? {
 
 private fun releaseWakeLock(wakeLock: PowerManager.WakeLock?) {
     wakeLock?.let { lock -> if (lock.isHeld) lock.release() }
+}
+
+/**
+ * OBD-69: re-acquire (reset the timeout on) the held wake lock. [acquireWakeLock] makes it
+ * non-reference-counted, so a repeated `acquire(timeout)` on an already-held lock only *resets*
+ * its auto-release timer — there is no ref count to balance, and [onDestroy]'s single
+ * [releaseWakeLock] still fully clears it however many times this ran. Called on each data sample
+ * (round-1 blocker fix), so the [WAKE_LOCK_TIMEOUT_MILLIS] backstop lapses ~25 min after data
+ * *stops* rather than 25 min after service start — a live screen-off drive stays awake indefinitely
+ * (this file's Doze KDoc / OBD-24), while an idle session's lock still lapses as the safety net.
+ * A `null` lock (post-[onDestroy]) is a no-op, so a data emission racing teardown cannot re-hold a
+ * cleared lock; even if one did, the timeout self-releases it.
+ */
+internal fun refreshWakeLock(wakeLock: PowerManager.WakeLock?) {
+    wakeLock?.acquire(WAKE_LOCK_TIMEOUT_MILLIS)
+}
+
+/**
+ * OBD-69: drives the idle signal off [VehicleDataSource.readings]. Collecting `readings` alone (not
+ * the combined connection flow) is deliberate: connection-state churn while the dongle is
+ * unreachable (`Scanning → Error → Disconnected`, forever, per `ReconnectPolicy`) must NOT keep the
+ * timer alive; only actual data may. Each emission is applied by [applyReadingsToIdleSignal], which
+ * stamps [tracker] and calls [refresh] only on a non-empty map — an empty map (session start/clear,
+ * or a never-connected forced-stale publish) is not data.
+ *
+ * That a *connected-but-flatlined* dongle still idles out rests on `StateFlow`'s distinct-until-
+ * changed: `RealVehicleDataSource` republishes the whole map every cycle, but once all readings
+ * have gone stale and stopped changing the map compares equal, the collector stops receiving, and
+ * the stamp ages. If a future `publish` varied a field each cycle (e.g. a per-publish timestamp) a
+ * parked-but-alive loop would stamp forever — stamp on a monotonic sample count instead if so.
+ *
+ * Top-level (not a method) to keep the service under detekt's TooManyFunctions bar; the non-empty
+ * guard itself lives in [applyReadingsToIdleSignal] so it is unit-tested directly.
+ */
+private fun launchDataIdleReset(
+    scope: CoroutineScope,
+    dataSource: VehicleDataSource,
+    tracker: IdleActivityTracker,
+    refresh: () -> Unit,
+) {
+    scope.launch {
+        dataSource.readings.collect { readings ->
+            applyReadingsToIdleSignal(readings, SystemClock.elapsedRealtime(), tracker, refresh)
+        }
+    }
+}
+
+/**
+ * OBD-69: the watchdog coroutine — a coarse ([WATCHDOG_INTERVAL_MILLIS]) loop that calls
+ * [checkAndMaybeStop] and stops looping once it fires, so the stop happens exactly once. Launched
+ * on the service scope, so it is cancelled with the service and can never outlive it or leak.
+ * `now` is a seam (production passes `SystemClock::elapsedRealtime`); the timing decision itself is
+ * the pure [shouldStopForIdle].
+ */
+private fun launchIdleWatchdog(
+    scope: CoroutineScope,
+    now: () -> Long,
+    checkAndMaybeStop: (Long) -> Boolean,
+) {
+    scope.launch {
+        while (isActive) {
+            delay(WATCHDOG_INTERVAL_MILLIS)
+            if (checkAndMaybeStop(now())) break
+        }
+    }
 }
 
 /**
