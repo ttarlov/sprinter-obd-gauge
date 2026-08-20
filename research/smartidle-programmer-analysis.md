@@ -1,8 +1,28 @@
-# Research: Mid-City Engineering "SmartIdle" OBD Programmer (907OBDSM / 907OBDSMRT)
+# Research: Mid-City Engineering "SmartIdle" OBD Programmer (907OBDSMRT)
 
 **Scope:** Desk research only. No vehicle was touched, no code changed. Product analyzed: Mid-City Engineering's SmartIdle OBD programmer for 2019+ Mercedes-Benz/Freightliner Sprinter W907 vans, plus the parallel SmartIdle product for the older W906/NCV3 platform, in order to assess relevance to our project van (2014-era NCV3/W906, OM642 3.0L V6 diesel).
 
 **Our app's charter for reference:** read-only — standard mode-01 PIDs and mode-22 reads at header 7E0, no security access, no writes, no coding. Everything below is evaluated against that line.
+
+## Product identification (verified)
+
+The brief's starting URL (nomadicsupply.com, part number "907OBDSM") 404'd. Re-found the product by name/SKU search — the correct part number is **907OBDSMRT**, and the live listing is [nomadicsupply.com/mid-city-smartidle-obd-programmer-w907-for-2019-mercedes-sprinter-vans-907obdsmrt](https://nomadicsupply.com/mid-city-smartidle-obd-programmer-w907-for-2019-mercedes-sprinter-vans-907obdsmrt/) — content confirmed and matches the vendor's own product family (Mid-City sells a whole line of these single-purpose OBD programmers: mirror-fold, alarm-disable, J51, Distronic-correction, all same pattern).
+
+Vendor's real official site is **midcityengineering.com** (confirmed via multiple independent search hits and their Dozuki documentation subdomain) — **mid-city.com does not appear to be Mid-City Engineering's domain**; no product or company content resolved there in search. Use midcityengineering.com and its dozuki.com docs subdomain as the canonical vendor sources.
+
+**Confirmed SKU family, by platform generation** (from midcityengineering.com shop/product listings, cross-checked via search):
+
+| SKU | Product | Platform |
+|---|---|---|
+| `907OBDSMRT` | SmartIdle OBD Programmer (the coding/unlock dongle) | W907, 2019+ |
+| `907SMRT-V4` | Smart Idle Control Module | W907, 2019-2024 |
+| `907SMRT-G4I` | Smart Idle Control Module | W907, 2025-2026 |
+| `907SMRTPSM` | SmartIdle **Stand-Alone** High Idle, with PSM/gateway harness | W907 (vans already equipped with factory PSM) |
+| `SMRTIDLE` | SmartIdle **Stand-Alone** High Idle | **W906/NCV3, 2014-2018 — our van's generation** |
+| `SKSNG906RV` | SmartKey Starter Remote Start & High Idle | W906/NCV3 |
+| `SKS906-SMRT-B` | SmartKey Starter Remote/Auto Start & High Idle | 2010-2013 Sprinter (NCV3, earlier still) |
+
+This resolves the "which variant, does an NCV3 one exist" question directly: **yes**, and it's meaningfully differently *named* than the W907 unlock tool — see the updated §4 below.
 
 ---
 
@@ -61,10 +81,11 @@ This means the *unlock itself* is categorically outside a read-only charter. The
 
 ## 4. Transferability to our van (2014-era NCV3/W906, OM642)
 
-**Short answer: the feature exists on our platform generation too, and Mid-City sells a dedicated product for it — but the mechanism looks different (and importantly, may NOT require an OBD-port coding write the same way).**
+**Short answer: the feature exists on our platform generation too, and Mid-City sells a dedicated product for it — and the product's own naming/SKU structure indicates the mechanism is different from the W907 OBD-coding tool.**
 
-- Sourced: Mid-City publishes a distinct "Smart Idle® for Sprinter 2014-2018 (906)" product and a "SMRTIDLE W906 Sprinter High Idle User's Manual," confirming the 2014-2018 NCV3/W906 generation is directly supported. ([Mid-City W906 product](https://www.midcityengineering.com/product/sprinter-smart-idle/); [W906 manual](https://midcityengineering.dozuki.com/Wiki/W906_SmartIdle_Users_Manual))
-- Sourced from that W906 manual: activation is via the cruise-control stalk (stalk up = idle up, stalk down = idle down) — same UX pattern as the W907 product. The manual excerpt I could retrieve did **not** describe an OBD-programmer coding step the way the W907 docs explicitly do; it describes the unit as "a standalone high idle control unit" and points to a separate PDF for wiring/install detail I could not fetch. This is a **gap, not a confirmed negative** — I could not positively confirm whether the W906 kit requires SAM coding via OBD or is a pure signal-injection/standalone harness. Marked **low confidence / needs a primary-source install PDF** to resolve.
+- Sourced: Mid-City publishes a distinct "Smart Idle® for Sprinter 2014-2018 (906)" product line and a "SMRTIDLE W906 Sprinter High Idle User's Manual," confirming the 2014-2018 NCV3/W906 generation — our van's generation — is directly supported. ([Mid-City W906 product](https://www.midcityengineering.com/product/sprinter-smart-idle/); [W906 manual](https://midcityengineering.dozuki.com/Wiki/W906_SmartIdle_Users_Manual); [W906 shop listing](https://www.midcityengineering.com/shop/smrtidle-smartidle-stand-alone-high-idle-for-w906-sprinter-9815))
+- **Naming signal (sourced, and it matters):** the W906 product's official name is **"SmartIdle® Stand Alone High Idle for W906 Sprinter"** (SKU `SMRTIDLE`) — Mid-City's own catalog puts it in the same "Stand-Alone" naming family as `907SMRTPSM` ("SmartIdle Stand-Alone High Idle... with PSM/gateway harness"), which is explicitly a *wired module*, not an *OBD programmer*. Mid-City draws a clear product-line distinction elsewhere between "OBD Programmer" SKUs (`907OBDSMRT` — the coding/unlock tool) and "Stand-Alone" SKUs (`SMRTIDLE`, `907SMRTPSM` — control modules that wire into existing signals). This is the vendor's own taxonomy, not my inference: **there is no `906OBDSMRT`-style OBD-programmer SKU in their catalog for the older platform** — only the Stand-Alone module and the remote-start-bundled variants (`SKSNG906RV`, `SKS906-SMRT-B`, the latter reaching back to 2010-2013 Sprinters).
+- Sourced from the W906 manual: activation is via the cruise-control stalk (stalk up = idle up, stalk down = idle down) — same runtime UX as the W907 product. The manual describes the unit as "a standalone high idle control unit" and points to a separate wiring/install PDF I could not fetch (midcityengineering.com blocked WebFetch with 403 on several pages) — so I still can't quote exact splice points. But combined with the naming evidence above, this raises my confidence from the earlier draft: **the W906 kit most likely does NOT require the OBD-port UDS coding write** that the W907 tool performs — it more likely operates by wiring directly into the stalk/parking-brake signal path and, on vans without a factory PSM harness, either taps the CAN B SAM signals passively or splices in-line, without a security-access-gated coding event. **Raised from low to medium confidence** based on the vendor's own product-line naming; still short of a primary-source wiring diagram, which is the one thing that would make this a hard fact rather than a well-supported inference.
 - Sourced (Mercedes upfitter documentation, platform-agnostic on the PSM concept): the factory route to high idle is the optional **PSM (Parameterizable Special Module)**, a body-builder-oriented "approved gateway into the vehicle's electronics," accessed via a harness under the driver's seat, present on both platform generations as an ordering option — not exclusive to the W907. ([mbvans.com PSM tech-info](https://www.mbvans.com/en/upfitter/tech-info/psm-info); [PSM bulletin](https://www.mbvans.com/content/dam/mb-vans/us/upfitter/bulletins/my19/sprinter-psm.pdf))
 - Sourced (forum): a Metris-forum thread titled "High Idle Control without Parametric Special Module" indicates this is a known pain point across the Sprinter/Metris family — vans that didn't come from the factory with the PSM option need some other route (aftermarket module, or coding) to get high idle, which is exactly the market Mid-City's OBD-programmer products are selling into. I could not fully read the thread content (redirect blocked full retrieval), so I can't cite specifics from it beyond the title/topic — **flag as directionally supportive, not a hard source**.
 - Sourced (forum): a Sprinter-Source thread search turned up the factory option codes **M53** (fixed high idle) and **MT4** (adjustable high idle) as the underlying Mercedes factory feature — these are generation-spanning Mercedes ordering codes, not W907-specific, which supports that the *feature* is not new to the 907 platform; only the specific gateway/security-access mechanics (EZS167 vs. the older BCMFA2-gated approach the DTS Monaco writeup mentions for "older vans") differ by generation. ([Sprinter-Source search](https://sprinter-source.com/forums/index.php?threads%2F48840%2F=); [VXDIAG blog, BCMFA2 mention](https://vxdiagshop.blogspot.com/2024/03/sprinter-w907-vs30-coding-using-vxdiag.html))
@@ -92,7 +113,7 @@ If Taras ever wants to pursue this for the van itself (separately from the app),
 | What does SmartIdle unlock? | Factory-grade "high idle" — elevated, adjustable park-idle RPM for accessory power, same feature Mercedes sells as PSM/M53/MT4. |
 | Read or write? | **Write.** Persistent UDS coding change to the SAM module, gated by security access (0x27-class), VIN-locked per device. Not a live/transient command. |
 | Gateway involved? | Yes on W907 — sourced evidence of an EZS167-gated security scheme (general Mercedes coding workflow, not confirmed for this exact dongle). Older platform uses a different, less locked, gate. |
-| Transfers to our OM642/NCV3? | The **feature** transfers — Mid-City sells a W906-specific product and Mercedes' factory PSM/M53/MT4 options predate the W907. The **exact mechanism** for the W906 kit is not fully confirmed (may or may not require OBD/SAM coding the same way; primary install PDF was unreachable). |
+| Transfers to our OM642/NCV3? | The **feature** transfers — Mid-City sells a W906-specific "Stand-Alone" product (`SMRTIDLE`) and Mercedes' factory PSM/M53/MT4 options predate the W907. Vendor's own naming/SKU taxonomy (Stand-Alone vs. OBD Programmer) suggests the W906 kit likely does **not** require the same UDS coding write the W907 tool does — medium confidence, no OBD-programmer SKU exists for this platform in their catalog. Exact wiring not confirmed (install PDF unreachable). |
 | In-charter for our app? | **No.** Any version of this requires security access + a coding write, which is explicitly excluded by our read-only charter. This is a vehicle-level, human decision (with bricking/warranty/safety risk), not something the OBD gauge app should implement. |
 
 ---
@@ -104,6 +125,10 @@ If Taras ever wants to pursue this for the van itself (separately from the app),
 - [Mid-City Engineering Dozuki — 907SMRT-V2 and 907SMRT-V3 Installation Instructions](https://midcityengineering.dozuki.com/Guide/907SMRT-V2++and+907SMRT-V3+Installation+Instructions+-+2019+2020+2021+2022+2023+2024+Sprinter+(907)/27)
 - [Mid-City Engineering Dozuki — SMRTIDLE W906 Sprinter High Idle User's Manual](https://midcityengineering.dozuki.com/Wiki/W906_SmartIdle_Users_Manual)
 - [Mid-City Engineering — Smart Idle for Sprinter 2014-2018 (906) product page](https://www.midcityengineering.com/product/sprinter-smart-idle/)
+- [Mid-City Engineering — SMRTIDLE (Stand-Alone High Idle for W906 Sprinter) shop listing](https://www.midcityengineering.com/shop/smrtidle-smartidle-stand-alone-high-idle-for-w906-sprinter-9815)
+- [Mid-City Engineering — 907SMRTPSM (SmartIdle Stand-Alone High Idle w/ PSM gateway harness) shop listing](https://www.midcityengineering.com/shop/907smrtpsm-smartidle-stand-alone-high-idle-for-mercedes-benz-freightliner-sprinter-with-psm-gateway-harness-9166)
+- [Mid-City Engineering — SmartKey Starter Remote Start & High Idle for W906 Sprinter (SKSNG906RV) shop listing](https://www.midcityengineering.com/shop/sksng906rv-sksng906rv-smartkey-starter-remote-start-and-high-idle-for-w906-sprinter-9787)
+- [Mid-City Engineering — SmartKey Starter Remote/Auto Start & High Idle for 2010-2013 Sprinter (SKS906-SMRT-B) product page](https://www.midcityengineering.com/product/smartkey-starter-remote-start-high-idle-for-2014-2018-sprinter-sks906-smrt-b/)
 - [VXDIAG shop blog — Sprinter W907 VS30 Coding using VXDIAG VCX SE Benz DTS Monaco](https://vxdiagshop.blogspot.com/2024/03/sprinter-w907-vs30-coding-using-vxdiag.html)
 - [Mercedes-Benz Vans Upfitter Portal — PSM Tech Info](https://www.mbvans.com/en/upfitter/tech-info/psm-info)
 - [Mercedes-Benz Vans — Sprinter MY19+ Parameterizable Special Module (ED5) Technical Bulletin UM907/02 (PDF)](https://www.mbvans.com/content/dam/mb-vans/us/upfitter/bulletins/my19/sprinter-psm.pdf)
