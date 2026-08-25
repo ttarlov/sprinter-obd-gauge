@@ -102,6 +102,44 @@ down INCLUDING the BLE link); make **Connect force a fresh teardown+reconnect** 
 **Note:** OBD-74 (quit-on-disconnect prompt) does NOT fix this — the drain is backgrounded/overnight, so a
 foreground countdown no one sees can't help. This (OBD-71) is the actual drain fix.
 
+## Update 2026-08-24 — DEVICE REPRO (Pixel API 34, adb): OBD-69 WORKS here; the stale-Ready/trickle hypotheses were WRONG
+
+Ran the park repro (Pixel connected to the van dongle, key ON→OFF, ~24 min `adb logcat` + `dumpsys power` +
+service snapshots). Result **contradicts the hypotheses above** — recorded honestly:
+
+- Data stopped ~35 s after key-off; the app sat in stale-`Ready` showing frozen values for ~20 min (real,
+  but BOUNDED, not forever).
+- **OBD-69's watchdog FIRED at exactly 20 min** (22:06:38, = last-data 21:46:38 + 20:00): log shows
+  `ObdBle: auto-reconnect disarmed: user disconnected` (the idle-stop path) + `ObdTraffic: == Disconnected`
+  + GATT `GATT_CONN_TERMINATE_LOCAL_HOST` + **wake lock RELEASED** + **service records = 0**. Clean teardown.
+- So the wake lock did NOT stay held forever, the poll loop did NOT spin forever, and Connect-wedge was not
+  reached (didn't tap it this round). **OBD-69 does its job for the "dongle goes quiet after key-off" case.**
+- ⚠️ This means **we did NOT reproduce the overnight drain** in a 24-min window — it self-stopped at 20 min
+  as designed. The `BleObdLink.kt:427` stale-`Ready` reading + the "trickle defeats the watchdog" theory
+  were premature: the watchdog fired.
+
+**Leading hypothesis now (unconfirmed — needs a real overnight or a code check):** the true overnight drain
+comes from the engine **COOLING over hours**. As it cools, coolant/oil/trans temps drift DOWN and voltage
+sags continuously, so the dongle keeps delivering slowly-**changing** values. Each changed, non-empty
+`readings` emission re-stamps OBD-69's idle timer (`applyReadingsToIdleSignal` stamps on any non-empty
+distinct emission) → the "20 min of no data" condition is never met → watchdog never fires → drains all
+night. This bench repro didn't cool the engine, so the values went static/quiet, deduped by `StateFlow`,
+and the watchdog fired. **This is exactly the OBD-69 round-1-minor risk the reviewer flagged** (a per-cycle-
+varying field would stamp forever). Confirm by: (a) a real overnight capture, or (b) checking whether
+`Reading.timestamp` (receipt time, changes every poll) is in the dedup key — if the map changes every poll
+regardless of value, the watchdog is ALWAYS defeated on a live dongle, and this repro only fired because the
+dongle went fully silent.
+
+**Fix direction (strengthened, robust to both cases):** stop polling on **engine-OFF detected**, not on
+"no data" — RPM == 0 (or no engine-running signal) sustained for N minutes = parked = stop the service +
+release the wake lock + disconnect, *even though the ECU keeps answering.* RPM is 0 the moment the engine
+stops and stays 0, so it's immune to cooling-data trickle. Keep OBD-69's no-data watchdog as a secondary
+backstop. Still-open: the 10-min Connect wedge (untested this round); whether the Garmin behaves like the
+Pixel (Doze/wakelock differences).
+
+**Process note:** I told Taras the trickle-data theory before the 20-min mark; the log disproved it. Recorded
+here so the fix targets the real mechanism, not the guess.
+
 ## Out of scope
 
 - Full trip-detection / motion-based auto-start (a heavier feature; this is just the overnight-cold
