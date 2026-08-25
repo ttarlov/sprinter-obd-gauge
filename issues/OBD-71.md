@@ -140,6 +140,61 @@ Pixel (Doze/wakelock differences).
 **Process note:** I told Taras the trickle-data theory before the 20-min mark; the log disproved it. Recorded
 here so the fix targets the real mechanism, not the guess.
 
+## ROOT CAUSE CONFIRMED FROM CODE 2026-08-24 (agent trace) — and the fix
+
+**Confirmed: OBD-69's "20 min of no data" watchdog is defeated on any dongle that keeps answering polls.**
+The decisive chain (file:line):
+
+1. `Reading` is a `data class` with `timestamp` in its `equals` (`core/model/.../Reading.kt:16`) — same value,
+   different receipt time ⇒ not equal.
+2. Every SUCCESSFUL poll stamps a fresh `Instant.now(clock)`
+   (`RealVehicleDataSource.kt:258`, copied to the Reading at `:328`); `publish()` rebuilds the whole map each
+   cycle (`:209`).
+3. `mutableReadings.value = …` (`:353`) is a `StateFlow`, so it emits whenever the map changes — and it
+   changes **every cycle** because ≥1 Reading's timestamp advanced, *even if the numeric value never moved*.
+4. `launchDataIdleReset`'s collector runs `applyReadingsToIdleSignal` on every emission
+   (`ObdConnectionService.kt:470`), which stamps the idle tracker + re-acquires the wake lock on any
+   non-empty map (`IdleWatchdog.kt:21`). So **every successful poll resets the 20-min timer** → it never
+   reaches 20 min → watchdog never fires.
+5. The bench repro fired only because the dongle went **fully link-down** (`RawResult.Failed` →
+   `PollOutcome.LinkDown` → the poll loop `return`s and parks, `RealVehicleDataSource.kt:210`) ~35 s after
+   key-off — no more emissions, so the timer aged and it stopped at 20 min. **Overnight is different:** a
+   warm engine's ECU keeps answering temp/voltage PIDs for a long time as it cools (values even *drift*, so
+   a "value changed" check wouldn't help either) → the map keeps changing → watchdog stays defeated →
+   drains until the ECU finally sleeps.
+
+**The KDoc at `ObdConnectionService.kt:456-459` describes this EXACT failure mode** — but frames it as a
+hypothetical future risk. It is not hypothetical; it is the current mainline behavior on any live dongle.
+(This is the OBD-69 round-1-minor the reviewer flagged, now realized.)
+
+### The fix — gate on ENGINE-RUNNING (RPM), not "data received"
+
+RPM is already always in the poll set (`PidIds.RPM = "rpm"`, `core/model/.../PidIds.kt:25`;
+`GAUGE_CATALOG` includes `RPM_PID_DEFINITION`, `GaugeCatalog.kt:76`; `ActivePollSet.activePids()` unions it,
+`ActivePollSet.kt:51`). Change the idle-activity signal:
+
+- **Stamp the idle tracker only when the engine is RUNNING** — a fresh RPM reading with `value > 0` — instead
+  of on any non-empty readings emission. When the engine is OFF (RPM == 0, which it is the instant the engine
+  stops and stays), the timer ages and the watchdog stops the service + releases the wake lock + disconnects,
+  **regardless of the ECU still trickling data.** RPM==0 is immune to cooling-drift because it's not a
+  freshness signal, it's a state signal.
+- **Timeout can be shorter** than 20 min now (RPM==0 is an unambiguous "engine off," unlike "no data" which
+  needed 20 min to tolerate mid-drive BLE dropouts) — pick e.g. 5–10 min; a design knob.
+- **Edge cases:** (a) idle at a light = RPM ~600-800 > 0 → no false stop ✓; (b) RPM momentarily **absent**
+  (BLE dropout mid-drive, engine actually running) must NOT stop — distinguish "RPM present and 0" (engine
+  off → age) from "RPM absent" (link issue → keep OBD-69's existing no-data/link-down watchdog as the
+  backstop, don't stop mid-drive); (c) an active recording still inhibits the stop (OBD-70 seam, keep it).
+- Keep the wake-lock refresh + the existing no-data/link-down watchdog as a secondary backstop; this change
+  swaps the PRIMARY activity signal to RPM.
+
+Pure, unit-testable decision (mirror `IdleWatchdogTest`): given last-RPM>0 time, now, timeout → stop?
+Plus RPM-absent vs RPM==0 handling. Device-verify: a real overnight (or a warm-engine key-off) → service
+self-stops a few min after the engine's off even though the ECU keeps answering; and it must NOT stop
+mid-drive or at idle.
+
+**Still separate/open:** the 10-min Connect wedge Taras reported (untested in the repro) — may be the
+stale-`Ready` link; revisit after the drain fix. And confirm the fix on the **Garmin** specifically.
+
 ## Out of scope
 
 - Full trip-detection / motion-based auto-start (a heavier feature; this is just the overnight-cold
