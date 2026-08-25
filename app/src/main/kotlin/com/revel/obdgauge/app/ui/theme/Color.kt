@@ -37,6 +37,20 @@ val GaugeStaleDim = Color(0xFF6B7280)
 // the actual threshold color; the needle is just the pointer.
 val GaugeNeedleAccent = Color(0xFFE0824A)
 
+// OBD-73 "dumb mode": the classic warm emoji yellow the drawn faces are filled with. The face's
+// EXPRESSION carries the mood; the tile's own zone tint/pulse (sacred, above the style dispatch)
+// carries the green/amber/red — so the face colour stays constant and doesn't fight either.
+val GaugeFaceYellow = Color(0xFFF2C94C)
+val GaugeFaceInk = Color(0xFF2A2A2A)
+
+// OBD-73: sclera of boost's bug-eyes (white with a dark pupil, so the eyes read as they bulge).
+val GaugeFaceWhite = Color(0xFFF7F7F5)
+
+// OBD-73: a temp face flushes from GaugeFaceYellow toward this hot red as the reading climbs from
+// its caution band to danger, and sweats — [GaugeFaceSweat] beads (a cool watery blue-white).
+val GaugeFaceHot = Color(0xFFE8563A)
+val GaugeFaceSweat = Color(0xFFBFE3F5)
+
 // OBD-27: unverified-PID badge. Deliberately its own hue, not a reuse of GaugeAmber/GaugeRed —
 // this badge answers "is this number proven," an axis completely orthogonal to "is this value
 // normal" (the green/amber/red threshold vocabulary above). Reusing amber/red here would read

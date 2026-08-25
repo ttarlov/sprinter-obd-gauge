@@ -1384,6 +1384,8 @@ fun GaugeTile(
                 NeedleGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
             GaugeRenderStyle.BAR_ARC ->
                 BarArcGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+            GaugeRenderStyle.FACE ->
+                FaceGaugeBody(state, gaugeThresholds, modifier = Modifier.fillMaxSize())
         }
     }
 }
@@ -1474,6 +1476,9 @@ private fun BoostTile(
                 NeedleGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
             GaugeRenderStyle.BAR_ARC ->
                 BarArcGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+            // OBD-73: boost's FACE is the bug-eye EXCITEMENT face (eyes grow with boost), not the
+            // temperature mood face — boost is NEUTRAL, so there's no threshold band to emote off.
+            GaugeRenderStyle.FACE -> BoostFaceBody(state, scale, modifier = Modifier.fillMaxSize())
         }
     }
 }

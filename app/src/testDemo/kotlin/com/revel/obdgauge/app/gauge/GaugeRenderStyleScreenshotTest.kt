@@ -32,6 +32,12 @@ import java.time.Instant
  * covers that flow's interaction/structure) — these references are about the STYLE, not the path
  * to reach it.
  *
+ * OBD-73 added the third style, [GaugeRenderStyle.FACE] ("dumb mode"), in both its flavours: the
+ * temperature MOOD face on coolant and the bug-eye EXCITEMENT face on boost. Those references
+ * matter more than most — the faces are hand-drawn Canvas geometry precisely so they don't depend
+ * on a platform emoji font (the Garmin's Android 6 would render one as tofu), which means a
+ * pixel diff is the only thing that can catch the drawing itself regressing.
+ *
  * Same "captureRoboImage no-ops outside the dedicated Roborazzi tasks" note as
  * `DashboardScreenshotTest` applies here — see its KDoc.
  */
@@ -121,11 +127,78 @@ class GaugeRenderStyleScreenshotTest {
         captureCompact("gauge_bar_arc_compact_landscape.png", GaugeRenderStyle.BAR_ARC)
     }
 
+    // OBD-73 "dumb mode" (FACE): four coolant readings walking the whole mood + flush progression.
+    // The discrete expression (mouth/brows/tears) snaps at the threshold bands while the flush
+    // (yellow → hot red) and the sweat beads ramp CONTINUOUSLY off `faceHeat`, so these four are
+    // deliberately not just one-per-band: `cool` is below the ramp entirely (plain yellow, no
+    // bead), `warm` sits mid-ramp inside the green zone (concerned + flushed + one bead — the
+    // "visibly heating between mood changes" behavior that has no equivalent in the other styles),
+    // `hot` is amber (sad, two beads once past SWEAT_TWO_THRESHOLD) and `danger` is red (crying,
+    // full flush). Pulse stays off for the same stable-frame reason as the needle/bar-arc red refs.
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `face style, cool green zone, landscape`() {
+        capture("gauge_face_cool_landscape.png", GaugeRenderStyle.FACE, GREEN_COOLANT)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `face style, warm green zone, landscape`() {
+        capture("gauge_face_warm_landscape.png", GaugeRenderStyle.FACE, WARM_FACE_COOLANT)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `face style, hot amber zone, landscape`() {
+        capture("gauge_face_hot_landscape.png", GaugeRenderStyle.FACE, AMBER_COOLANT)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `face style, danger red zone, landscape`() {
+        capture("gauge_face_danger_landscape.png", GaugeRenderStyle.FACE, RED_COOLANT)
+    }
+
+    @Config(qualifiers = "w360dp-h640dp-port")
+    @Test
+    fun `face style, hot amber zone, portrait`() {
+        capture("gauge_face_hot_portrait.png", GaugeRenderStyle.FACE, AMBER_COOLANT)
+    }
+
+    // OBD-73: boost's FACE is the OTHER flavour — a NEUTRAL gauge has no band to emote off, so the
+    // eyes bug out (BOOST_EYE_SCALE_MIN→MAX) and the grin widens with the reading instead. These
+    // two bracket that ramp: idle cruise vs. a full-shove peak at BOOST_FACE_MAX_PSI.
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `boost face style, low boost, landscape`() {
+        captureBoostFace("gauge_face_boost_low_landscape.png", LOW_BOOST)
+    }
+
+    @Config(qualifiers = "w800dp-h360dp-land")
+    @Test
+    fun `boost face style, high boost, landscape`() {
+        captureBoostFace("gauge_face_boost_high_landscape.png", HIGH_BOOST)
+    }
+
     private fun capture(
         fileName: String,
         style: GaugeRenderStyle,
         coolantValue: Double,
         stale: Boolean = false,
+    ) = captureDash(fileName, mapOf(PidIds.COOLANT to style), coolantValue, SAFE_BOOST, stale)
+
+    /** The boost tile itself is the subject here, so the temp gauges keep their default style. */
+    private fun captureBoostFace(
+        fileName: String,
+        boostValue: Double,
+    ) = captureDash(fileName, mapOf(PidIds.BOOST to GaugeRenderStyle.FACE), GREEN_COOLANT, boostValue, stale = false)
+
+    private fun captureDash(
+        fileName: String,
+        styles: Map<String, GaugeRenderStyle>,
+        coolantValue: Double,
+        boostValue: Double,
+        stale: Boolean,
     ) {
         val now = Instant.EPOCH
         val readings =
@@ -133,13 +206,13 @@ class GaugeRenderStyleScreenshotTest {
                 PidIds.COOLANT to Reading(PidIds.COOLANT, coolantValue, now, stale = stale),
                 PidIds.TRANS_TEMP to Reading(PidIds.TRANS_TEMP, SAFE_TRANS, now, stale = false),
                 PidIds.OIL_TEMP to Reading(PidIds.OIL_TEMP, SAFE_OIL, now, stale = false),
-                PidIds.BOOST to Reading(PidIds.BOOST, SAFE_BOOST, now, stale = false),
+                PidIds.BOOST to Reading(PidIds.BOOST, boostValue, now, stale = false),
             )
         composeTestRule.setContent {
             ObdGaugeTheme {
                 GaugeDashboard(
                     toDashboardUiState(readings, LinkState.Ready, now),
-                    renderStyles = mapOf(PidIds.COOLANT to style),
+                    renderStyles = styles,
                     dangerPulseEnabled = false,
                 )
             }
@@ -200,5 +273,18 @@ class GaugeRenderStyleScreenshotTest {
         const val SAFE_TRANS = 180.0
         const val SAFE_OIL = 200.0
         const val SAFE_BOOST = 8.0
+
+        // OBD-73 face fixtures, positioned on `faceHeat`'s ramp (coolant: 0 at 205 °F → 1 at 225).
+        // 212 is ~0.35 of the way up: still GREEN (so the mood is "concerned", not "sad") but
+        // already flushed and sweating one bead — the mid-ramp state the four references exist to
+        // capture. GREEN_COOLANT (180) is below the ramp entirely; AMBER_COOLANT (220) is 0.75
+        // in, past SWEAT_TWO_THRESHOLD, so it wears the second bead; RED_COOLANT (230) is a full
+        // flush + tears.
+        const val WARM_FACE_COOLANT = 212.0
+
+        // Brackets of the boost face's own eye ramp: idle cruise vs. BOOST_FACE_MAX_PSI (18 psi),
+        // where the eyes reach BOOST_EYE_SCALE_MAX and stop growing.
+        const val LOW_BOOST = 2.0
+        const val HIGH_BOOST = 18.0
     }
 }

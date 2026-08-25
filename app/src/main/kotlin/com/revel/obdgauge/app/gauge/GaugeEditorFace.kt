@@ -42,6 +42,7 @@ import com.revel.obdgauge.app.ui.theme.GaugeRed
 import com.revel.obdgauge.app.ui.theme.GaugeValueTextStyle
 import com.revel.obdgauge.app.ui.theme.ThresholdSelectBlue
 import com.revel.obdgauge.model.MeasurementUnit
+import com.revel.obdgauge.model.PidIds
 
 // OBD-66/72: the gauge editor's controls — split out of GaugePicker.kt (own file, so that
 // file stays under detekt's per-file function-count limit; a cohesive unit of its own, same
@@ -227,6 +228,9 @@ internal fun EditorControls(
     modifier: Modifier = Modifier,
 ) {
     val scale = layout.scale
+    // OBD-73: the FACE chip is offered only where it means something — a threshold-coded gauge
+    // (mood face) or boost (bug-eye excitement face). Hoisted so both arrangements below agree.
+    val showFace = hasThresholds || id == PidIds.BOOST
     if (layout.twoColumn && hasThresholds) {
         Row(
             modifier = modifier,
@@ -234,7 +238,7 @@ internal fun EditorControls(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             EditorSection("STYLE", layout.showCaptions, scale, Modifier.weight(1f)) {
-                StylePickerRow(id = id, selected = style, onSelect = onSetStyle, layout = layout)
+                StylePickerRow(id = id, selected = style, onSelect = onSetStyle, layout = layout, showFace = showFace)
             }
             EditorSection("THRESHOLD", layout.showCaptions, scale, Modifier.weight(1f)) {
                 ThresholdEditorRow(unit, thresholds, onSetThreshold, scale, Modifier.fillMaxWidth())
@@ -253,7 +257,7 @@ internal fun EditorControls(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         EditorSection("STYLE", layout.showCaptions, scale, Modifier.fillMaxWidth()) {
-            StylePickerRow(id = id, selected = style, onSelect = onSetStyle, layout = layout)
+            StylePickerRow(id = id, selected = style, onSelect = onSetStyle, layout = layout, showFace = showFace)
         }
         if (hasThresholds) {
             EditorSection("THRESHOLD", layout.showCaptions, scale, Modifier.fillMaxWidth()) {
@@ -295,14 +299,20 @@ private fun EditorSection(
  * style is live" survives the roomy card's larger, more widely spaced chips.
  */
 @Composable
+@Suppress("LongParameterList") // id/selected/onSelect/layout/showFace/modifier — all load-bearing.
 private fun StylePickerRow(
     id: String,
     selected: GaugeRenderStyle,
     onSelect: (GaugeRenderStyle) -> Unit,
     layout: EditorLayout,
+    showFace: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val scale = layout.scale
+    // OBD-73: the FACE ("dumb mode") style is only meaningful on a threshold-coded (temperature)
+    // gauge — its whole job is to map the caution/danger bands to a mood — so it's appended to the
+    // option list only there. rpm/speed/boost never see it.
+    val options = if (showFace) STYLE_OPTIONS + (GaugeRenderStyle.FACE to FACE_STYLE_LABEL) else STYLE_OPTIONS
     // start=GEAR_CLEARANCE indents only this top row past the flip host's gear ⚙ (top-left), so
     // the chips clear it WITHOUT costing the whole face a top strip — the vertical space that a
     // push-down stole from the threshold row below (Taras: "cohesively fit it all together when
@@ -316,7 +326,7 @@ private fun StylePickerRow(
         // Two-column card: a narrow half-width column, so the three styles read as an option
         // list rather than a wrapped chip cloud.
         Column(modifier = outer, verticalArrangement = Arrangement.spacedBy(scale.spacing)) {
-            STYLE_OPTIONS.forEach { (optionStyle, label) ->
+            options.forEach { (optionStyle, label) ->
                 StyleChip(id, optionStyle, label, selected, scale, onSelect, Modifier.fillMaxWidth())
             }
         }
@@ -329,7 +339,7 @@ private fun StylePickerRow(
         verticalArrangement = Arrangement.spacedBy(scale.spacing),
         modifier = outer,
     ) {
-        STYLE_OPTIONS.forEach { (optionStyle, label) ->
+        options.forEach { (optionStyle, label) ->
             StyleChip(id, optionStyle, label, selected, scale, onSelect)
         }
     }
@@ -367,6 +377,9 @@ private val STYLE_OPTIONS: List<Pair<GaugeRenderStyle, String>> =
         GaugeRenderStyle.NEEDLE to "Needle",
         GaugeRenderStyle.BAR_ARC to "Bar",
     )
+
+// OBD-73: appended to STYLE_OPTIONS only for threshold-coded gauges (see StylePickerRow.showFace).
+private const val FACE_STYLE_LABEL = "Face"
 
 /** OBD-66's original threshold menu, unchanged in geometry — now one section of [EditorControls]. */
 @Composable

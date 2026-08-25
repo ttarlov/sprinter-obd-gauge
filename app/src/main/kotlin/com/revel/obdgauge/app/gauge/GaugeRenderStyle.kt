@@ -15,4 +15,11 @@ enum class GaugeRenderStyle {
 
     /** A segmented LED-style bar arcing around a big central digital readout. */
     BAR_ARC,
+
+    /**
+     * OBD-73 "dumb mode": a hand-drawn face whose expression (happy → concerned → sad → crying)
+     * tracks the gauge's threshold band instead of showing a number. Offered only on
+     * threshold-coded (temperature) gauges — see `FaceExpression.kt` / `FaceGauge.kt`.
+     */
+    FACE,
 }
