@@ -4,7 +4,7 @@ title: Expand-in-place gauge editor — lift the ⚙ editor out of the tile into
 module: app
 owner: ui-agent
 sprint: grid-feature
-status: in-review
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []
