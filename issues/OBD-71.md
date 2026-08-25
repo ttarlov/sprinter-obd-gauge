@@ -167,30 +167,51 @@ The decisive chain (file:line):
 hypothetical future risk. It is not hypothetical; it is the current mainline behavior on any live dongle.
 (This is the OBD-69 round-1-minor the reviewer flagged, now realized.)
 
-### The fix — gate on ENGINE-RUNNING (RPM), not "data received"
+### The fix — ENGINE-OFF trigger, then prompt-when-present / silent-stop-when-absent (Taras 2026-08-24)
 
-RPM is already always in the poll set (`PidIds.RPM = "rpm"`, `core/model/.../PidIds.kt:25`;
-`GAUGE_CATALOG` includes `RPM_PID_DEFINITION`, `GaugeCatalog.kt:76`; `ActivePollSet.activePids()` unions it,
-`ActivePollSet.kt:51`). Change the idle-activity signal:
+**A pure "RPM==0 → stop" is too blunt** — Taras wants to READ oil/coolant temps with the engine off
+(heat-soak monitoring after shutdown; key-on / engine-off diagnostics). So the signal is not just engine
+state — it's "is anyone benefiting from the connection": keep alive if **(engine running)** OR **(user
+actively watching)**; only stop when the engine's off AND the user has walked away.
 
-- **Stamp the idle tracker only when the engine is RUNNING** — a fresh RPM reading with `value > 0` — instead
-  of on any non-empty readings emission. When the engine is OFF (RPM == 0, which it is the instant the engine
-  stops and stays), the timer ages and the watchdog stops the service + releases the wake lock + disconnects,
-  **regardless of the ECU still trickling data.** RPM==0 is immune to cooling-drift because it's not a
-  freshness signal, it's a state signal.
-- **Timeout can be shorter** than 20 min now (RPM==0 is an unambiguous "engine off," unlike "no data" which
-  needed 20 min to tolerate mid-drive BLE dropouts) — pick e.g. 5–10 min; a design knob.
-- **Edge cases:** (a) idle at a light = RPM ~600-800 > 0 → no false stop ✓; (b) RPM momentarily **absent**
-  (BLE dropout mid-drive, engine actually running) must NOT stop — distinguish "RPM present and 0" (engine
-  off → age) from "RPM absent" (link issue → keep OBD-69's existing no-data/link-down watchdog as the
-  backstop, don't stop mid-drive); (c) an active recording still inhibits the stop (OBD-70 seam, keep it).
-- Keep the wake-lock refresh + the existing no-data/link-down watchdog as a secondary backstop; this change
-  swaps the PRIMARY activity signal to RPM.
+The trigger is **engine-off**, detected from **RPM**: RPM is always in the poll set (`PidIds.RPM = "rpm"`,
+`core/model/.../PidIds.kt`; `GAUGE_CATALOG` includes `RPM_PID_DEFINITION`, `GaugeCatalog.kt:76`;
+`ActivePollSet.activePids()` unions it, `ActivePollSet.kt`). Engine-off = a **fresh RPM reading present and
+== 0**, debounced briefly (~30–60 s of sustained 0) to ignore a stall/restart blip. This replaces "no data"
+as the trigger (which is defeated by the ECU trickling timestamped data — see root cause above).
 
-Pure, unit-testable decision (mirror `IdleWatchdogTest`): given last-RPM>0 time, now, timeout → stop?
-Plus RPM-absent vs RPM==0 handling. Device-verify: a real overnight (or a warm-engine key-off) → service
-self-stops a few min after the engine's off even though the ECU keeps answering; and it must NOT stop
-mid-drive or at idle.
+**On engine-off detected, branch on user presence:**
+- **User PRESENT (app foreground + screen on / interactive):** show a dialog — *"Engine off — keep
+  monitoring?"* with a **20-second countdown** + **Keep monitoring** button (this is OBD-74's idea, re-aimed
+  at the engine-off trigger). Tap → dismiss, stay connected so temps keep updating (heat-soak / diagnostics).
+  Countdown expires untapped → clean teardown (stopSelf → wake lock released, service stopped, link
+  disconnected — reuse OBD-69's existing stop path).
+- **User ABSENT (screen off / app backgrounded):** **no prompt** (no one to see it) → clean silent teardown
+  after a short grace. **This is the actual overnight-drain fix** — the prompt can't help while Taras is
+  asleep, so the silent stop is what ends the drain.
+- After **Keep monitoring** is chosen, don't nag: stay alive while the user remains present (screen on). If
+  the user later goes absent (screen turns off) with the engine still off, fall through to the silent
+  teardown. (Screen goes dark quickly after key-off per Taras, so "screen off" is a good "walked away"
+  proxy.)
+
+**Preserve:**
+- **Engine RUNNING (RPM > 0)** never triggers any of this — driving, even screen-off (OBD-24), stays alive.
+  Idle at a light = RPM ~600–800 > 0 → no false trigger.
+- **RPM absent / stale** (BLE dropout mid-drive, engine actually running) must NOT be read as engine-off —
+  distinguish "RPM present and 0" (engine off → trigger) from "RPM absent" (link issue → keep OBD-69's
+  existing no-data/link-down watchdog as the backstop; do NOT stop mid-drive).
+- **Active recording (OBD-70) inhibits** the stop entirely (keep the existing seam); a recording is
+  benefit-in-progress even if the engine's off.
+- Keep OBD-69's wake-lock refresh + no-data/link-down watchdog as the secondary backstop.
+
+**Pure/testable core** (mirror `IdleWatchdogTest`): an engine-off decision from RPM (present-and-0 vs absent
+vs >0, debounced), and the stop decision given (engine-off, user-present?, recording?, elapsed, timeout).
+The dialog/countdown is thin UI over that. **This supersedes OBD-74** (whose comms-loss trigger was wrong —
+comms don't drop; the ECU keeps answering).
+
+Device-verify (🖐 Taras, the real gate): (a) key-off while WATCHING → prompt appears, "Keep monitoring"
+keeps temps live for heat-soak; (b) key-off then walk away / screen off → silently stops within a few min →
+**overnight drain gone**; (c) driving with screen off → never stops; (d) confirm on the **Garmin**.
 
 **Still separate/open:** the 10-min Connect wedge Taras reported (untested in the repro) — may be the
 stale-`Ready` link; revisit after the drain fix. And confirm the fix on the **Garmin** specifically.

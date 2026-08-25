@@ -11,6 +11,11 @@ blocked-by: []
 branch: feat/74-quit-on-disconnect
 ---
 
+> **SUPERSEDED BY OBD-71 (2026-08-24).** The device repro proved comms are NOT lost when parked — the dongle
+> keeps answering, so a "comms lost" trigger never fires. OBD-71's fix re-uses this issue's prompt+countdown
+> idea but triggers it on **engine-off (RPM==0)** instead, with a silent auto-stop when the user is absent
+> (the actual overnight-drain fix). Do not build OBD-74 separately; it's folded into OBD-71.
+
 ## What
 
 When OBD communication is confirmed lost (Taras shuts the engine off), **immediately** show a foreground
