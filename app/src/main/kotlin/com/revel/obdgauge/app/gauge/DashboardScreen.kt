@@ -44,6 +44,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -75,6 +76,7 @@ import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridMetrics
 import com.revel.obdgauge.app.gauge.grid.GridMigration
 import com.revel.obdgauge.app.gauge.grid.GridPlacement
+import com.revel.obdgauge.app.recording.RecordingState
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
 import com.revel.obdgauge.app.sparkline.SparklineChart
@@ -89,7 +91,9 @@ import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -160,10 +164,16 @@ private data class OptimisticGrid(
 // OBD-66: the danger-zone pulse. A tile whose live value is at/above its RED threshold breathes
 // its red background/border between these alphas on a ~1s reverse loop — attention-grabbing at a
 // glance off a dash mount without the strobe of a hard on/off flash.
-private const val DANGER_PULSE_PERIOD_MS = 900
+// internal (not private): OBD-70's RecordingControls.kt reuses this period for the recording
+// indicator's own red-dot pulse, so both "something needs attention" pulses on this dashboard
+// breathe at the same rate — visual consistency, not a coincidence.
+internal const val DANGER_PULSE_PERIOD_MS = 900
 private const val DANGER_PULSE_MIN_ALPHA = 0.18f
 private const val DANGER_PULSE_MAX_ALPHA = 0.55f
 private const val DANGER_PULSE_BORDER_WIDTH_DP = 2
+
+// OBD-70: how often the Record control's mm:ss elapsed timer refreshes while recording.
+private const val RECORDING_ELAPSED_TICK_MS = 1_000L
 
 /**
  * OBD-66: whether the danger-zone RED pulse animates. Defaults on (the real dashboard). Tests that
@@ -245,6 +255,16 @@ fun GaugeDashboard(
     onAddGaugeAt: (id: String, col: Int, row: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onConnect: (() -> Unit)? = null,
     dangerPulseEnabled: Boolean = true,
+    // OBD-70: the Record control's state and actions — see RecordingControls.kt/RecordControl.
+    // Idle default so a caller that doesn't pass any of this (every pre-OBD-70 call site, every
+    // preview) renders exactly as before.
+    recordingState: RecordingState = RecordingState.Idle,
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    // Test/screenshot seam, same idea as dangerPulseEnabled: production ticks off the real wall
+    // clock, a Roborazzi reference overrides this to a fixed value so the elapsed mm:ss it
+    // renders never depends on how long the test itself took to run.
+    elapsedClock: () -> Long = { System.currentTimeMillis() },
 ) {
     // OBD-64/68: the ids actually placed on the grid — the single source of truth for which
     // gauges show, which the add-palette and swap-picker candidate lists both key off. ANY stored
@@ -290,6 +310,25 @@ fun GaugeDashboard(
     }
     val effectiveGridLayoutsByColumns =
         optimisticGrid?.let { gridLayoutsByColumns + (it.columns to it.layout) } ?: gridLayoutsByColumns
+
+    // OBD-70: the Record button's accidental-trigger guard, and the live clock its elapsed mm:ss
+    // ticks off of. The ticking effect is gated on dangerPulseEnabled — the same "off for a
+    // stable single frame" test seam OBD-66's own danger pulse uses — so a Roborazzi reference
+    // renders elapsedClock()'s value exactly once and never drifts between record/verify runs.
+    var showRecordConfirm by remember { mutableStateOf(false) }
+    var recordingNowMillis by remember { mutableLongStateOf(elapsedClock()) }
+    LaunchedEffect(recordingState, dangerPulseEnabled) {
+        if (recordingState is RecordingState.Recording && dangerPulseEnabled) {
+            while (isActive) {
+                delay(RECORDING_ELAPSED_TICK_MS)
+                recordingNowMillis = elapsedClock()
+            }
+        }
+    }
+    val recordingElapsedMillis =
+        (recordingState as? RecordingState.Recording)
+            ?.let { recording -> (recordingNowMillis - recording.startedAtMillis).coerceAtLeast(0) }
+            ?: 0L
 
     var pickerTileId by remember { mutableStateOf<String?>(null) }
     var showAddPalette by remember { mutableStateOf(false) }
@@ -459,9 +498,25 @@ fun GaugeDashboard(
                     ) {
                         Text(text = "Done", style = MaterialTheme.typography.titleMedium)
                     }
+                    // OBD-70: next to the gear, per this issue's spec.
+                    RecordControl(
+                        state = recordingState,
+                        elapsedMillis = recordingElapsedMillis,
+                        onTapIdle = { showRecordConfirm = true },
+                        onTapRecording = onStopRecording,
+                    )
                     TextButton(onClick = onSettingsClick, modifier = Modifier.testTag("settings-button")) {
                         Text(text = SETTINGS_GLYPH, style = MaterialTheme.typography.titleLarge)
                     }
+                }
+                if (showRecordConfirm) {
+                    RecordConfirmDialog(
+                        onConfirm = {
+                            showRecordConfirm = false
+                            onStartRecording()
+                        },
+                        onDismiss = { showRecordConfirm = false },
+                    )
                 }
                 BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     val viewportHeightPx = with(LocalDensity.current) { maxHeight.toPx() }

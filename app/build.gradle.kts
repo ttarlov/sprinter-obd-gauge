@@ -75,6 +75,10 @@ android {
 
     buildFeatures {
         compose = true
+        // OBD-70: BuildConfig.VERSION_NAME/FLAVOR/APPLICATION_ID for the recorder's self-describing
+        // CSV header comment (`# app: <versionName> (flavor=..., channel=...)`) — no other feature
+        // in this app has needed generated build config before now.
+        buildConfig = true
     }
 
     packaging {

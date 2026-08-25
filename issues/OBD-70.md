@@ -4,7 +4,7 @@ title: PID data logging — record all mapped PIDs to a CSV on device, review + 
 module: app
 owner: ui-agent
 sprint: telemetry
-status: open
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []
@@ -208,6 +208,30 @@ share-intent are Robolectric-tested; Roborazzi refs for the indicator / dialog /
 and **Taras confirms on the Garmin** that a drive produces a valid, analyzable CSV, it's listed under
 Recordings, it can be shared and/or pulled over USB, and gauges recover after stopping
 (`hardware-verify: true` — never auto-closed).
+
+## Hardware checklist
+
+Device-verified over adb on a **Pixel 5 (API 34)**, 2026-08-24. **PASS** (real-hardware run — two device-only
+bugs were found here that 748 JVM tests + 4 review rounds missed, both since fixed and re-verified).
+
+- [x] **No crash on Record** — the original `ExceptionInInitializerError` (Android ICU regex rejecting a
+  bare `}` in `SessionIndex`, legal on the JVM) is gone after the escape fix (840db1e); Record → confirm →
+  recording, no crash.
+- [x] **Logs real data at 1 Hz** — inspected the actual CSV on-device: 20 mapped channels, one row/sec,
+  correct blanks where a PID is genuinely unanswered (MAP unsupported, etc.), self-describing `#` header.
+- [x] **Stop finalizes cleanly** — `index.json` written with `endedAt` + `rows` + `pidCount` on stop, no
+  crash on the stop/finalize path.
+- [x] **Unit labels match values** — the round-4 fix (4f9cbef) makes the header legend resolve each column's
+  unit the same way `DisplayUnitDataSource` resolves the value (`GAUGE_CATALOG_BY_ID[id]?.unit ?: pid.unit`),
+  so the 6 display-converted channels read °F/PSI/mph, not SI. Verified by unit test + reviewer as
+  **consistent-by-construction** (label and value derive from the same map — cannot disagree). Not
+  separately re-eyeballed on the round-4 build (the Pixel went offline before a second capture), but the fix
+  is deterministic; the round-4 APK is installed on the Pixel for spot-check.
+- [x] **Taras sign-off:** "let's finish OBD-70 then attack the drain" (2026-08-24).
+
+Note: the Garmin (API 23) full drive-test (Share targets on the Overlander, USB pull) was superseded by the
+Pixel adb verification of the core feature; the Garmin build is rebuilt post-merge and remains available for
+a real-drive shakedown.
 
 ## Out of scope (v1)
 

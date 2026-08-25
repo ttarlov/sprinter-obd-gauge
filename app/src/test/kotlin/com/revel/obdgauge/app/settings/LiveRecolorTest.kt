@@ -82,6 +82,7 @@ class LiveRecolorTest {
                     onSetUnits = settingsViewModel::setUnits,
                     onSetKeepScreenOn = settingsViewModel::setKeepScreenOn,
                     onSetPollRate = settingsViewModel::setPollRate,
+                    onOpenRecordings = {},
                     onBack = {},
                 )
             }

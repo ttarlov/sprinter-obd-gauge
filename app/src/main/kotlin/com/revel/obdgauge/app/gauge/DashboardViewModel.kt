@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.revel.obdgauge.app.gauge.grid.GridEngine
 import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridLayoutSet
+import com.revel.obdgauge.app.recording.RecordingBridge
+import com.revel.obdgauge.app.recording.RecordingState
+import com.revel.obdgauge.app.service.ActivePollSet
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
@@ -41,6 +44,12 @@ import javax.inject.Inject
  * @param keepAlive OBD-25: whether [com.revel.obdgauge.app.service.ObdConnectionService] is
  *   currently keeping the shared data source polling. Defaults to a fresh (inactive) instance so
  *   a ViewModel built without one behaves exactly as it did before — see [stopUnlessKeptAlive].
+ * @param activePollSet OBD-70: GAUGE_CATALOG ∪ whatever a recording session currently wants —
+ *   read on every `dataSource.start(...)` call this class makes, instead of the GAUGE_CATALOG
+ *   literal, so a dashboard resubscribe (screen off/on) during an active recording re-requests
+ *   the WIDENED set rather than silently narrowing it back down. See [ActivePollSet]'s KDoc.
+ * @param recordingBridge OBD-70: the Record button's UI handle onto whichever `Recorder`
+ *   `ObdConnectionService` currently owns — see [RecordingBridge]'s KDoc.
  */
 @HiltViewModel
 // One small mutator per grid/threshold/swap operation (OBD-64/66/67) is the cohesive shape this
@@ -54,6 +63,8 @@ class DashboardViewModel
         private val clock: Clock,
         private val settingsRepository: SettingsRepository,
         private val keepAlive: PollKeepAlive = PollKeepAlive(),
+        private val activePollSet: ActivePollSet = ActivePollSet(),
+        private val recordingBridge: RecordingBridge = RecordingBridge(),
     ) : ViewModel() {
         // Per-gauge rolling history for OBD-20's sparklines, fed a step inside the same
         // combine() below. Deliberately NOT part of `uiState`'s DashboardUiState — see
@@ -110,7 +121,7 @@ class DashboardViewModel
                     settings.effectiveThresholds(),
                     settings.units,
                 )
-            }.onStart { dataSource.start(GAUGE_CATALOG) }
+            }.onStart { dataSource.start(activePollSet.activePids()) }
                 .onCompletion { stopUnlessKeptAlive() }
                 .stateIn(
                     scope = viewModelScope,
@@ -167,6 +178,15 @@ class DashboardViewModel
 
         /** OBD-20's per-gauge sparkline strip — see [SparklineHistoryHolder]. */
         fun sparklineFlow(id: String): StateFlow<List<SparklinePoint>> = sparklineHistory.flowFor(id)
+
+        /** OBD-70: what the dashboard's Record control renders — see [RecordingBridge]. */
+        val recordingState: StateFlow<RecordingState> = recordingBridge.state
+
+        /** The confirmation dialog's "Start" tap. */
+        fun startRecording() = recordingBridge.start()
+
+        /** The recording indicator's one-tap stop. */
+        fun stopRecording() = recordingBridge.stop()
 
         /**
          * OBD-42: the long-press picker's "tap a candidate" action. Replaces [oldId] with

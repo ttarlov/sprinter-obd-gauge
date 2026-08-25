@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
                 val gridLayoutsByColumns by viewModel.gridLayoutsByColumns.collectAsStateWithLifecycle()
                 val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
                 val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+                val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
 
                 // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
                 // and it's cleared automatically the moment the setting flips back off.
@@ -178,6 +179,9 @@ class MainActivity : ComponentActivity() {
                         onMoveGauge = viewModel::moveGauge,
                         // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
                         onConnect = if (linkController.isPresent) ::requestConnect else null,
+                        recordingState = recordingState,
+                        onStartRecording = viewModel::startRecording,
+                        onStopRecording = viewModel::stopRecording,
                     )
                 }
             }

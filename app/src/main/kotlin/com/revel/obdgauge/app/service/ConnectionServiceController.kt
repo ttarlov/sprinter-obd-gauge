@@ -1,6 +1,5 @@
 package com.revel.obdgauge.app.service
 
-import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.VehicleDataSource
@@ -77,6 +76,10 @@ class ConnectionServiceController(
     private val dataSource: VehicleDataSource,
     private val scope: CoroutineScope,
     private val keepAlive: PollKeepAlive = PollKeepAlive(),
+    // OBD-70: the single source of truth for "which pids should start(...) request right now" —
+    // GAUGE_CATALOG unless a recording session has widened it. See ActivePollSet's own KDoc for
+    // why every start(pids) call site in this app reads it instead of the GAUGE_CATALOG literal.
+    private val activePollSet: ActivePollSet = ActivePollSet(),
     private val onStateChanged: (ServiceNotificationState) -> Unit,
 ) {
     private var job: Job? = null
@@ -87,7 +90,7 @@ class ConnectionServiceController(
         if (intendsToRun) return
         intendsToRun = true
         keepAlive.acquire()
-        dataSource.start(GAUGE_CATALOG)
+        dataSource.start(activePollSet.activePids())
         job =
             scope.launch {
                 var wasReady = false
@@ -98,7 +101,7 @@ class ConnectionServiceController(
                         if (becameReady && intendsToRun) {
                             // The link just came up (or came back). RealVehicleDataSource's loop
                             // parked on the drop; restart it. Success edge only — see class KDoc.
-                            dataSource.start(GAUGE_CATALOG)
+                            dataSource.start(activePollSet.activePids())
                         }
                         onStateChanged(serviceNotificationState(connection, readings[PidIds.COOLANT]))
                     }

@@ -94,6 +94,27 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
+        <!--
+          OBD-70: exposes the recorder's `logs/` folder (see recording/LogsDir.kt) so the
+          Recordings screen's Share action can hand a CSV to another app (email, Drive,
+          Bluetooth, whatever the device has) without granting it broader file access.
+          `exported="false"` + `grantUriPermissions="true"`: nothing outside this app can query
+          this provider directly, but a `FLAG_GRANT_READ_URI_PERMISSION` intent (RecordingShare.kt)
+          can still hand one specific uri to whichever app the user picks from the chooser.
+          Authority is `${applicationId}.fileprovider` — the built-in AGP placeholder, so it
+          resolves correctly across the `demo`/`prod` flavors and the `-Pchannel=dev`
+          `applicationIdSuffix` (OBD-45) without any manifestPlaceholders wiring of its own.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

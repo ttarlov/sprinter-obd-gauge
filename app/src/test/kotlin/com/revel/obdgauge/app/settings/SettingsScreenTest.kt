@@ -169,6 +169,7 @@ class SettingsScreenTest {
                     onSetUnits = { settings.value = settings.value.copy(units = it) },
                     onSetKeepScreenOn = {},
                     onSetPollRate = {},
+                    onOpenRecordings = {},
                     onBack = {},
                 )
             }
@@ -265,6 +266,7 @@ class SettingsScreenTest {
                     onSetUnits = onSetUnits,
                     onSetKeepScreenOn = onSetKeepScreenOn,
                     onSetPollRate = onSetPollRate,
+                    onOpenRecordings = {},
                     onBack = onBack,
                 )
             }

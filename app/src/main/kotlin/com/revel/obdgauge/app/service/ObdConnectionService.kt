@@ -11,15 +11,24 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.getSystemService
+import com.revel.obdgauge.app.BuildConfig
 import com.revel.obdgauge.app.MainActivity
 import com.revel.obdgauge.app.R
 import com.revel.obdgauge.app.link.LinkController
+import com.revel.obdgauge.app.recording.Recorder
+import com.revel.obdgauge.app.recording.RecordingBridge
+import com.revel.obdgauge.app.recording.RecordingState
+import com.revel.obdgauge.app.recording.di.LoggablePids
+import com.revel.obdgauge.app.recording.logsDir
+import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.VehicleDataSource
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +36,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.time.Clock
 import java.util.Optional
 import javax.inject.Inject
 
@@ -109,12 +119,39 @@ class ObdConnectionService : Service() {
     @Inject
     lateinit var linkController: Optional<LinkController>
 
+    /** OBD-70: GAUGE_CATALOG ∪ the recorder's current set — see [ActivePollSet]'s KDoc. */
+    @Inject
+    lateinit var activePollSet: ActivePollSet
+
+    /** OBD-70: the UI's handle onto whichever [Recorder] this service currently owns. */
+    @Inject
+    lateinit var recordingBridge: RecordingBridge
+
+    /** OBD-70: the full mapped-PID set a recording session logs — per-flavor, see its own KDoc. */
+    @Inject
+    @LoggablePids
+    lateinit var loggablePids: List<PidDefinition>
+
     // internal (not private): ObdConnectionServiceTest substitutes a test double controller and
     // reads wakeLock/serviceScope state directly — Robolectric's ShadowService can't reproduce
     // the round-1 B1 crash or observe onDestroy's teardown any other way (see both classes' KDoc).
-    internal val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    //
+    // OBD-70 round-1 review, finding 1 (defense-in-depth): a SupervisorJob alone has no handler
+    // for an exception that escapes a child coroutine — it would reach the thread's default
+    // uncaught-exception handler and crash the process. Recorder.appendRow now catches its own
+    // IOExceptions and finalizes gracefully (the actual fix), but every other coroutine sharing
+    // this scope (the poll loop, the idle watchdog) gets the same backstop for anything
+    // unanticipated: log it, keep the service alive, rather than take the whole app down mid-drive.
+    internal val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + serviceExceptionHandler)
     internal var controller: ConnectionServiceController? = null
     internal var wakeLock: PowerManager.WakeLock? = null
+
+    /**
+     * OBD-70: constructed in [onCreate], torn down (flushed/closed if a session is active) in
+     * [onDestroy] — `internal` so `ObdConnectionServiceTest` can drive start/stop and read its
+     * written files directly, the same seam [controller] already is.
+     */
+    internal var recorder: Recorder? = null
 
     /**
      * OBD-69: last time the dongle produced a data sample; the idle watchdog stops the service when
@@ -147,8 +184,25 @@ class ObdConnectionService : Service() {
                 dataSource = dataSource,
                 scope = serviceScope,
                 keepAlive = keepAlive,
+                activePollSet = activePollSet,
                 onStateChanged = ::postNotification,
             ).also { it.start() }
+        // OBD-70: constructed once here (survives screen-off/config changes on serviceScope,
+        // same as controller above) and published to the UI via recordingBridge.attach — see
+        // RecordingBridge's KDoc for why the dashboard talks to the bridge, never this directly.
+        recorder =
+            Recorder(
+                dataSource = dataSource,
+                activePollSet = activePollSet,
+                loggablePids = loggablePids,
+                logsDir = logsDir(this),
+                scope = serviceScope,
+                clock = Clock.systemDefaultZone(),
+                appVersionName = BuildConfig.VERSION_NAME,
+                flavor = BuildConfig.FLAVOR,
+                channel = if (BuildConfig.APPLICATION_ID.endsWith(DEV_CHANNEL_SUFFIX)) "dev" else "main",
+                onStateChanged = recordingBridge::publish,
+            ).also { recordingBridge.attach(it) }
         // OBD-69: arm the idle watchdog. Count from now, so a session that never sees a single
         // sample (app open, vehicle off, dongle unreachable) still trips the timeout from start.
         // (This explicit stamp and launchDataIdleReset's first collected stamp are both ~now and
@@ -206,6 +260,12 @@ class ObdConnectionService : Service() {
     }
 
     override fun onDestroy() {
+        // OBD-70: flush/close a live session (never orphan an open file handle mid-write) before
+        // the scope its ticker runs on is cancelled below — recorder.stop() is idempotent, same
+        // as controller.stop(), so this is safe whether or not a session was actually active.
+        recorder?.stop()
+        recorder = null
+        recordingBridge.attach(null)
         controller?.stop()
         controller = null
         releaseWakeLock(wakeLock)
@@ -227,7 +287,13 @@ class ObdConnectionService : Service() {
      *   watchdog coroutine breaks its loop on `true` so the stop fires exactly once.
      */
     internal fun checkIdleAndMaybeStop(nowMillis: Long): Boolean {
-        if (!shouldStopForIdle(idleTracker.lastDataAtMillis, nowMillis, IDLE_TIMEOUT_MILLIS)) return false
+        // OBD-70: a live recording counts as activity — inhibit the idle-stop outright rather
+        // than folding it into the data-driven idleTracker stamp (recording and dongle-data-flow
+        // are two independently true things; a session actively writing rows must never be cut
+        // off mid-drive just because this particular tick's data happened to be sparse).
+        val recording = recordingBridge.state.value is RecordingState.Recording
+        val idle = shouldStopForIdle(idleTracker.lastDataAtMillis, nowMillis, IDLE_TIMEOUT_MILLIS)
+        if (recording || !idle) return false
         disconnectLinkOnUserStop()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -304,6 +370,19 @@ private const val ACTION_STOP = "com.revel.obdgauge.app.service.ACTION_STOP"
 private const val REQUEST_CODE_CONTENT = 0
 private const val REQUEST_CODE_STOP = 1
 private const val WAKE_LOCK_TAG = "ObdGauge:ConnectionPoll"
+
+// OBD-70: the CSV header's "channel=" field — mirrors OBD-45's `-Pchannel=dev` applicationIdSuffix
+// (app/build.gradle.kts), read back off BuildConfig.APPLICATION_ID rather than needing its own
+// BuildConfig field, since the suffix is already the one place that decision is recorded.
+private const val DEV_CHANNEL_SUFFIX = ".dev"
+
+private const val SERVICE_SCOPE_LOG_TAG = "ObdConnectionService"
+
+// OBD-70 round-1 review, finding 1: serviceScope's backstop — see its own KDoc at the field.
+private val serviceExceptionHandler =
+    CoroutineExceptionHandler { _, throwable ->
+        Log.e(SERVICE_SCOPE_LOG_TAG, "Uncaught exception in a service-scoped coroutine", throwable)
+    }
 
 // OBD-69: stop the service after this long with no data sample from the dongle, releasing the wake
 // lock so a phone/tablet left running with the vehicle off can Doze instead of holding the CPU

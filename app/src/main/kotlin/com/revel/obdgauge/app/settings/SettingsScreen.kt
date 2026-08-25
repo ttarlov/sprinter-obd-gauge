@@ -38,6 +38,7 @@ import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
 import com.revel.obdgauge.app.gauge.GaugeThresholds
 import com.revel.obdgauge.app.gauge.UnitConversion
 import com.revel.obdgauge.app.gauge.displayUnitFor
+import com.revel.obdgauge.app.recording.RecordingsRoute
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidIds
 
@@ -62,6 +63,7 @@ fun SettingsScreen(
     onSetUnits: (UnitPreferences) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetPollRate: (PollRate) -> Unit,
+    onOpenRecordings: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -87,6 +89,15 @@ fun SettingsScreen(
             KeepScreenOnSection(settings.keepScreenOn, onSetKeepScreenOn)
             HorizontalDivider()
             PollRateSection(settings.pollRate, onSetPollRate)
+            HorizontalDivider()
+            // OBD-70: inlined rather than its own private fun — SettingsScreen.kt is already at
+            // detekt's per-file function-count bar, and a two-line section doesn't earn a new one.
+            Column(verticalArrangement = Arrangement.spacedBy(ROW_SPACING_DP.dp)) {
+                Text(text = "Recordings", style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenRecordings, modifier = Modifier.testTag("recordings-nav-button")) {
+                    Text("View recorded sessions")
+                }
+            }
         }
     }
 }
@@ -355,6 +366,16 @@ fun SettingsRoute(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
 ) {
+    // OBD-70: Recordings is a nested destination reached from this screen (this issue's spec
+    // explicitly allows either that or a new arm of MainActivity's own screen swap — nesting it
+    // here keeps the change local to the settings flow rather than touching MainActivity's nav
+    // state at all). Plain local state, same "no nav library" shape MainActivity's own KDoc
+    // documents for the top-level swap.
+    var showRecordings by remember { mutableStateOf(false) }
+    if (showRecordings) {
+        RecordingsRoute(onBack = { showRecordings = false }, modifier = modifier)
+        return
+    }
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     SettingsScreen(
         settings = settings,
@@ -365,6 +386,7 @@ fun SettingsRoute(
         onSetUnits = viewModel::setUnits,
         onSetKeepScreenOn = viewModel::setKeepScreenOn,
         onSetPollRate = viewModel::setPollRate,
+        onOpenRecordings = { showRecordings = true },
         onBack = onBack,
         modifier = modifier,
     )

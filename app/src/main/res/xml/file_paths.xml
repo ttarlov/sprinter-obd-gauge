@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OBD-70: exposes context.getExternalFilesDir("logs") — see recording/LogsDir.kt — to the
+  FileProvider declared in AndroidManifest.xml, for the Recordings screen's Share action.
+
+  Round-1 review (finding 3): LogsDir.logsDir() falls back to File(context.filesDir, "logs") when
+  getExternalFilesDir returns null (external storage genuinely unavailable). Without a matching
+  <files-path> root here, a session written to that fallback would make FileProvider.getUriForFile
+  throw IllegalArgumentException ("Failed to find configured root…") the moment Share is tapped —
+  a crash instead of the graceful "USB-pull only" degradation LogsDir's own KDoc already promises.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="logs" path="logs/" />
+    <files-path name="logs_internal" path="logs/" />
+</paths>

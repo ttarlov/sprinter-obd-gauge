@@ -9,7 +9,13 @@ import android.content.pm.ServiceInfo
 import androidx.core.content.getSystemService
 import androidx.test.core.app.ApplicationProvider
 import com.revel.obdgauge.app.datasource.RestartAnchoredDataSource
+import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
+import com.revel.obdgauge.app.recording.RecordingState
+import com.revel.obdgauge.app.recording.logsDir
+import com.revel.obdgauge.app.recording.readSessionIndex
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -277,8 +283,129 @@ class ObdConnectionServiceTest {
         assertFalse(lock.isHeld)
     }
 
+    // ---- OBD-70: the recorder, field-injected and wired against the real demo Hilt graph ----
+
+    @Test
+    fun `the recorder is constructed on create against the real demo loggablePids and poll set`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+
+        assertNotNull(service.recorder)
+        // demo's LoggablePidsModule: DASHBOARD_PIDS + RPM_PID_DEFINITION, 5 channels.
+        assertEquals(5, service.loggablePids.size)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `recordingBridge start creates a CSV with a header in the logs directory and widens the poll set`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        assertEquals(GAUGE_CATALOG.size, service.activePollSet.activePids().size)
+
+        service.recordingBridge.start()
+
+        assertTrue(service.recordingBridge.state.value is RecordingState.Recording)
+        val logsDirectory = logsDir(service)
+        val csvFile = logsDirectory.listFiles { file -> file.name.startsWith("obdlog_") }?.firstOrNull()
+        assertNotNull(csvFile)
+        assertEquals("# sprinter-obd-gauge log v1", csvFile!!.readLines().first())
+        // demo's loggablePids (5) happen to be a subset of GAUGE_CATALOG (6, adds "speed"), so the
+        // union doesn't grow the COUNT here — prod's much larger PidCatalog.definitions set does.
+        // What's actually load-bearing (and true regardless of flavor): every recorded id is polled.
+        assertEquals(service.loggablePids, service.activePollSet.recordingPids.value)
+        val activeIds =
+            service.activePollSet
+                .activePids()
+                .map { it.id }
+                .toSet()
+        assertTrue(service.loggablePids.all { it.id in activeIds })
+
+        service.recordingBridge.stop()
+        controller.destroy()
+    }
+
+    @Test
+    fun `ticks append rows and stop flushes, updates the index, and reverts the poll set`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+
+        service.recordingBridge.start()
+        val recordingState = service.recordingBridge.state.value as RecordingState.Recording
+        // Real 1 Hz ticker (the Hilt-wired production interval) — wait past one tick.
+        runBlocking { delay(TICK_WAIT_MILLIS) }
+        service.recordingBridge.stop()
+
+        val dataLines = recordingState.file.readLines().drop(HEADER_LINE_COUNT)
+        assertTrue("expected at least one appended row, got ${dataLines.size}", dataLines.isNotEmpty())
+        assertTrue(service.recordingBridge.state.value is RecordingState.Idle)
+
+        val logsDirectory = logsDir(service)
+        val index = readSessionIndex(logsDirectory)
+        val entry = index.first { it.file == recordingState.file.name }
+        assertNotNull(entry.endedAt)
+        assertTrue(entry.rows > 0)
+        assertEquals(GAUGE_CATALOG.size, service.activePollSet.activePids().size)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `onDestroy flushes and stops a recording still in progress rather than orphaning it`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+
+        service.recordingBridge.start()
+        val recordingState = service.recordingBridge.state.value as RecordingState.Recording
+
+        controller.destroy()
+
+        assertTrue(service.recordingBridge.state.value is RecordingState.Idle)
+        val logsDirectory = logsDir(service)
+        val entry = readSessionIndex(logsDirectory).first { it.file == recordingState.file.name }
+        assertNotNull(entry.endedAt)
+    }
+
+    // ---- OBD-70: an active recording inhibits OBD-69's idle-stop ----
+
+    @Test
+    fun `an active recording inhibits the idle watchdog`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        // Simulate "recording in progress" without waiting on the real ticker: publish the state
+        // the real Recorder would, straight through the same recordingBridge the idle check reads.
+        service.recordingBridge.publish(
+            RecordingState.Recording(startedAtMillis = 0L, file = java.io.File("unused"), rowCount = 1),
+        )
+
+        val pastTheTimeout = service.idleTracker.lastDataAtMillis + IDLE_MILLIS_WELL_PAST_TIMEOUT
+        val stopped = service.checkIdleAndMaybeStop(pastTheTimeout)
+
+        assertFalse(stopped)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `idle-stop resumes once the recording bridge returns to Idle`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        service.recordingBridge.publish(RecordingState.Idle)
+
+        val pastTheTimeout = service.idleTracker.lastDataAtMillis + IDLE_MILLIS_WELL_PAST_TIMEOUT
+        val stopped = service.checkIdleAndMaybeStop(pastTheTimeout)
+
+        assertTrue(stopped)
+        controller.destroy()
+    }
+
     private companion object {
         // Comfortably past the 20-min IDLE_TIMEOUT_MILLIS (file-private to ObdConnectionService).
         const val IDLE_MILLIS_WELL_PAST_TIMEOUT = 25L * 60 * 1000
+        const val HEADER_LINE_COUNT = 6
+
+        // Comfortably past the recorder's real 1 Hz tick, without padding the suite too much.
+        const val TICK_WAIT_MILLIS = 1_300L
     }
 }
