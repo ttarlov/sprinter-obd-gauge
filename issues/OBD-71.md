@@ -65,6 +65,43 @@ seam in `ObdConnectionService`.
 - **Device acceptance (🖐 Taras):** after an overnight sit, the next engine start reconnects with **no
   manual relaunch**, AND the overnight battery drain stays gone (OBD-69 not regressed).
 
+## Update 2026-08-24 — new symptoms + code-grounded root-cause hypothesis (drain + wedge are ONE bug)
+
+Taras reports: the drain is **overnight, screen off / backgrounded** (NOT screen-on-while-parked), AND
+**~10 minutes after ignition-off, the "Connect" button no longer reconnects — only a full quit + relaunch
+does.** These are almost certainly the same bug.
+
+**Prime suspect (in code):** `core/ble/.../BleObdLink.kt:427` — *"A timeout leaves the link `Ready` — a
+silent ECU is normal traffic, not a dead link."* Plus `:133` — the reconnect attempt counter *"Resets on
+success"* (reaching `Ready`). Consequence when the van is parked with the dongle plugged in (OBD port
+powered, ECU asleep — the REAL overnight scenario):
+
+- The link reaches `Ready` and **stays `Ready`** because read timeouts are treated as normal, not as a dead
+  link. The poll loop keeps sending commands and eating timeouts indefinitely → **an active BLE connection +
+  a spinning poll loop all night = the drain.** This is a DIFFERENT code path than the "no dongle" case
+  OBD-69 was device-verified against (clean BLE fail → backoff → watchdog stops the service). With the
+  dongle PRESENT, the link never leaves `Ready`, so the "20 min of no data → stop" watchdog may be defeated
+  or the link never tears down — **that's why OBD-69 tested OK but the real overnight case still drains.**
+- The **stale-`Ready` "zombie"** also explains the wedge: after the dongle actually dies/reboots (port loses
+  power on key-off on some vans — see `:49`) or the GATT connection drops unnoticed, the app still believes
+  it's `Ready`. Tapping **Connect** likely no-ops against an already-`Ready` state, so it can't recover —
+  only a fresh process resets the link to `Disconnected` and forces a clean connect. Matches "quit fixes it,
+  Connect doesn't."
+
+**Confirm on device before fixing** (don't guess — same lesson as OBD-70's device-only crash): park repro
+(or bench: dongle powered, ECU absent), `adb logcat` + `dumpsys power | grep -i wake` + `dumpsys activity
+services` over ~20–25 min, capturing: does the link stay `Ready`? does the poll loop keep running? does
+OBD-69's watchdog fire at 20 min and release the wake lock + disconnect? what state is the link in when
+Connect fails? The Pixel is reachable at adb `192.168.1.176:5555`; the drain is on the Garmin + van dongle.
+
+**Fix direction (pending confirm):** distinguish "brief silent ECU on a live dongle" (stay `Ready` a short
+while) from "prolonged silence / dongle gone" (drop to `Disconnected`, let OBD-69 idle-stop tear everything
+down INCLUDING the BLE link); make **Connect force a fresh teardown+reconnect** rather than no-op on a stale
+`Ready`; ensure the idle watchdog stops the link, not just the service. Must not regress OBD-69.
+
+**Note:** OBD-74 (quit-on-disconnect prompt) does NOT fix this — the drain is backgrounded/overnight, so a
+foreground countdown no one sees can't help. This (OBD-71) is the actual drain fix.
+
 ## Out of scope
 
 - Full trip-detection / motion-based auto-start (a heavier feature; this is just the overnight-cold
