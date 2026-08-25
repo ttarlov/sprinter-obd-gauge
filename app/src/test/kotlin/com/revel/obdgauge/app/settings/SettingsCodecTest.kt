@@ -4,6 +4,8 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS_BY_ID
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
+import com.revel.obdgauge.app.gauge.GaugeRenderStyle
+import com.revel.obdgauge.app.gauge.GaugeScale
 import com.revel.obdgauge.app.gauge.GaugeThresholds
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.ObdRequest
@@ -48,6 +50,15 @@ class SettingsCodecTest {
                 keepScreenOn = true,
                 pollRate = PollRate.HZ_2,
                 speedCorrectionFactor = 1.1,
+                renderStyles =
+                    mapOf(
+                        PidIds.COOLANT to GaugeRenderStyle.NEEDLE,
+                        PidIds.RPM to GaugeRenderStyle.BAR_ARC,
+                    ),
+                scaleOverrides =
+                    mapOf(
+                        PidIds.COOLANT to GaugeScale(min = 50.0, max = 250.0, tick = 25.0),
+                    ),
             )
 
         val preferences = mutablePreferencesOf()
@@ -143,6 +154,45 @@ class SettingsCodecTest {
         val decoded = decodeAppSettings(preferences.toPreferences())
 
         assertEquals(GaugeThresholds(), decoded.thresholdOverrides[PidIds.BOOST])
+    }
+
+    @Test
+    fun `OBD-72 render styles and scale overrides default to empty when missing`() {
+        val decoded = decodeAppSettings(emptyPreferences())
+        assertEquals(emptyMap<String, GaugeRenderStyle>(), decoded.renderStyles)
+        assertEquals(emptyMap<String, GaugeScale>(), decoded.scaleOverrides)
+    }
+
+    @Test
+    fun `OBD-72 a render style round-trips per gauge id`() {
+        val settings =
+            AppSettings(
+                renderStyles = mapOf(PidIds.BOOST to GaugeRenderStyle.BAR_ARC, PidIds.RPM to GaugeRenderStyle.NEEDLE),
+            )
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(settings, preferences)
+
+        val decoded = decodeAppSettings(preferences.toPreferences())
+
+        assertEquals(settings.renderStyles, decoded.renderStyles)
+    }
+
+    @Test
+    fun `OBD-72 a scale override round-trips per gauge id`() {
+        val settings =
+            AppSettings(
+                scaleOverrides =
+                    mapOf(
+                        PidIds.RPM to GaugeScale(min = 0.0, max = 6_000.0, tick = 1_000.0),
+                        PidIds.BOOST to GaugeScale(min = -2.0, max = 30.0, tick = 4.0),
+                    ),
+            )
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(settings, preferences)
+
+        val decoded = decodeAppSettings(preferences.toPreferences())
+
+        assertEquals(settings.scaleOverrides, decoded.scaleOverrides)
     }
 
     @Test

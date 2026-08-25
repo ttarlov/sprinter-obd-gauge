@@ -1,5 +1,8 @@
 package com.revel.obdgauge.app.settings
 
+import com.revel.obdgauge.app.gauge.GaugeRenderStyle
+import com.revel.obdgauge.app.gauge.GaugeScale
+import com.revel.obdgauge.app.gauge.GaugeScaleDefaults
 import com.revel.obdgauge.app.gauge.GaugeThresholds
 import com.revel.obdgauge.app.gauge.ThresholdConfig
 import com.revel.obdgauge.model.MeasurementUnit
@@ -92,10 +95,29 @@ data class AppSettings(
      * so this stays additive and a fresh/old install renders exactly as before.
      */
     val gridLayoutsByColumns: Map<Int, com.revel.obdgauge.app.gauge.grid.GridLayout> = emptyMap(),
+    /**
+     * OBD-72: per-gauge render style (digital/needle/bar-arc), keyed by gauge id — same shape as
+     * [thresholdOverrides], missing means [GaugeRenderStyle.DIGITAL] (see [renderStyleFor]) so a
+     * fresh/old install renders exactly as before this feature.
+     */
+    val renderStyles: Map<String, GaugeRenderStyle> = emptyMap(),
+    /**
+     * OBD-72: per-gauge full-scale sweep bounds, user overrides layered on top of
+     * [GaugeScaleDefaults.seed] (see [effectiveScales]) — needle/bar-arc's "genuinely new" data
+     * model. Stored in each gauge's wire unit, exactly like [thresholdOverrides] — see that
+     * property's own KDoc for why. Empty until a user edits a scale.
+     */
+    val scaleOverrides: Map<String, GaugeScale> = emptyMap(),
 )
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */
 fun AppSettings.effectiveThresholds(): Map<String, GaugeThresholds> = ThresholdConfig.seed + thresholdOverrides
+
+/** [GaugeScaleDefaults.seed] with [AppSettings.scaleOverrides] layered on top. */
+fun AppSettings.effectiveScales(): Map<String, GaugeScale> = GaugeScaleDefaults.seed + scaleOverrides
+
+/** [AppSettings.renderStyles]' entry for [id], or [GaugeRenderStyle.DIGITAL] if unset. */
+fun AppSettings.renderStyleFor(id: String): GaugeRenderStyle = renderStyles[id] ?: GaugeRenderStyle.DIGITAL
 
 /**
  * OBD-42: replaces the [gaugeOrder] entry currently named [oldId] with [newId], keeping that

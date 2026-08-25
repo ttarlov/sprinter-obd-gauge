@@ -13,10 +13,9 @@ import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
 import com.revel.obdgauge.app.settings.SettingsRepository
+import com.revel.obdgauge.app.settings.effectiveScales
 import com.revel.obdgauge.app.settings.effectiveThresholds
 import com.revel.obdgauge.app.settings.withGaugeSwapped
-import com.revel.obdgauge.app.sparkline.SparklineHistoryHolder
-import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.model.VehicleDataSource
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -66,14 +65,6 @@ class DashboardViewModel
         private val activePollSet: ActivePollSet = ActivePollSet(),
         private val recordingBridge: RecordingBridge = RecordingBridge(),
     ) : ViewModel() {
-        // Per-gauge rolling history for OBD-20's sparklines, fed a step inside the same
-        // combine() below. Deliberately NOT part of `uiState`'s DashboardUiState — see
-        // SparklineHistoryHolder's KDoc for why folding it in would defeat the whole point of
-        // keeping 4 Hz updates from recomposing the entire dashboard.
-        // GAUGE_CATALOG (OBD-42's swap-picker superset), not DASHBOARD_PIDS: a gauge swapped
-        // into a slot (e.g. rpm) needs its own rolling history too, not just the core four.
-        private val sparklineHistory = SparklineHistoryHolder(GAUGE_CATALOG.map { it.id })
-
         init {
             // OBD-68 (was "eager-seed the ONE canonical grid" under OBD-64 — see the round-4 pivot
             // note in `issues/OBD-67.md`): eager-seed BOTH required per-column-count layouts ONCE,
@@ -113,7 +104,6 @@ class DashboardViewModel
                 dataSource.connection,
                 settingsRepository.settings,
             ) { readings, connection, settings ->
-                sparklineHistory.onReadings(readings, clock.instant())
                 toDashboardUiState(
                     readings,
                     connection,
@@ -166,6 +156,34 @@ class DashboardViewModel
                     ThresholdConfig.seed,
                 )
 
+        /**
+         * OBD-72: per-gauge render style (digital/needle/bar-arc), keyed by gauge id — the
+         * dashboard's in-tile gear editor's style-picker row reads/writes this the same way
+         * [thresholds] already works for OBD-66's threshold squares.
+         */
+        val renderStyles: StateFlow<Map<String, GaugeRenderStyle>> =
+            settingsRepository.settings
+                .map { it.renderStyles }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    AppSettings().renderStyles,
+                )
+
+        /**
+         * OBD-72: the effective per-gauge scale table ([com.revel.obdgauge.app.gauge.GaugeScaleDefaults.seed]
+         * + user overrides) the needle/bar-arc render styles map a value's sweep/segment position
+         * against.
+         */
+        val scales: StateFlow<Map<String, GaugeScale>> =
+            settingsRepository.settings
+                .map { it.effectiveScales() }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    GaugeScaleDefaults.seed,
+                )
+
         /** OBD-21's keep-screen-on toggle; `MainActivity` applies it to the window. */
         val keepScreenOn: StateFlow<Boolean> =
             settingsRepository.settings
@@ -175,9 +193,6 @@ class DashboardViewModel
                     SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                     AppSettings().keepScreenOn,
                 )
-
-        /** OBD-20's per-gauge sparkline strip — see [SparklineHistoryHolder]. */
-        fun sparklineFlow(id: String): StateFlow<List<SparklinePoint>> = sparklineHistory.flowFor(id)
 
         /** OBD-70: what the dashboard's Record control renders — see [RecordingBridge]. */
         val recordingState: StateFlow<RecordingState> = recordingBridge.state
@@ -234,6 +249,22 @@ class DashboardViewModel
             viewModelScope.launch {
                 settingsRepository.update { settings ->
                     settings.copy(thresholdOverrides = settings.thresholdOverrides + (id to next))
+                }
+            }
+        }
+
+        /**
+         * OBD-72: persists gauge [id]'s render style from the in-tile gear editor's style-picker
+         * row, through the exact same [SettingsRepository.update] path [setThreshold] uses — an
+         * edit here live-swaps the dashboard tile's body (digital/needle/bar-arc), no restart.
+         */
+        fun setRenderStyle(
+            id: String,
+            style: GaugeRenderStyle,
+        ) {
+            viewModelScope.launch {
+                settingsRepository.update { settings ->
+                    settings.copy(renderStyles = settings.renderStyles + (id to style))
                 }
             }
         }

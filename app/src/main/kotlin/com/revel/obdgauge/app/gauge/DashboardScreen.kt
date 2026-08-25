@@ -55,8 +55,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.invisibleToUser
@@ -66,7 +69,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.revel.obdgauge.app.gauge.grid.Cell
 import com.revel.obdgauge.app.gauge.grid.CellRect
 import com.revel.obdgauge.app.gauge.grid.CellSize
@@ -79,8 +81,6 @@ import com.revel.obdgauge.app.gauge.grid.GridPlacement
 import com.revel.obdgauge.app.recording.RecordingState
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
 import com.revel.obdgauge.app.settings.GaugeOrderEntry
-import com.revel.obdgauge.app.sparkline.SparklineChart
-import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.GaugeAmber
 import com.revel.obdgauge.app.ui.theme.GaugeGreen
 import com.revel.obdgauge.app.ui.theme.GaugeNeutral
@@ -89,13 +89,14 @@ import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
 import com.revel.obdgauge.app.ui.theme.GaugeValueTextStyle
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkState
+import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.PidIds
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlin.math.min
 import kotlin.math.roundToInt
+import androidx.compose.ui.unit.min as dpMin
 
 // internal (not private): GaugePicker.kt's SwapPagerCard reuses these so each in-tile swap page
 // matches the real tile's own corner radius/padding/background exactly — "still THAT tile"
@@ -104,7 +105,6 @@ internal const val TILE_CORNER_RADIUS_DP = 16
 internal const val TILE_PADDING_DP = 16
 internal const val TILE_BACKGROUND_ALPHA = 0.18f
 private const val TILE_SPACING_DP = 12
-private const val SPARKLINE_TOP_PADDING_DP = 4
 
 // Drag drop-target hysteresis margin, as a fraction of the smaller cell dimension — see
 // recomputeDropTarget's KDoc in GaugeTileGrid. OBD-67 round-9 device-verified fix: was 0.2f: user
@@ -146,6 +146,28 @@ private data class AddAtTarget(
     val cell: Cell,
     val columns: Int,
 )
+
+/**
+ * OBD-77: which gauge the floating editor card is open for, and the tile's own root-space rect at
+ * the moment its ⚙ badge was tapped — the start bounds the card grows out of (and collapses back
+ * into). Captured from the tile's actual laid-out bounds rather than recomputed from
+ * `GridMetrics.placementRect`: the tile's rect on SCREEN also depends on the header row's height,
+ * the grid's padding, and the current scroll offset, all of which `boundsInRoot()` already
+ * accounts for and none of which the overlay should have to re-derive.
+ */
+private data class EditorTarget(
+    val id: String,
+    val startBounds: Rect,
+)
+
+/**
+ * OBD-77: a `GaugeSlot`'s last laid-out root-space rect. A plain, deliberately NON-observable
+ * holder — see the `slotBounds` comment in `GaugeSlot` for why writing this from
+ * `onGloballyPositioned` must not recompose anything.
+ */
+private class SlotBounds {
+    var value: Rect = Rect.Zero
+}
 
 /**
  * OBD-67 round-12: a pending optimistic grid mutation — [layout] is what a drag-drop or a resize
@@ -214,11 +236,6 @@ val LocalDangerPulseEnabled = staticCompositionLocalOf { true }
  *   handled by deriving from [gaugeOrder] via [GridMigration.fromGaugeOrder], so a fresh/old
  *   install renders exactly as before. Positions and spans of tiles come from here (per
  *   orientation); [gaugeOrder] still drives visibility and the swap picker's candidate list.
- * @param sparklines per-gauge-id rolling history (OBD-20), each a [StateFlow] rather than a
- *   plain `List` — collected only by the leaf [GaugeSparklineStrip], never read here or by
- *   [GaugeTile]/[BoostTile] themselves, so a 4 Hz sparkline tick recomposes only that one leaf
- *   instead of this whole composable. See `SparklineHistoryHolder`'s KDoc and
- *   `SparklineRecompositionTest`. A missing/absent id renders no sparkline for that tile.
  * @param onSettingsClick invoked by the gear button; the caller (here, `MainActivity`) owns
  *   navigation — this composable has no nav-library dependency, per the codebase's minimal
  *   style.
@@ -243,14 +260,20 @@ fun GaugeDashboard(
     modifier: Modifier = Modifier,
     gaugeOrder: List<GaugeOrderEntry> = DEFAULT_GAUGE_ORDER,
     gridLayoutsByColumns: Map<Int, GridLayout> = emptyMap(),
-    sparklines: Map<String, StateFlow<List<SparklinePoint>>> = emptyMap(),
     thresholds: Map<String, GaugeThresholds> = ThresholdConfig.seed,
+    // OBD-72: per-gauge render style + scale bounds — both keyed by gauge id, the same shape
+    // [thresholds] already is. Missing/default renders GaugeRenderStyle.DIGITAL against
+    // GaugeScaleDefaults.seed, so a caller that doesn't pass these (every pre-OBD-72 call site,
+    // every preview) renders exactly as before.
+    renderStyles: Map<String, GaugeRenderStyle> = emptyMap(),
+    scales: Map<String, GaugeScale> = GaugeScaleDefaults.seed,
     onSettingsClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
     onAddGauge: (id: String) -> Unit = {},
     onRemoveGauge: (id: String) -> Unit = {},
     onResizeGauge: (id: String, colSpan: Int, rowSpan: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit = { _, _ -> },
+    onSetRenderStyle: (id: String, style: GaugeRenderStyle) -> Unit = { _, _ -> },
     onMoveGauge: (id: String, col: Int, row: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onAddGaugeAt: (id: String, col: Int, row: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onConnect: (() -> Unit)? = null,
@@ -338,27 +361,35 @@ fun GaugeDashboard(
     // see AddGaugePalette's onAdd below for how the two dispatch).
     var addAtCell by remember { mutableStateOf<AddAtTarget?>(null) }
     // OBD-67: rearrange mode — long-press (any tile, or the container-level detector below on a
-    // gap) flips this on; pickerTileId is no longer SET by long-press, only by the ⇄/⚙ badges the
-    // mode shows on each tile (see GaugeTileGrid/GaugeSlot). pickerOpensThreshold is which face the
-    // reused SwapPager opens to: ⚙ seeds the threshold flip, ⇄ opens the plain gauge face.
+    // gap) flips this on; pickerTileId is no longer SET by long-press, only by the ⇄ badge the
+    // mode shows on each tile (see GaugeTileGrid/GaugeSlot).
     var rearrangeMode by remember { mutableStateOf(false) }
-    var pickerOpensThreshold by remember { mutableStateOf(false) }
-    val dismissPicker: () -> Unit = {
-        pickerTileId = null
-        pickerOpensThreshold = false
-    }
+    // OBD-77: the ⚙ badge no longer routes through pickerTileId at all — swap and edit are now
+    // fully independent states, so opening the editor can never disturb (or be disturbed by) the
+    // in-tile swap carousel. `editorClosing` keeps the overlay composed through its collapse
+    // animation; GaugeEditorOverlay's own onCollapsed is what finally clears editorTarget.
+    var editorTarget by remember { mutableStateOf<EditorTarget?>(null) }
+    var editorClosing by remember { mutableStateOf(false) }
+    val dismissPicker: () -> Unit = { pickerTileId = null }
+    val dismissEditor: () -> Unit = { if (editorTarget != null) editorClosing = true }
     val dismissAddPalette: () -> Unit = {
         showAddPalette = false
         addAtCell = null
     }
     val exitRearrange: () -> Unit = { rearrangeMode = false }
+    BackHandler(enabled = editorTarget != null, onBack = dismissEditor)
     BackHandler(enabled = pickerTileId != null, onBack = dismissPicker)
     BackHandler(enabled = showAddPalette || addAtCell != null, onBack = dismissAddPalette)
-    // Only armed once nothing more specific (an open badge editor, the add palette) is showing —
-    // so back closes those layers first and exits the whole mode last, without depending on
-    // BackHandler registration order between this and the two above.
+    // Only armed once nothing more specific (an open swap picker, the floating editor, the add
+    // palette) is showing — so back closes those layers first and exits the whole mode last,
+    // without depending on BackHandler registration order between this and the three above.
     BackHandler(
-        enabled = rearrangeMode && pickerTileId == null && !showAddPalette && addAtCell == null,
+        enabled =
+            rearrangeMode &&
+                pickerTileId == null &&
+                editorTarget == null &&
+                !showAddPalette &&
+                addAtCell == null,
         onBack = exitRearrange,
     )
 
@@ -375,6 +406,13 @@ fun GaugeDashboard(
     LaunchedEffect(placedIds) {
         if (pickerTileId != null && pickerTileId !in placedIds) {
             pickerTileId = null
+        }
+        // OBD-77: same self-heal for the floating editor — a gauge removed (or swapped out) from
+        // under an open editor would otherwise leave a card editing an id that is no longer on
+        // the board, with an armed scrim and BackHandler over it.
+        if (editorTarget?.id?.let { it !in placedIds } == true) {
+            editorTarget = null
+            editorClosing = false
         }
         // OBD-67: an empty board has nothing left to rearrange — leaving the mode on would strand
         // the Done button/backdrop/scrim over a blank grid.
@@ -530,26 +568,27 @@ fun GaugeDashboard(
                         GaugeTileGrid(
                             isLandscape = isLandscape,
                             uiState = uiState,
-                            sparklines = sparklines,
                             gaugeOrder = gaugeOrder,
                             gridLayoutsByColumns = effectiveGridLayoutsByColumns,
                             placedIds = placedIds.toSet(),
                             pickerTileId = pickerTileId,
                             thresholds = thresholds,
+                            renderStyles = renderStyles,
+                            scales = scales,
                             rearrangeMode = rearrangeMode,
-                            pickerOpensThreshold = pickerOpensThreshold,
+                            editorOpen = editorTarget != null,
                             viewportHeightPx = viewportHeightPx,
                             onLongPress = { rearrangeMode = true },
                             onDismissPicker = dismissPicker,
                             onSelectCandidate = { oldId, newId -> onSwapGauge(oldId, newId) },
                             onSetThreshold = onSetThreshold,
-                            onOpenSwap = { id ->
-                                pickerTileId = id
-                                pickerOpensThreshold = false
-                            },
-                            onOpenThreshold = { id ->
-                                pickerTileId = id
-                                pickerOpensThreshold = true
+                            onSetRenderStyle = onSetRenderStyle,
+                            onOpenSwap = { id -> pickerTileId = id },
+                            // OBD-77: ⚙ opens the dashboard-level floating editor card, growing
+                            // out of the tile's own bounds — NOT the in-tile flip card any more.
+                            onOpenThreshold = { id, bounds ->
+                                editorClosing = false
+                                editorTarget = EditorTarget(id, bounds)
                             },
                             onRemoveGauge = onRemoveGauge,
                             onMoveGauge = { id, col, row, columns -> onMoveGauge(id, col, row, columns) },
@@ -623,6 +662,31 @@ fun GaugeDashboard(
                     onDismiss = dismissAddPalette,
                 )
             }
+            // OBD-77: the floating gauge editor — LAST child of this Box, so its scrim is
+            // hit-tested before (and therefore covers) every layer beneath it.
+            val editing = editorTarget
+            if (editing != null) {
+                val pid = GAUGE_CATALOG_BY_ID[editing.id]
+                GaugeEditorOverlay(
+                    id = editing.id,
+                    label = pid?.label ?: editing.id,
+                    startBounds = editing.startBounds,
+                    unit = pid?.unit ?: MeasurementUnit.FAHRENHEIT,
+                    thresholds = thresholds[editing.id] ?: GaugeThresholds(),
+                    // Same rule the in-tile editor face uses: the threshold section is only
+                    // offered on a temperature-kind gauge; everything else gets style only.
+                    hasThresholds = pid?.unit?.kind() == UnitKind.TEMPERATURE,
+                    style = renderStyles[editing.id] ?: GaugeRenderStyle.DIGITAL,
+                    expanded = !editorClosing,
+                    onSetThreshold = { next -> onSetThreshold(editing.id, next) },
+                    onSetStyle = { next -> onSetRenderStyle(editing.id, next) },
+                    onDismiss = dismissEditor,
+                    onCollapsed = {
+                        editorTarget = null
+                        editorClosing = false
+                    },
+                )
+            }
         }
     }
 }
@@ -673,21 +737,23 @@ fun GaugeDashboard(
 private fun GaugeTileGrid(
     isLandscape: Boolean,
     uiState: DashboardUiState,
-    sparklines: Map<String, StateFlow<List<SparklinePoint>>>,
     gaugeOrder: List<GaugeOrderEntry>,
     gridLayoutsByColumns: Map<Int, GridLayout>,
     placedIds: Set<String>,
     pickerTileId: String?,
     thresholds: Map<String, GaugeThresholds>,
+    renderStyles: Map<String, GaugeRenderStyle>,
+    scales: Map<String, GaugeScale>,
     rearrangeMode: Boolean,
-    pickerOpensThreshold: Boolean,
+    editorOpen: Boolean,
     viewportHeightPx: Float,
     onLongPress: () -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (oldId: String, newId: String) -> Unit,
     onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
+    onSetRenderStyle: (id: String, style: GaugeRenderStyle) -> Unit,
     onOpenSwap: (id: String) -> Unit,
-    onOpenThreshold: (id: String) -> Unit,
+    onOpenThreshold: (id: String, startBounds: Rect) -> Unit,
     onRemoveGauge: (id: String) -> Unit,
     onMoveGauge: (id: String, col: Int, row: Int, columns: Int) -> Unit,
     onRequestAddAt: (col: Int, row: Int, columns: Int) -> Unit,
@@ -750,8 +816,10 @@ private fun GaugeTileGrid(
     }
 
     // Only one tile can ever be grabbed at a time, and never while a badge-opened picker is
-    // showing (the picker's own pager owns horizontal drags on that tile instead).
-    val dragEnabled = rearrangeMode && pickerTileId == null
+    // showing (the picker's own pager owns horizontal drags on that tile instead) or the OBD-77
+    // floating editor is up (its scrim claims taps, but a raw drag would otherwise still reach a
+    // tile underneath and start moving the board behind the card).
+    val dragEnabled = rearrangeMode && pickerTileId == null && !editorOpen
     LaunchedEffect(dragEnabled) {
         // Leaving rearrange mode, or a badge opening a picker mid-drag, must never strand a
         // floating tile with nothing left to commit or cancel it.
@@ -848,19 +916,20 @@ private fun GaugeTileGrid(
             GaugeSlot(
                 id = id,
                 uiState = uiState,
-                sparkline = sparklines[id],
                 placedIds = placedIds,
                 isPicking = pickerTileId == id,
                 thresholds = thresholds,
+                renderStyles = renderStyles,
+                scales = scales,
                 rearrangeMode = rearrangeMode,
                 dragEnabled = dragEnabled,
                 isDragged = id == draggedId,
                 targetRect = targetRect,
-                initiallyShowThreshold = pickerOpensThreshold,
                 onLongPress = onLongPress,
                 onDismissPicker = onDismissPicker,
                 onSelectCandidate = { newId -> onSelectCandidate(id, newId) },
                 onSetThreshold = onSetThreshold,
+                onSetRenderStyle = onSetRenderStyle,
                 onDragStart = { local ->
                     val placement = layout.placementFor(id)
                     if (placement != null) {
@@ -894,7 +963,7 @@ private fun GaugeTileGrid(
                 onDragCancel = { dragController.end() },
                 onRemove = { onRemoveGauge(id) },
                 onOpenSwap = { onOpenSwap(id) },
-                onOpenThreshold = { onOpenThreshold(id) },
+                onOpenThreshold = { bounds -> onOpenThreshold(id, bounds) },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -985,7 +1054,12 @@ private fun GaugeTileGrid(
                         .draggedTileTreatment(glow)
                         .testTag("gauge-drag-overlay-$floatingId"),
             ) {
-                GaugeSlotTileBody(tile = resolveTile(floatingId, uiState), sparkline = sparklines[floatingId])
+                GaugeSlotTileBody(
+                    tile = resolveTile(floatingId, uiState),
+                    style = renderStyles[floatingId] ?: GaugeRenderStyle.DIGITAL,
+                    scale = scales[floatingId] ?: GaugeScaleDefaults.forId(floatingId),
+                    gaugeThresholds = thresholds[floatingId] ?: GaugeThresholds(),
+                )
             }
         }
 
@@ -1022,8 +1096,9 @@ private fun resolveTile(
  * stable [candidateGaugesFor] ribbon (over [placedIds]), opened centered on the current gauge
  * (OBD-66) — so swiping to another gauge works at any tile size and the pager (not the tile's tap
  * detector) owns the horizontal drag. Tapping a candidate page persists the swap via
- * [onSelectCandidate]; tapping the current gauge's page or outside dismisses. [initiallyShowThreshold]
- * (OBD-67) seeds the pager's focused card straight to its threshold face — the ⚙ badge's trigger.
+ * [onSelectCandidate]; tapping the current gauge's page or outside dismisses. Only the ⇄ badge
+ * reaches this path — OBD-77 moved the ⚙ badge off it entirely ([onOpenThreshold] now reports this
+ * slot's own root-space bounds up so the floating editor card can grow out of them).
  *
  * When NOT picking, [rearrangeMode] selects between two non-picking looks:
  * - **Off** (unchanged from OBD-65): dispatches to [BoostTile]/[GaugeTile] as the normal
@@ -1054,35 +1129,52 @@ private fun resolveTile(
 private fun GaugeSlot(
     id: String,
     uiState: DashboardUiState,
-    sparkline: StateFlow<List<SparklinePoint>>?,
     placedIds: Set<String>,
     isPicking: Boolean,
     thresholds: Map<String, GaugeThresholds>,
+    renderStyles: Map<String, GaugeRenderStyle>,
+    scales: Map<String, GaugeScale>,
     rearrangeMode: Boolean,
     dragEnabled: Boolean,
     isDragged: Boolean,
     targetRect: CellRect,
-    initiallyShowThreshold: Boolean,
     onLongPress: () -> Unit,
     onDismissPicker: () -> Unit,
     onSelectCandidate: (String) -> Unit,
     onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
+    onSetRenderStyle: (id: String, style: GaugeRenderStyle) -> Unit,
     onDragStart: (Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
     onRemove: () -> Unit,
     onOpenSwap: () -> Unit,
-    onOpenThreshold: () -> Unit,
+    onOpenThreshold: (startBounds: Rect) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // MINOR M3: placeholder fallback — DashboardUiState.Loading only seeds the four core tiles.
     // B8 (round-1 review): `?: false`, not `?: true` — an id absent from GAUGE_CATALOG entirely
     // is exactly the "cannot vouch for it" case PidCatalog.isVerified treats as unverified.
     val tile = resolveTile(id, uiState)
+    // OBD-72: this tile's own render style/scale/thresholds, resolved once here and threaded into
+    // whichever body below actually renders (the non-picking tile, or the picker's own live pages
+    // via SwapPager's own per-id lookups).
+    val gaugeStyle = renderStyles[id] ?: GaugeRenderStyle.DIGITAL
+    val gaugeScale = scales[id] ?: GaugeScaleDefaults.forId(id)
+    val gaugeThresholds = thresholds[id] ?: GaugeThresholds()
 
+    // OBD-77: this slot's own laid-out rect in root space, kept for the ⚙ badge to hand to the
+    // floating editor as its grow-from bounds. Deliberately a PLAIN holder, not snapshot state:
+    // `onGloballyPositioned` fires on every layout pass, and writing observable state from there
+    // would recompose this slot (and, via the jiggle/drag layers, potentially re-layout it) on a
+    // loop. Nothing reads it except the badge's onClick, at which point the latest layout has
+    // already run.
+    val slotBounds = remember { SlotBounds() }
     // propagateMinConstraints = true: makes the child (tile or pager) fill this Box exactly.
-    Box(modifier = modifier, propagateMinConstraints = true) {
+    Box(
+        modifier = modifier.onGloballyPositioned { slotBounds.value = it.boundsInRoot() },
+        propagateMinConstraints = true,
+    ) {
         if (isPicking) {
             // candidateGaugesFor returns the stable GAUGE_CATALOG ribbon; SwapPager opens centered
             // on the current gauge at its ribbon slot (OBD-66).
@@ -1092,10 +1184,11 @@ private fun GaugeSlot(
                 pages = pages,
                 tileFor = uiState::tileFor,
                 thresholds = thresholds,
+                renderStyles = renderStyles,
                 onDismiss = onDismissPicker,
                 onSelect = onSelectCandidate,
                 onSetThreshold = onSetThreshold,
-                initiallyShowThreshold = initiallyShowThreshold,
+                onSetRenderStyle = onSetRenderStyle,
                 modifier = Modifier.fillMaxSize(),
             )
         } else if (rearrangeMode) {
@@ -1162,7 +1255,13 @@ private fun GaugeSlot(
                         .rearrangeJiggle(id, enabled = !isDragged)
                         .animatePlacement(targetRect, enabled = !isDragged)
                         .then(if (isDragged) Modifier.dragGhostTreatment() else Modifier)
-                GaugeSlotTileBody(tile, sparkline, bodyModifier)
+                GaugeSlotTileBody(
+                    tile,
+                    bodyModifier,
+                    style = gaugeStyle,
+                    scale = gaugeScale,
+                    gaugeThresholds = gaugeThresholds,
+                )
             }
             if (!isDragged) {
                 UnverifiedBadgeOverlay(
@@ -1172,12 +1271,17 @@ private fun GaugeSlot(
                     modifier = Modifier.matchParentSize(),
                 )
                 if (dragEnabled) {
+                    // OBD-72: every catalog gauge now has an editor (at minimum the style picker
+                    // — GaugeEditorFace's own hasThresholds flag, not this, decides whether the
+                    // threshold squares/stepper section ALSO shows), so the gear badge shows for
+                    // any real GAUGE_CATALOG id, not just the temperature-kind gauges that used to
+                    // gate it.
                     RearrangeBadges(
                         id = id,
-                        editable = GAUGE_CATALOG_BY_ID[id]?.unit?.kind() == UnitKind.TEMPERATURE,
+                        editable = GAUGE_CATALOG_BY_ID[id] != null,
                         onRemove = onRemove,
                         onSwap = onOpenSwap,
-                        onThreshold = onOpenThreshold,
+                        onThreshold = { onOpenThreshold(slotBounds.value) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -1185,11 +1289,13 @@ private fun GaugeSlot(
         } else {
             GaugeSlotTileBody(
                 tile,
-                sparkline,
                 Modifier,
                 interactive = true,
                 onLongPress = onLongPress,
                 onTap = onDismissPicker,
+                style = gaugeStyle,
+                scale = gaugeScale,
+                gaugeThresholds = gaugeThresholds,
             )
             UnverifiedBadgeOverlay(
                 tile = tile,
@@ -1209,39 +1315,49 @@ private fun GaugeSlot(
  * supply their own external interaction (a drag gesture, or nothing at all for the ghost/overlay).
  */
 @Composable
-@Suppress("LongParameterList") // tile/sparkline/modifier/interactive/onLongPress/onTap all load-bearing.
+@Suppress("LongParameterList") // tile/modifier/interactive/onLongPress/onTap/style/scale/thresholds — all load-bearing.
 private fun GaugeSlotTileBody(
     tile: GaugeTileUiState,
-    sparkline: StateFlow<List<SparklinePoint>>?,
     modifier: Modifier = Modifier,
     interactive: Boolean = false,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
+    style: GaugeRenderStyle = GaugeRenderStyle.DIGITAL,
+    scale: GaugeScale = GaugeScaleDefaults.forId(tile.id),
+    gaugeThresholds: GaugeThresholds = GaugeThresholds(),
 ) {
     if (tile.id == PidIds.BOOST) {
-        BoostTile(tile, sparkline, modifier, onLongPress, onTap, interactive)
+        BoostTile(tile, modifier, onLongPress, onTap, interactive, style, scale, gaugeThresholds)
     } else {
-        GaugeTile(tile, sparkline, modifier, onLongPress, onTap, interactive)
+        GaugeTile(tile, modifier, onLongPress, onTap, interactive, style, scale, gaugeThresholds)
     }
 }
 
 /**
- * One temp/numeric tile: label, large value, threshold-colored background, stale treatment,
- * optional sparkline. [onLongPress] enters rearrange mode (OBD-67 re-homed the old direct-to-picker
+ * One temp/numeric tile: label, large value, threshold-colored background, stale treatment.
+ * [onLongPress] enters rearrange mode (OBD-67 re-homed the old direct-to-picker
  * behavior); [onTap] dismisses some *other* tile's open picker (see [gaugeTileInteraction]).
  * [interactive] `false` (rearrange mode's own render path — see `GaugeSlot`) skips wiring
  * [gaugeTileInteraction]'s own gesture, since the caller supplies its own drag detector instead;
  * the tile's `testTag`/zone semantics stay attached either way.
+ *
+ * OBD-72: [style] picks which body renders inside this SAME outer shell — the threshold-tinted,
+ * danger-pulsing background/border above is unconditional, so the "coloring is sacred across every
+ * style" contract holds for free; only the inner content (digital column vs. needle vs. bar-arc)
+ * changes. [scale]/[gaugeThresholds] feed the needle/bar-arc bodies' own zone-arc/segment coloring
+ * (`NeedleGaugeBody`/`BarArcGaugeBody`) and are unused by the [GaugeRenderStyle.DIGITAL] default.
  */
 @Composable
-@Suppress("LongParameterList") // state/sparkline/modifier/onLongPress/onTap/interactive all load-bearing.
+@Suppress("LongParameterList") // state/modifier/onLongPress/onTap/interactive/style/scale/thresholds — load-bearing.
 fun GaugeTile(
     state: GaugeTileUiState,
-    sparkline: StateFlow<List<SparklinePoint>>? = null,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
     interactive: Boolean = true,
+    style: GaugeRenderStyle = GaugeRenderStyle.DIGITAL,
+    scale: GaugeScale = GaugeScaleDefaults.forId(state.id),
+    gaugeThresholds: GaugeThresholds = GaugeThresholds(),
 ) {
     val zoneColor = zoneColor(state.zone)
     val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
@@ -1262,16 +1378,45 @@ fun GaugeTile(
                 ).padding(TILE_PADDING_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
+        when (style) {
+            GaugeRenderStyle.DIGITAL -> DigitalGaugeBody(state)
+            GaugeRenderStyle.NEEDLE ->
+                NeedleGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+            GaugeRenderStyle.BAR_ARC ->
+                BarArcGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * [GaugeRenderStyle.DIGITAL]'s body — label, big value, optional stale text — extracted out of
+ * [GaugeTile] (LongMethod) rather than trimmed down, since every line here is genuinely part of
+ * that one style's content.
+ *
+ * OBD-72 device fix: every text size here is derived from this composable's own measured
+ * dimension ([BoxWithConstraints]) via [scaledTextSize] rather than a fixed `sp` — see
+ * `GaugeTextScale.kt`'s file KDoc for why (this was a pre-existing bug, not new in OBD-72).
+ */
+@Composable
+private fun DigitalGaugeBody(state: GaugeTileUiState) {
+    BoxWithConstraints {
+        val dim = dpMin(maxWidth, maxHeight)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = state.label,
-                style = MaterialTheme.typography.titleMedium,
+                style =
+                    MaterialTheme.typography.titleMedium.copy(
+                        fontSize = scaledTextSize(dim, LABEL_FONT_FRACTION, LABEL_FONT_MIN_SP, LABEL_FONT_MAX_SP),
+                    ),
                 modifier = Modifier.testTag("gauge-${state.id}-label"),
             )
             val valueColor = if (state.isStale) GaugeStaleDim else MaterialTheme.colorScheme.onBackground
             Text(
                 text = state.valueText,
-                style = GaugeValueTextStyle,
+                style =
+                    GaugeValueTextStyle.copy(
+                        fontSize = scaledTextSize(dim, VALUE_FONT_FRACTION, VALUE_FONT_MIN_SP, VALUE_FONT_MAX_SP),
+                    ),
                 color = valueColor,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
@@ -1281,17 +1426,12 @@ fun GaugeTile(
             state.staleText?.let { staleText ->
                 Text(
                     text = staleText,
-                    style = MaterialTheme.typography.bodySmall,
+                    style =
+                        MaterialTheme.typography.bodySmall.copy(
+                            fontSize = scaledTextSize(dim, STALE_FONT_FRACTION, STALE_FONT_MIN_SP, STALE_FONT_MAX_SP),
+                        ),
                     color = GaugeStaleDim,
                     modifier = Modifier.testTag("gauge-${state.id}-stale"),
-                )
-            }
-            sparkline?.let { flow ->
-                GaugeSparklineStrip(
-                    id = state.id,
-                    flow = flow,
-                    color = zoneColor,
-                    modifier = Modifier.fillMaxWidth().padding(top = SPARKLINE_TOP_PADDING_DP.dp),
                 )
             }
         }
@@ -1299,18 +1439,25 @@ fun GaugeTile(
 }
 
 /**
- * Boost tile: same shell as [GaugeTile] plus the [BoostArc] sweep indicator — see its KDoc for
- * [onLongPress]/[onTap].
+ * Boost tile: same shell as [GaugeTile] plus the [BoostArc] sweep indicator for
+ * [GaugeRenderStyle.DIGITAL] — see its KDoc for [onLongPress]/[onTap]/[style]/[scale]/
+ * [gaugeThresholds]. [GaugeRenderStyle.NEEDLE]/[GaugeRenderStyle.BAR_ARC] reuse the exact same
+ * generic bodies [GaugeTile] does — boost's own [GaugeScaleDefaults] entry (0–25 psi) and NEUTRAL
+ * [GaugeThresholds] (see `ThresholdConfig.seed`) drive them the same way any other gauge's would,
+ * so the "Est." unverified badge (drawn as a sibling overlay in `GaugeSlot`, unaffected by this
+ * dispatch) carries onto them exactly as it does today onto the digital tile.
  */
 @Composable
-@Suppress("LongParameterList") // state/sparkline/modifier/onLongPress/onTap/interactive all load-bearing.
+@Suppress("LongParameterList") // state/modifier/onLongPress/onTap/interactive/style/scale/thresholds — load-bearing.
 private fun BoostTile(
     state: GaugeTileUiState,
-    sparkline: StateFlow<List<SparklinePoint>>?,
     modifier: Modifier = Modifier,
     onLongPress: () -> Unit = {},
     onTap: () -> Unit = {},
     interactive: Boolean = true,
+    style: GaugeRenderStyle = GaugeRenderStyle.DIGITAL,
+    scale: GaugeScale = GaugeScaleDefaults.forId(state.id),
+    gaugeThresholds: GaugeThresholds = GaugeThresholds(),
 ) {
     val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
     Box(
@@ -1321,10 +1468,35 @@ private fun BoostTile(
                 .padding(TILE_PADDING_DP.dp),
         contentAlignment = Alignment.Center,
     ) {
+        when (style) {
+            GaugeRenderStyle.DIGITAL -> BoostDigitalBody(state)
+            GaugeRenderStyle.NEEDLE ->
+                NeedleGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+            GaugeRenderStyle.BAR_ARC ->
+                BarArcGaugeBody(state, scale, gaugeThresholds, modifier = Modifier.fillMaxSize())
+        }
+    }
+}
+
+/**
+ * [BoostTile]'s [GaugeRenderStyle.DIGITAL] body — label, the [BoostArc] sweep, big value —
+ * extracted out of [BoostTile] (LongMethod) rather than trimmed down, same reasoning
+ * as [DigitalGaugeBody]. OBD-72 device fix: label/value text sizes scale off this composable's own
+ * measured dimension via [scaledTextSize] — see `GaugeTextScale.kt`'s file KDoc. [BoostArc] itself
+ * keeps its pre-existing fixed 120dp (OBD-10) — untouched by either OBD-72 or this device fix, not
+ * part of either report.
+ */
+@Composable
+private fun BoostDigitalBody(state: GaugeTileUiState) {
+    BoxWithConstraints {
+        val dim = dpMin(maxWidth, maxHeight)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = state.label,
-                style = MaterialTheme.typography.titleMedium,
+                style =
+                    MaterialTheme.typography.titleMedium.copy(
+                        fontSize = scaledTextSize(dim, LABEL_FONT_FRACTION, LABEL_FONT_MIN_SP, LABEL_FONT_MAX_SP),
+                    ),
                 modifier = Modifier.testTag("gauge-${state.id}-label"),
             )
             // OBD-64: the arc yields vertical space to the value. In a tall tile the column's
@@ -1342,41 +1514,18 @@ private fun BoostTile(
             val valueColor = if (state.isStale) GaugeStaleDim else MaterialTheme.colorScheme.onBackground
             Text(
                 text = state.valueText,
-                style = GaugeValueTextStyle,
+                style =
+                    GaugeValueTextStyle.copy(
+                        fontSize = scaledTextSize(dim, VALUE_FONT_FRACTION, VALUE_FONT_MIN_SP, VALUE_FONT_MAX_SP),
+                    ),
                 color = valueColor,
                 textAlign = TextAlign.Center,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("gauge-${state.id}-value"),
             )
-            sparkline?.let { flow ->
-                GaugeSparklineStrip(
-                    id = state.id,
-                    flow = flow,
-                    color = GaugeNeutral,
-                    modifier = Modifier.fillMaxWidth().padding(top = SPARKLINE_TOP_PADDING_DP.dp),
-                )
-            }
         }
     }
-}
-
-/**
- * Leaf composable that collects [flow] itself (via [collectAsStateWithLifecycle]) — the only
- * place in this file that reads a sparkline flow's *value*. [GaugeTile]/[BoostTile]/
- * [GaugeDashboard] all pass the `StateFlow` reference through untouched, so a new point never
- * triggers their recomposition, only this leaf's — see `SparklineHistoryHolder`'s KDoc and
- * `SparklineRecompositionTest` (OBD-20 AC).
- */
-@Composable
-private fun GaugeSparklineStrip(
-    id: String,
-    flow: StateFlow<List<SparklinePoint>>,
-    color: Color,
-    modifier: Modifier = Modifier,
-) {
-    val points by flow.collectAsStateWithLifecycle()
-    SparklineChart(points = points, color = color, modifier = modifier.testTag("gauge-$id-sparkline"))
 }
 
 /**

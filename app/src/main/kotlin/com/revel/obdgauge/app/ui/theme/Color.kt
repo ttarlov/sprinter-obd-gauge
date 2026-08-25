@@ -30,6 +30,13 @@ val ThresholdSelectBlue = Color(0xFF3B82F6)
 val GaugeTrackNeutral = Color(0xFF3A4150)
 val GaugeStaleDim = Color(0xFF6B7280)
 
+// OBD-72: the analog-needle style's own needle/hub color — Taras's rally-graphic aesthetic
+// (design_aesthetic memory: teal/orange) calls for orange, not GaugeRed, so a needle sitting in a
+// perfectly green zone doesn't itself read as a danger signal — the colored zone ARC (painted
+// underneath from ThresholdConfig, see GaugeRenderMath.kt's thresholdZoneSpans) is what carries
+// the actual threshold color; the needle is just the pointer.
+val GaugeNeedleAccent = Color(0xFFE0824A)
+
 // OBD-27: unverified-PID badge. Deliberately its own hue, not a reuse of GaugeAmber/GaugeRed —
 // this badge answers "is this number proven," an axis completely orthogonal to "is this value
 // normal" (the green/amber/red threshold vocabulary above). Reusing amber/red here would read

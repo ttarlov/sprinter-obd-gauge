@@ -35,8 +35,8 @@ import kotlinx.coroutines.flow.stateIn
  * which this issue explicitly holds fixed.
  *
  * So: the conversion happens once, at the `prod` DI seam, and everything downstream —
- * thresholds, OBD-21's display-unit preference, the sparkline buffers, the notification's
- * headline reading — keeps working against exactly one declared unit per channel, unchanged.
+ * thresholds, OBD-21's display-unit preference, the notification's headline reading — keeps
+ * working against exactly one declared unit per channel, unchanged.
  * `UnitConversion` was already written to read the *declared* unit as its `from` rather than
  * assuming one (see its KDoc), so nothing in `src/main/` needs to know this class exists.
  *

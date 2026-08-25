@@ -211,7 +211,7 @@ a prediction rather than a capture.
     `toDashboardUiState(readings, connection, now, thresholds = ThresholdConfig.seed, units = UnitPreferences())`
     mapper shared by the ViewModel and tests (the last two params are OBD-21 additions with
     defaults matching pre-OBD-21 behavior exactly). `DashboardUiState.tileFor(id)` (OBD-20/21) is
-    a new lookup helper `GaugeDashboard`'s gauge-order rendering and the sparkline wiring use.
+    a new lookup helper `GaugeDashboard`'s gauge-order rendering uses.
     **OBD-42**: `toDashboardUiState` computes one `GaugeTileUiState` per `GAUGE_CATALOG` entry
     (not just the four fixed fields) — `coolant`/`transTemp`/`oilTemp`/`boost` are still named
     fields (every pre-OBD-42 call site is unaffected), and every *other* catalog id (today, just
@@ -238,12 +238,10 @@ a prediction rather than a capture.
     only. Takes an injected `VehicleDataSource`, `java.time.Clock` (stale-text "seconds ago"
     math), and (OBD-21) `SettingsRepository` — combined three-way so a settings edit recolors/
     reformats `uiState` live. Also exposes `gaugeOrder`/`keepScreenOn` `StateFlow`s (derived from
-    the same repository) and `sparklineFlow(id)` (OBD-20, backed by `SparklineHistoryHolder`) —
-    see the "Sparklines"/"Settings screen" sections below. **OBD-42**: requests `GAUGE_CATALOG`
-    (not `DASHBOARD_PIDS`) from `dataSource.start()`, and seeds `SparklineHistoryHolder` off
-    `GAUGE_CATALOG` too — otherwise a swap candidate's channel (e.g. `rpm`) would never have
-    readings/history to show at all, since `FakeVehicleDataSource` only emits ids it was asked
-    for. Also exposes `swapGauge(oldId, newId)` — see "Gauge swap picker" below.
+    the same repository) — see the "Settings screen" section below. **OBD-42**: requests
+    `GAUGE_CATALOG` (not `DASHBOARD_PIDS`) from `dataSource.start()` — otherwise a swap
+    candidate's channel (e.g. `rpm`) would never have readings to show at all, since
+    `FakeVehicleDataSource` only emits ids it was asked for. Also exposes `swapGauge(oldId, newId)` — see "Gauge swap picker" below.
   - `DashboardScreen.kt` — `GaugeDashboard`: a settings-gear `Row` (OBD-21) alongside
     `ConnectionBanner` (OBD-11) at the top, then the tile layout (landscape: single `Row`;
     portrait: scrollable `Column`, tiles sized to content so nothing clips) in a
@@ -256,9 +254,8 @@ a prediction rather than a capture.
     to). Each tile exposes a
     `testTag("gauge-<id>")` root with a `stateDescription` semantics property carrying the
     threshold zone name, plus `testTag("gauge-<id>-label")`/`testTag("gauge-<id>-value")` on the
-    label/value text, and (OBD-20, when a `sparklines` entry exists for that id) a
-    `testTag("gauge-<id>-sparkline")` leaf — this is how tests assert color/label/value/sparkline-
-    presence without pixel-diffing. See "Gauge swap picker" below for the OBD-42 additions
+    label/value text — this is how tests assert color/label/value without pixel-diffing. See
+    "Gauge swap picker" below for the OBD-42 additions
     (`GaugeTileGrid`, `GaugeSlot`'s picker dispatch, `onLongPress`/`onTap` on `GaugeTile`/
     `BoostTile`, the `gauge-picker-scrim`).
   - `ConnectionBanner.kt` (OBD-11) — `ConnectionBanner(connection: LinkState)`, presentation
@@ -274,58 +271,16 @@ a prediction rather than a capture.
 - `di/DataSourceModule.kt` — now flavor-specific; see "Build flavors" above. Was a single
   `src/main/` file through OBD-10; split for OBD-12.
 
-## Sparklines (OBD-20)
+## Sparklines (OBD-20) — REMOVED (OBD-72)
 
-Per-gauge 5-minute rolling strip chart, `app/src/main/.../sparkline/`:
-
-- `SparklineBuffer` (`SparklineBuffer.kt`) — pure Kotlin, no Compose/Android dependency. A ring
-  buffer (`ArrayDeque<SparklinePoint>`) with two independent bounds: `trim(now)` drops anything
-  older than `window` (5 minutes) relative to `now`, and a hard `capacity` (2 400, double the
-  1 200 samples a steady 4 Hz feed produces in 5 minutes) catches bursty/out-of-order timestamps
-  before the time-window trim would. `add(point)` appends then trims relative to the point's own
-  timestamp — deliberately not wall-clock `Instant.now()`, so it behaves identically fed by a
-  real clock or `FakeVehicleDataSource`'s scripted virtual one. `add` is also a no-op when
-  `point`'s timestamp matches the most recently added sample's (review round-1 M4 — see
-  `SparklineHistoryHolder`'s note below for why this matters).
-- `downsampleSparkline(points, maxPoints = 120)` — deterministic, O(maxPoints) evenly-spaced-index
-  downsampling (always keeps the first/last point), independent of the demo's default pixel
-  budget flag `DEFAULT_MAX_SPARKLINE_POINTS`. Tested for window-trim correctness, determinism,
-  and bound enforcement at a simulated 4 Hz × 300 s in `SparklineBufferTest`.
-- `SparklineHistoryHolder` — owns one `SparklineBuffer` per gauge id and republishes a
-  downsampled snapshot to a **per-id `StateFlow<List<SparklinePoint>>`**, fed from
-  `DashboardViewModel`'s existing three-way `combine()` step (`onReadings(readings, now)` runs
-  once per emission, before mapping to `DashboardUiState`). A stale or missing reading is simply
-  not added to its buffer — `SparklineChart` turns the resulting time gap into a rendered break,
-  so disconnects are never silently interpolated across. Because that `combine()` fires on *any*
-  of its three inputs — including a settings edit or a connection-state change with the exact
-  same readings map — `onReadings` can be called repeatedly with an unchanged reading; without
-  `SparklineBuffer.add`'s same-timestamp dedup (review round-1 M4), each such tick would inject a
-  duplicate point at an identical x-position. Covered by `SparklineHistoryHolderTest`.
-- `SparklineChart` (Compose `Canvas`) — draws already-downsampled `points`, auto-scaled to their
-  own min/max value and time span. The `Path` is created once via `remember` and `.reset()` on
-  each draw rather than reallocated; the `Stroke` and each point's epoch-millis are likewise
-  hoisted into `remember`s outside the draw block rather than recomputed on every draw pass. A
-  gap between consecutive points wider than 2 s (several multiples of the 4 Hz interval, so
-  ordinary jitter never trips it) breaks the line (`moveTo` instead of `lineTo`) instead of
-  interpolating across it — the predicate is `isSparklineGap` (`internal`, pure, Compose-free),
-  unit-tested on both sides of the boundary in `SparklineGapTest`.
-
-**Why sparkline data lives outside `DashboardUiState`.** `DashboardUiState`/`GaugeTileUiState`
-stay exactly as pure/immutable as before OBD-20 — sparkline points are **not** a field on either.
-`DashboardScreen.kt`'s `GaugeDashboard`/`GaugeTile`/`BoostTile` accept the per-id `StateFlow`
-itself as a parameter and pass the *reference* straight through, untouched; only the leaf
-`GaugeSparklineStrip` composable calls `.collectAsStateWithLifecycle()` on it. Because a `Flow`
-reference doesn't change identity when its `.value` changes, none of the ancestor composables
-re-read anything on a tick — Compose's recomposition scoping confines each update to that one
-leaf. This is the architecture `SparklineRecompositionTest` guards (see "Tests" below); if a
-future change ever lifts the `.collectAsState()` call up to `GaugeDashboard` (e.g. to pass a
-plain `List<SparklinePoint>` down as a value), that test fails immediately.
-
-**Honest "no jank" note (OBD-20 AC):** what's verified here is headless — a recomposition-count
-test proving the *architecture* isolates 4 Hz ticks to one leaf, and a pure cost-bound test on
-`downsampleSparkline`. Neither measures actual GPU/compositor frame timing on a real device.
-That requires a device macrobenchmark, tracked as OBD-34 — do not read "recomposition is
-isolated" as "frames never drop."
+The per-gauge 5-minute rolling strip chart (`SparklineBuffer`/`SparklineHistoryHolder`/
+`SparklineChart`, plus the `gauge-<id>-sparkline` testTag and the `sparklines` param threaded
+through `GaugeDashboard`/`GaugeTile`/`BoostTile`) shipped in OBD-20 and was cut during OBD-72's
+taste iteration: at real dash-mount tile sizes the strip stole vertical space from the value
+readout it was meant to contextualize, and the needle/bar-arc styles cover "where is this
+heading" better. The 4 Hz history buffer is gone with it, so `DashboardViewModel` no longer
+maintains any per-gauge history. See `issues/OBD-20.md` for the original design if it is ever
+revived. OBD-34 (device macrobenchmark) no longer has a sparkline to measure.
 
 ## Settings screen (OBD-21)
 
@@ -487,9 +442,9 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   originally-duplicated block lives in exactly one place. It's a plain
   `Modifier.pointerInput { detectTapGestures(...) }` — **not** `clickable`/`combinedClickable`:
   those force a semantics merge boundary (`mergeDescendants = true`) that would fold each tile's
-  own child testTags (`-label`/`-value`/`-stale`/`-sparkline`) into one merged node and break
+  own child testTags (`-label`/`-value`/`-stale`) into one merged node and break
   every existing `onNodeWithTag` lookup on them (this broke, and was caught by, the existing
-  `DashboardScreenTest`/`ConnectionBannerTest`/`SparklineRecompositionTest` suite the first time
+  `DashboardScreenTest`/`ConnectionBannerTest` suite the first time
   this file tried `combinedClickable` — no dedicated regression test needed since the whole
   existing suite already guards it). Trade-off: no automatic ripple, acceptable for a dash-mount
   app — but review round-1's NIT pass added `onClick`/`onLongClick` **semantics actions** (inside
@@ -584,11 +539,8 @@ persisted the same way OBD-21's settings screen persists everything else. `app/s
   brief flash of the *old* gauge's data between the picker closing and the swapped tile catching
   up. No test pins this specific timing window — see `GaugeSwapPickerTest`'s correctness/
   persistence tests for what *is* pinned.
-- A swapped-in gauge (e.g. `rpm` after a swap) gets a working sparkline (`SparklineHistoryHolder`
-  is seeded off `GAUGE_CATALOG`, not just `DASHBOARD_PIDS` — see the "Public surface" section
-  above), but `MainActivity`'s own `sparklines` map is likewise keyed off `GAUGE_CATALOG` now, a
-  small but real behavior change from pre-OBD-42 (previously only the core four had sparkline
-  flows wired at all, even though the underlying holder capacity was unaffected).
+- A swapped-in gauge (e.g. `rpm` after a swap) has live readings immediately: the ViewModel
+  requests `GAUGE_CATALOG`, not just `DASHBOARD_PIDS` — see the "Public surface" section above.
 - **A fifth, incidental dismiss path**: device rotation. `pickerTileId` lives in `remember {}`
   state scoped to `GaugeDashboard`'s own composition, not `rememberSaveable`; Android's default
   rotation handling (no `android:configChanges` override in the manifest) recreates `MainActivity`
@@ -759,8 +711,8 @@ the settled end states are test-pinned, per the issue's own self-test plan.
   `progress == 1f` but `targetBounds` hasn't arrived yet, since that's a separate layout-pass
   dependency, not an animation-timing one) — not fixed; the KDoc on
   `rememberPickerShrinkAnimationSpec`/`pickerShrinkLayer` was corrected instead to describe this
-  precisely rather than overclaim "no intermediate frames whatsoever." **N4** (label/stale/
-  sparkline testTags stay `gauge-$id-*` always, never switching to a `gauge-picker-card-$id-*`
+  precisely rather than overclaim "no intermediate frames whatsoever." **N4** (label/stale
+  testTags stay `gauge-$id-*` always, never switching to a `gauge-picker-card-$id-*`
   equivalent, unlike the outer/value tags) — left as-is: no test or TalkBack behavior depends on
   those specific tags switching, and matching `GaugeMiniCard`'s OWN convention exactly would mean
   DROPPING the label tag entirely while picking (it has none), a larger behavior change than
@@ -813,8 +765,7 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   `GaugeSwapDemoTest` (OBD-42), `GaugePickerScreenshotTest` (OBD-42) —
   `src/testDemo/` (need `FakeVehicleDataSource`/`Scenario`, so `testDemoDebugUnitTest`-only;
   see "Build flavors").
-  `GaugeFormattingTest`, `BoostArcTest`, `UnitConversionTest`, `SparklineBufferTest`,
-  `SparklineGapTest`, `SparklineHistoryHolderTest`, `SparklineRecompositionTest`,
+  `GaugeFormattingTest`, `BoostArcTest`, `UnitConversionTest`,
   `DashboardUiStateTest`, `SettingsCodecTest`, `SettingsRepositoryTest`, `SettingsScreenTest`,
   `LiveRecolorTest`, `GaugeCatalogTest` (OBD-42), `AppSettingsSwapTest` (OBD-42),
   `GaugeSwapPickerTest` (OBD-42) — plain JVM or Robolectric, no `:core:testing` dependency,
@@ -852,40 +803,15 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   time — the test-side counterpart of the `demo` flavor's DI clock fix below.
 - `DashboardScreenshotTest` — Roborazzi, landscape (`w800dp-h360dp-land`) and portrait
   (`w360dp-h640dp-port`), TOWN_HEAT_SOAK tail state (`connection = Ready`, so the OBD-11 banner
-  renders nothing). **Updated for OBD-20/21** — the gear button and a synthetic per-gauge
-  sparkline trend (`sampleSparklines()`, 20 points at a 250 ms/4 Hz-equivalent cadence, well
-  under `SparklineChart`'s 2 s gap threshold so the reference shows a continuous line, not 20
-  disconnected dots) are now visible in both references; regenerated deliberately
-  (`./gradlew :app:recordRoborazziDemoDebug`) and re-verified — no longer byte-identical to the
-  pre-OBD-20 images. References committed under `src/testDemo/screenshots/`. Regenerate with
+  renders nothing). **Updated for OBD-21** — the gear button is visible in both references;
+  regenerated deliberately (`./gradlew :app:recordRoborazziDemoDebug`) and re-verified.
+  References committed under `src/testDemo/screenshots/`. Regenerate with
   `./gradlew :app:recordRoborazziDemoDebug`; verify with `./gradlew :app:verifyRoborazziDemoDebug`
   (see "Build flavors" for why the task name changed from the pre-flavor
   `verifyRoborazziDebug`). `captureRoboImage` no-ops (doesn't compare or write) under a plain
   `testDemoDebugUnitTest` run — only the dedicated Roborazzi tasks (or
   `-Proborazzi.test.record=true` / `-Proborazzi.test.verify=true`) actually record/compare, so
   the base build gate never fails on an environment-sensitive pixel diff.
-- `SparklineBufferTest` — plain JVM: window trim (including the exact-boundary case), a
-  same-timestamp `add()` being a no-op (review round-1 M4's dedup fix), downsample
-  determinism/no-op/first-last-point guarantees, a bound-enforcement test at a simulated 4 Hz for
-  the full 300 s window (asserts the buffer never exceeds ~1 200 points even under 3x that many
-  pushes), and a downsample-cost bound test feeding 50 000 points and asserting the output is
-  still exactly 120 (OBD-20 AC: "no jank... verified" pure half — see the "Sparklines" section's
-  honest caveat about what this does and doesn't prove).
-- `SparklineGapTest` — plain JVM: `isSparklineGap`'s 2 s boundary on both sides, plus the
-  exactly-at-threshold case (not a gap — the comparison is strictly `>`).
-- `SparklineHistoryHolderTest` — plain JVM: a fresh reading appends; a stale reading only trims,
-  never appends; re-feeding the *identical* reading (the exact "settings-only combine tick"
-  scenario review round-1 M4 flagged) adds no duplicate point; a missing id still trims against
-  the emission's `now`; distinct new timestamps still accumulate normally.
-- `SparklineRecompositionTest` — Robolectric + compose-ui-test, flavor-common. The other OBD-20
-  "no jank" AC half: a counting `Modifier.composed { SideEffect { ... } }` passed as
-  `GaugeDashboard`'s own `modifier` param — so it counts recompositions of `GaugeDashboard`'s own
-  composable body directly, not a proxy — pumped with 20 ticks on an independent
-  `MutableStateFlow` sparkline; asserts that count stays at `1` throughout (review round-1 M3:
-  the prior version counted only the *test's own* wrapping scope, which a mutation lifting
-  `collectAsStateWithLifecycle()` up into `GaugeDashboard` couldn't fail, since that wrapper
-  never read the flow either way — measuring `GaugeDashboard`'s own scope closes that gap). A
-  second test confirms the leaf still renders once data arrives.
 - `DashboardUiStateTest` — plain JVM (review round-1 M1): a 235°F (wire-unit) coolant reading
   stays classified `RED` even with Celsius selected as the display unit — pins that
   `ThresholdConfig.classify` runs against the raw wire-unit `Reading.value`, never the
@@ -1032,9 +958,6 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   silent no-op clicks as a Robolectric/`BasicTextField` rendering limitation and worked around it
   by testing sections in isolation instead of fixing the test; review round-1 M2 corrected this —
   see `SettingsScreenTest`'s file KDoc).
-- OBD-20's "no jank at 4 Hz" is verified headlessly only (recomposition-scope isolation +
-  downsample cost bound) — real frame timing needs a device macrobenchmark (OBD-34). See the
-  "Sparklines" section above.
 - OBD-21's threshold storage is pegged to whatever unit `DASHBOARD_PIDS` currently declares
   (Fahrenheit/PSI), not a fixed SI unit. OBD-25 deliberately did **not** change those declared
   units — `DisplayUnitDataSource` converts at the `prod` DI seam instead — so the migration gap

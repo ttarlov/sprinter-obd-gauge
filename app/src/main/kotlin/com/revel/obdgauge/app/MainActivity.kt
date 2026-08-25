@@ -12,6 +12,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,16 +23,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.revel.obdgauge.app.gauge.DashboardViewModel
-import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
 import com.revel.obdgauge.app.gauge.GaugeDashboard
 import com.revel.obdgauge.app.link.LinkController
 import com.revel.obdgauge.app.service.ObdConnectionService
 import com.revel.obdgauge.app.settings.SettingsRoute
-import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.speed.SpeedSource
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.util.Optional
 import javax.inject.Inject
@@ -132,59 +130,66 @@ class MainActivity : ComponentActivity() {
         // than throwing a permission dialog at a launch. Guards live in
         // `BleLinkController.connectIfRemembered`; this is the only automatic connect in the app.
         lifecycleScope.launch { linkController.orElse(null)?.connectIfRemembered() }
-        setContent {
-            ObdGaugeTheme {
-                val viewModel: DashboardViewModel = viewModel()
-                // Lifecycle-aware: pauses collection (and, via DashboardViewModel's
-                // WhileSubscribed producer, the underlying data source) when this Activity
-                // isn't STARTED, rather than collecting for as long as the Activity exists.
-                val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
-                val gridLayoutsByColumns by viewModel.gridLayoutsByColumns.collectAsStateWithLifecycle()
-                val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
-                val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
-                val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
+        setContent { ObdGaugeTheme { DashboardOrSettings() } }
+    }
 
-                // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
-                // and it's cleared automatically the moment the setting flips back off.
-                LaunchedEffect(keepScreenOn) {
-                    if (keepScreenOn) {
-                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    } else {
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    }
-                }
+    /**
+     * The app's one screen swap (dashboard vs. OBD-21 settings) plus every piece of
+     * [DashboardViewModel] state the dashboard needs — pulled out of [onCreate] (OBD-72: adding
+     * `renderStyles`/`scales` pushed that function's body past detekt's `LongMethod` line count)
+     * rather than trimmed down, since every collected `StateFlow` here is genuinely load-bearing.
+     */
+    @Composable
+    private fun DashboardOrSettings() {
+        val viewModel: DashboardViewModel = viewModel()
+        // Lifecycle-aware: pauses collection (and, via DashboardViewModel's
+        // WhileSubscribed producer, the underlying data source) when this Activity
+        // isn't STARTED, rather than collecting for as long as the Activity exists.
+        val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+        val gaugeOrder by viewModel.gaugeOrder.collectAsStateWithLifecycle()
+        val gridLayoutsByColumns by viewModel.gridLayoutsByColumns.collectAsStateWithLifecycle()
+        val thresholds by viewModel.thresholds.collectAsStateWithLifecycle()
+        val renderStyles by viewModel.renderStyles.collectAsStateWithLifecycle()
+        val scales by viewModel.scales.collectAsStateWithLifecycle()
+        val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+        val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
 
-                var showSettings by remember { mutableStateOf(false) }
-                if (showSettings) {
-                    SettingsRoute(onBack = { showSettings = false })
-                } else {
-                    // GAUGE_CATALOG (OBD-42), not just DASHBOARD_PIDS: a tile swapped to a
-                    // non-core id (e.g. rpm) still needs a sparkline flow to pass down.
-                    val sparklines: Map<String, StateFlow<List<SparklinePoint>>> =
-                        remember(viewModel) { GAUGE_CATALOG.associate { it.id to viewModel.sparklineFlow(it.id) } }
-                    GaugeDashboard(
-                        uiState = uiState,
-                        gaugeOrder = gaugeOrder,
-                        gridLayoutsByColumns = gridLayoutsByColumns,
-                        sparklines = sparklines,
-                        thresholds = thresholds,
-                        onSettingsClick = { showSettings = true },
-                        onSwapGauge = viewModel::swapGauge,
-                        onAddGauge = viewModel::addGauge,
-                        onAddGaugeAt = viewModel::addGaugeAt,
-                        onRemoveGauge = viewModel::removeGauge,
-                        onResizeGauge = viewModel::resizeGauge,
-                        onSetThreshold = viewModel::setThreshold,
-                        onMoveGauge = viewModel::moveGauge,
-                        // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
-                        onConnect = if (linkController.isPresent) ::requestConnect else null,
-                        recordingState = recordingState,
-                        onStartRecording = viewModel::startRecording,
-                        onStopRecording = viewModel::stopRecording,
-                    )
-                }
+        // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
+        // and it's cleared automatically the moment the setting flips back off.
+        LaunchedEffect(keepScreenOn) {
+            if (keepScreenOn) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+        }
+
+        var showSettings by remember { mutableStateOf(false) }
+        if (showSettings) {
+            SettingsRoute(onBack = { showSettings = false })
+        } else {
+            GaugeDashboard(
+                uiState = uiState,
+                gaugeOrder = gaugeOrder,
+                gridLayoutsByColumns = gridLayoutsByColumns,
+                thresholds = thresholds,
+                renderStyles = renderStyles,
+                scales = scales,
+                onSettingsClick = { showSettings = true },
+                onSwapGauge = viewModel::swapGauge,
+                onAddGauge = viewModel::addGauge,
+                onAddGaugeAt = viewModel::addGaugeAt,
+                onRemoveGauge = viewModel::removeGauge,
+                onResizeGauge = viewModel::resizeGauge,
+                onSetThreshold = viewModel::setThreshold,
+                onSetRenderStyle = viewModel::setRenderStyle,
+                onMoveGauge = viewModel::moveGauge,
+                // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
+                onConnect = if (linkController.isPresent) ::requestConnect else null,
+                recordingState = recordingState,
+                onStartRecording = viewModel::startRecording,
+                onStopRecording = viewModel::stopRecording,
+            )
         }
     }
 

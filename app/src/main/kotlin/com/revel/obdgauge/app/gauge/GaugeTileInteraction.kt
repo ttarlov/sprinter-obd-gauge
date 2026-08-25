@@ -21,7 +21,7 @@ import androidx.compose.ui.semantics.stateDescription
  *
  * Plain [pointerInput]/[detectTapGestures], not `clickable`/`combinedClickable`: those force a
  * semantics merge boundary (`mergeDescendants = true`), which would fold a tile's own child
- * testTags (`gauge-<id>-value`/`-stale`/`-sparkline`) into one merged node and break every
+ * testTags (`gauge-<id>-label`/`-value`/`-stale`) into one merged node and break every
  * existing `onNodeWithTag` lookup on them — confirmed by trying it. Trade-off: no automatic
  * ripple, acceptable for a dash-mount app. The `onClick`/`onLongClick` **semantics** actions
  * added below (review round-1 NIT) don't carry that same risk — merging is a property of the

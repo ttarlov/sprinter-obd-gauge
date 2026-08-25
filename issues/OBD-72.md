@@ -4,7 +4,7 @@ title: Selectable gauge render styles — analog needle + LED bar-arc, in additi
 module: app
 owner: ui-agent
 sprint: backlog
-status: open
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []
@@ -87,6 +87,29 @@ style; (3) polish (small-size simplification, animation damping). Or one wave �
   spans, incl. threshold-zone coloring and a stale state.
 - Device (🖐 Taras — the real gate): legibility of needle + bar-arc on the dash at arm's length while
   driving; threshold zones read correctly; the picker + scale editing feel right. `hardware-verify: true`.
+
+## Fix list
+
+Round 1 review (`reviews/OBD-72-round1.md`): **approved, zero blockers.** Post-review taste
+iteration (all device-approved by Taras): needle readout relocated into the dial's bottom gap +
+its own scale; per-gauge history sparklines removed (dead code swept, `1816cce`); flip-editor
+controls scale with the tile. The editor was then lifted out of the tile entirely — see
+[[OBD-77]] (expand-in-place floating editor card), built + reviewed on this same branch.
+
+- ✅ Needle + LED bar-arc render styles, per-gauge scale, style picker, backward-compatible
+  persistence — pure math tested, threshold-coloring-across-styles contract holds.
+- ✅ Needle value scales for the dial's bottom gap (not full-tile) — no clip/overlap at 1×1.
+- ✅ Sparkline history graphs removed + dead code swept clean (`grep sparkline app/src` → 0).
+
+## Hardware checklist
+
+Device-verified by Taras, 2026-08-25. **PASS on both devices.**
+
+- [x] **Garmin Overlander (API 23), prod build** (`obdgauge-GARMIN-api23-OBD72+77-gaugestyles-75ca80a.apk`):
+  needle + bar-arc styles legible at the Garmin's size, threshold zones read correctly, expand-in-place
+  editor works in landscape (two-column). **Taras: "Looks excellent on garmin."**
+- [x] **Pixel (demo-dev)**: style picker, needle/bar-arc, scaling across tile sizes, editor card all
+  confirmed through the taste-iteration loop. **Taras: "excellent. I like that look."**
 
 ## Out of scope (unless raised later)
 

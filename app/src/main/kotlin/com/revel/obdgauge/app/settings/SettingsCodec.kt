@@ -35,6 +35,11 @@ private val KEY_SPEED_CORRECTION_FACTOR = doublePreferencesKey("speed_correction
 // this key rename is Kotlin-identifier-only, not a storage migration.
 private val KEY_GRID_LAYOUTS = stringPreferencesKey("grid_layout")
 
+// OBD-72: render style + scale-bounds overrides, same "id:field;id:field" encoding discipline as
+// gauge order/threshold overrides above.
+private val KEY_RENDER_STYLES = stringPreferencesKey("render_styles")
+private val KEY_SCALE_OVERRIDES = stringPreferencesKey("scale_overrides")
+
 private const val ENTRY_SEPARATOR = ";"
 private const val FIELD_SEPARATOR = ":"
 private const val THRESHOLD_SEPARATOR = "|"
@@ -70,6 +75,10 @@ fun decodeAppSettings(preferences: Preferences): AppSettings {
         // KEY_GRID_LAYOUTS' own comment. Never throws.
         gridLayoutsByColumns =
             preferences[KEY_GRID_LAYOUTS]?.let(GridLayoutCodec::decodeMap) ?: defaults.gridLayoutsByColumns,
+        // OBD-72: absent/malformed → the empty-map default (every gauge renders DIGITAL, every
+        // scale falls back to GaugeScaleDefaults.seed) — never throws, same discipline as above.
+        renderStyles = preferences[KEY_RENDER_STYLES]?.let(::decodeRenderStyles) ?: defaults.renderStyles,
+        scaleOverrides = preferences[KEY_SCALE_OVERRIDES]?.let(::decodeScaleOverrides) ?: defaults.scaleOverrides,
     )
 }
 
@@ -88,6 +97,8 @@ fun encodeAppSettings(
     if (settings.gridLayoutsByColumns.isNotEmpty()) {
         preferences[KEY_GRID_LAYOUTS] = GridLayoutCodec.encodeMap(settings.gridLayoutsByColumns)
     }
+    preferences[KEY_RENDER_STYLES] = encodeRenderStyles(settings.renderStyles)
+    preferences[KEY_SCALE_OVERRIDES] = encodeScaleOverrides(settings.scaleOverrides)
 }
 
 private fun encodeGaugeOrder(order: List<GaugeOrderEntry>): String =

@@ -9,7 +9,6 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import com.revel.obdgauge.app.gauge.grid.GridEngine
 import com.revel.obdgauge.app.gauge.grid.GridLayout
 import com.revel.obdgauge.app.gauge.grid.GridPlacement
-import com.revel.obdgauge.app.sparkline.SparklinePoint
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.LinkError
 import com.revel.obdgauge.model.LinkState
@@ -18,8 +17,6 @@ import com.revel.obdgauge.model.Reading
 import com.revel.obdgauge.testing.datasource.FakeVehicleDataSource
 import com.revel.obdgauge.testing.datasource.Scenario
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -55,7 +52,6 @@ class DashboardScreenshotTest {
             ObdGaugeTheme {
                 GaugeDashboard(
                     sampleUiState(),
-                    sparklines = sampleSparklines(),
                     // OBD-66: the TOWN_HEAT_SOAK tail now puts coolant at its danger line (RED). Pulse
                     // off so the reference is a stable single frame, not a point on the pulse cycle.
                     dangerPulseEnabled = false,
@@ -72,7 +68,6 @@ class DashboardScreenshotTest {
             ObdGaugeTheme {
                 GaugeDashboard(
                     sampleUiState(),
-                    sparklines = sampleSparklines(),
                     dangerPulseEnabled = false,
                 )
             }
@@ -216,7 +211,6 @@ class DashboardScreenshotTest {
                     // landscape/canonical count these `w800dp...-land` screenshots render at) —
                     // keyed there directly, no other orientation needed for a single reference.
                     gridLayoutsByColumns = mapOf(GRID_CANONICAL_COLUMNS to grid),
-                    sparklines = sampleSparklines(),
                     dangerPulseEnabled = false,
                 )
             }
@@ -228,21 +222,6 @@ class DashboardScreenshotTest {
     // layout regardless of the placeholder positions passed in.
     private fun gridOf(vararg placements: GridPlacement): GridLayout =
         GridEngine.repack(columns = 4, ordered = placements.toList())
-
-    // OBD-20 AC: the references should show sparklines, not just bare tiles — a small synthetic
-    // rising trend per gauge, distinct enough from a flat line to be visibly a chart.
-    private fun sampleSparklines(): Map<String, StateFlow<List<SparklinePoint>>> =
-        DASHBOARD_PIDS.associate { pid ->
-            val base = sampleUiState().tileFor(pid.id)?.rawValue ?: 0.0
-            val points =
-                (0 until SPARKLINE_SAMPLE_COUNT).map { i ->
-                    SparklinePoint(
-                        Instant.EPOCH.plusMillis(i * SPARKLINE_SAMPLE_INTERVAL_MILLIS),
-                        base - SPARKLINE_SAMPLE_COUNT + i,
-                    )
-                }
-            pid.id to MutableStateFlow<List<SparklinePoint>>(points)
-        }
 
     // Runs the fake on `this` (the runTest TestScope), not `backgroundScope` — see
     // DashboardScreenTest's dashboardUiStateFor for why.
@@ -278,11 +257,5 @@ class DashboardScreenshotTest {
         const val DANGER_TRANS = 250.0
         const val SAFE_OIL = 200.0
         const val SAFE_BOOST = 8.0
-
-        const val SPARKLINE_SAMPLE_COUNT = 20
-
-        // 250 ms = a nominal 4 Hz cadence, well under SparklineChart's 2 s gap threshold, so the
-        // reference image shows a continuous line rather than 20 disconnected points.
-        const val SPARKLINE_SAMPLE_INTERVAL_MILLIS = 250L
     }
 }

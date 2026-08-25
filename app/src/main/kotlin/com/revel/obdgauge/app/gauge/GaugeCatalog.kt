@@ -84,7 +84,7 @@ val GAUGE_CATALOG_BY_ID: Map<String, PidDefinition> = GAUGE_CATALOG.associateBy 
  * tapping it is one of the picker's dismiss paths, see `DashboardScreen.kt`'s `GaugePickerTile`),
  * then every other [catalog] entry that both passes [isEligible] and isn't already visible on a
  * *different* tile (an id shown twice would be confusing and would collide on `testTag("gauge-
- * <id>")`/sparkline-flow lookups, which are keyed by id, not by tile position).
+ * <id>")` lookups, which are keyed by id, not by tile position).
  *
  * @param isEligible the seam for the "verified gauges only" filtering `issues/OBD-42.md`'s
  *   Contract surface describes: once prod wiring lands, the real registry's equivalent of

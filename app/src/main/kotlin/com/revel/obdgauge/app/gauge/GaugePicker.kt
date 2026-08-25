@@ -36,13 +36,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
-import com.revel.obdgauge.app.ui.theme.GaugeAmber
-import com.revel.obdgauge.app.ui.theme.GaugeRed
 import com.revel.obdgauge.app.ui.theme.GaugeStaleDim
 import com.revel.obdgauge.app.ui.theme.GaugeValueTextStyle
-import com.revel.obdgauge.app.ui.theme.ThresholdSelectBlue
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidDefinition
 import kotlinx.coroutines.delay
@@ -92,14 +91,6 @@ private const val FLIP_CAMERA_DISTANCE = 12f
 private const val GEAR_GLYPH = "⚙"
 private const val GEAR_SIZE_DP = 28
 private const val GEAR_PADDING_DP = 4
-private const val THRESHOLD_SQUARE_SIZE_DP = 30
-private const val THRESHOLD_SQUARE_SPACING_DP = 8
-private const val THRESHOLD_SQUARE_CORNER_DP = 6
-private const val THRESHOLD_SQUARE_FILL_ALPHA = 0.85f
-private const val THRESHOLD_SELECT_BORDER_DP = 3
-private const val THRESHOLD_UNSELECT_BORDER_DP = 1
-private const val THRESHOLD_STEP_BUTTON_DP = 34
-private const val THRESHOLD_EDITOR_PADDING_DP = 8
 
 /**
  * OBD-65: the in-tile swap pager. `GaugeSlot` renders THIS in place of the normal, interactive
@@ -120,10 +111,10 @@ private const val THRESHOLD_EDITOR_PADDING_DP = 8
  * current gauge's card (identity, not page index) calls [onDismiss]. A tap OUTSIDE the tile still
  * hits `GaugeDashboard`'s scrim.
  *
- * [initiallyShowThreshold] (OBD-67): the ⚙ badge's trigger — when `true`, seeds the pager's
- * initially-focused card (the current gauge's own page) straight to its flipped threshold face,
- * so the badge opens directly onto the editor rather than requiring a second gear tap. Trigger-only:
- * every other card, and every re-focus after this initial one, still starts unflipped as before.
+ * OBD-77: the ⚙ badge no longer routes here at all (it opens the dashboard-level floating editor
+ * card instead — see `GaugeEditorCard.kt`), so this pager's OBD-67 "open seeded straight to the
+ * threshold face" trigger is gone with it. What remains is the plain swap carousel plus the gear
+ * on whichever card is focused, which flips THAT card exactly as it always has.
  *
  * ### Pop animation
  * On enter, an [Animatable] `enter` runs 0→1 once: the pager content scales from `1/SWAP_CARD_FRACTION`
@@ -145,7 +136,10 @@ internal fun SwapPager(
     onDismiss: () -> Unit,
     onSelect: (id: String) -> Unit,
     onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
-    initiallyShowThreshold: Boolean = false,
+    // OBD-72: per-gauge render style, same shape as [thresholds] — SwapPagerCard's editor face
+    // reads/writes this through [onSetRenderStyle].
+    renderStyles: Map<String, GaugeRenderStyle> = emptyMap(),
+    onSetRenderStyle: (id: String, style: GaugeRenderStyle) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val currentOnDismiss by rememberUpdatedState(onDismiss)
@@ -210,51 +204,90 @@ internal fun SwapPager(
                             scaleY = contentScale
                         },
             ) { page ->
-                val pid = pages[page]
-                val tile = tileFor(pid.id) ?: GaugeTileUiState.placeholder(pid.id, pid.label, verified = pid.verified)
-                val isSelected = pid.id == selectedId
-                val popScale by animateFloatAsState(
-                    targetValue = if (isSelected) SWAP_SELECT_POP_SCALE else 1f,
-                    animationSpec = tween(SWAP_POP_MS),
-                    label = "gauge-swap-pop-${pid.id}",
-                )
-                // Every page but the selected one fades out during the pop (the outgoing gauge and
-                // any peeking neighbour), so only the chosen card is visible as it fills the tile.
-                val pageAlpha by animateFloatAsState(
-                    targetValue = if (selectedId != null && !isSelected) 0f else 1f,
-                    animationSpec = tween(SWAP_POP_MS),
-                    label = "gauge-swap-alpha-${pid.id}",
-                )
-                // The gear/flip threshold editor lives only on the centered (focused) card, and only
-                // for a gauge that HAS thresholds (temperature). While a select-pop is in flight the
-                // gear is suppressed so the flip can't race the swap.
-                val isFocused = page == pagerState.currentPage && selectedId == null
-                val editable = GAUGE_CATALOG_BY_ID[pid.id]?.unit?.kind() == UnitKind.TEMPERATURE
-                // Identity, not page index: the current gauge's card dismisses; any OTHER gauge's
-                // card selects/swaps. OBD-66's stable ribbon means the current gauge isn't page 0.
-                val isCurrentGauge = pid.id == slotId
-                SwapPagerCard(
-                    tile = tile,
-                    isCurrent = isCurrentGauge,
-                    isFocused = isFocused,
-                    editable = editable,
-                    unit = GAUGE_CATALOG_BY_ID[pid.id]?.unit ?: MeasurementUnit.FAHRENHEIT,
-                    thresholds = thresholds[pid.id] ?: GaugeThresholds(),
-                    scale = popScale,
-                    alpha = pageAlpha,
-                    initialFlipped = initiallyShowThreshold && isCurrentGauge && editable,
-                    onClick = {
-                        when {
-                            isCurrentGauge -> currentOnDismiss()
-                            selectedId == null -> selectedId = pid.id
-                        }
-                    },
-                    onSetThreshold = { next -> onSetThreshold(pid.id, next) },
-                    modifier = Modifier.fillMaxSize(),
+                SwapPage(
+                    pid = pages[page],
+                    slotId = slotId,
+                    isFocused = page == pagerState.currentPage && selectedId == null,
+                    selectedId = selectedId,
+                    tileFor = tileFor,
+                    thresholds = thresholds,
+                    renderStyles = renderStyles,
+                    onDismiss = currentOnDismiss,
+                    onSelect = { id -> selectedId = id },
+                    onSetThreshold = onSetThreshold,
+                    onSetRenderStyle = onSetRenderStyle,
                 )
             }
         }
     }
+}
+
+/**
+ * One [SwapPager] page's content — extracted from [SwapPager]'s [HorizontalPager] lambda (OBD-72
+ * review: kept that composable under detekt's cyclomatic-complexity limit) rather than trimmed
+ * down; every branch here is genuinely part of "what does this one candidate card look like and
+ * do." [selectedId]/[onSelect] mirror [SwapPager]'s own pop-selection state one level up.
+ */
+@Composable
+@Suppress("LongParameterList") // one param per input a single candidate card's look/flip/persistence needs.
+private fun SwapPage(
+    pid: PidDefinition,
+    slotId: String,
+    isFocused: Boolean,
+    selectedId: String?,
+    tileFor: (String) -> GaugeTileUiState?,
+    thresholds: Map<String, GaugeThresholds>,
+    renderStyles: Map<String, GaugeRenderStyle>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+    onSetThreshold: (id: String, thresholds: GaugeThresholds) -> Unit,
+    onSetRenderStyle: (id: String, style: GaugeRenderStyle) -> Unit,
+) {
+    val tile = tileFor(pid.id) ?: GaugeTileUiState.placeholder(pid.id, pid.label, verified = pid.verified)
+    val isSelected = pid.id == selectedId
+    val popScale by animateFloatAsState(
+        targetValue = if (isSelected) SWAP_SELECT_POP_SCALE else 1f,
+        animationSpec = tween(SWAP_POP_MS),
+        label = "gauge-swap-pop-${pid.id}",
+    )
+    // Every page but the selected one fades out during the pop (the outgoing gauge and
+    // any peeking neighbour), so only the chosen card is visible as it fills the tile.
+    val pageAlpha by animateFloatAsState(
+        targetValue = if (selectedId != null && !isSelected) 0f else 1f,
+        animationSpec = tween(SWAP_POP_MS),
+        label = "gauge-swap-alpha-${pid.id}",
+    )
+    // OBD-72: the gear/flip editor lives on every card now — at minimum it's a style picker
+    // (hasEditor, any real GAUGE_CATALOG id). The threshold squares/stepper section inside it
+    // only shows for a gauge that HAS thresholds (temperature) — that's hasThresholds, kept
+    // separate so rpm/boost/speed still get a style-only face. While a select-pop is in flight
+    // the gear is suppressed so the flip can't race the swap.
+    val hasEditor = GAUGE_CATALOG_BY_ID[pid.id] != null
+    val hasThresholds = GAUGE_CATALOG_BY_ID[pid.id]?.unit?.kind() == UnitKind.TEMPERATURE
+    // Identity, not page index: the current gauge's card dismisses; any OTHER gauge's card
+    // selects/swaps. OBD-66's stable ribbon means the current gauge isn't page 0.
+    val isCurrentGauge = pid.id == slotId
+    SwapPagerCard(
+        tile = tile,
+        isCurrent = isCurrentGauge,
+        isFocused = isFocused,
+        hasEditor = hasEditor,
+        hasThresholds = hasThresholds,
+        unit = GAUGE_CATALOG_BY_ID[pid.id]?.unit ?: MeasurementUnit.FAHRENHEIT,
+        thresholds = thresholds[pid.id] ?: GaugeThresholds(),
+        style = renderStyles[pid.id] ?: GaugeRenderStyle.DIGITAL,
+        scale = popScale,
+        alpha = pageAlpha,
+        onClick = {
+            when {
+                isCurrentGauge -> onDismiss()
+                selectedId == null -> onSelect(pid.id)
+            }
+        },
+        onSetThreshold = { next -> onSetThreshold(pid.id, next) },
+        onSetStyle = { next -> onSetRenderStyle(pid.id, next) },
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 /**
@@ -267,30 +300,36 @@ internal fun SwapPager(
  * parent handles the horizontal drag, so a tap here (no movement) is unambiguously a select/dismiss.
  */
 @Composable
-@Suppress("LongParameterList") // every input drives the card's look, focus/flip, or persistence.
+// LongParameterList: every input drives the card's look, focus/flip, or persistence.
+// LongMethod: the flip-state/rotation animation and the two faces it switches between are one
+// cohesive unit — splitting the front/back dispatch out would spread `flipped`/`rotation` across
+// another function for no gain, the same call GaugeThresholdEditorFace's own OBD-66 KDoc made.
+@Suppress("LongParameterList", "LongMethod")
 private fun SwapPagerCard(
     tile: GaugeTileUiState,
     isCurrent: Boolean,
     isFocused: Boolean,
-    editable: Boolean,
+    hasEditor: Boolean,
+    hasThresholds: Boolean,
     unit: MeasurementUnit,
     thresholds: GaugeThresholds,
+    style: GaugeRenderStyle,
     scale: Float,
     alpha: Float,
     onClick: () -> Unit,
     onSetThreshold: (GaugeThresholds) -> Unit,
-    initialFlipped: Boolean = false,
+    onSetStyle: (GaugeRenderStyle) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
-    // OBD-66: tapping the gear flips THIS card over its Y axis to reveal the threshold editor.
-    // Duration matches the select-pop (SWAP_POP_MS ≈ 220ms) so the flip flows with the pop feel.
-    // OBD-67: initialFlipped seeds this straight to the back face — the ⚙ badge's trigger.
-    var flipped by remember(tile.id) { mutableStateOf(initialFlipped) }
+    // OBD-66/72: tapping the gear flips THIS card over its Y axis to reveal the gauge editor (a
+    // style picker, plus — when hasThresholds — the threshold squares/stepper). Duration matches
+    // the select-pop (SWAP_POP_MS ≈ 220ms) so the flip flows with the pop feel.
+    var flipped by remember(tile.id) { mutableStateOf(false) }
     // A card that scrolls out of focus (or a select-pop starting) flips back to its gauge face, so
     // exactly one editor face — and one set of `gauge-threshold-*` testTags — is ever live.
-    LaunchedEffect(isFocused, editable) {
-        if (!isFocused || !editable) flipped = false
+    LaunchedEffect(isFocused, hasEditor) {
+        if (!isFocused || !hasEditor) flipped = false
     }
     val rotation by animateFloatAsState(
         targetValue = if (flipped) FLIP_BACK_DEG else 0f,
@@ -325,16 +364,20 @@ private fun SwapPagerCard(
             } else {
                 // Counter-rotate the back so its content isn't mirrored once past 90°.
                 Box(modifier = Modifier.fillMaxSize().graphicsLayer { rotationY = FLIP_BACK_DEG }) {
-                    ThresholdEditorFace(
+                    GaugeEditorFace(
+                        id = tile.id,
                         unit = unit,
                         thresholds = thresholds,
+                        hasThresholds = hasThresholds,
+                        style = style,
                         onSetThreshold = onSetThreshold,
+                        onSetStyle = onSetStyle,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
         }
-        if (isFocused && editable) {
+        if (isFocused && hasEditor) {
             GearButton(
                 onClick = { flipped = !flipped },
                 modifier =
@@ -411,130 +454,8 @@ private fun GearButton(
     }
 }
 
-/**
- * OBD-66: the back of the flipped card — the threshold menu from Taras's sketch. Two stacked
- * squares on the right (YELLOW over RED) select which boundary is being edited (a blue frame marks
- * the selection); the selected boundary's value shows as a large number with a `+`/`−` vertical
- * stepper. Every step persists immediately via [onSetThreshold], folding the single edited boundary
- * into the gauge's current [thresholds] so the other boundary survives (see `ThresholdEditing.kt`).
- *
- * Values are shown and stepped in the gauge's declared [unit] (FAHRENHEIT for the temperature
- * gauges this editor is offered on), which is also the wire unit the thresholds are stored in — so
- * no conversion is needed and the number matches the tile's own °F readout.
- */
-@Composable
-private fun ThresholdEditorFace(
-    unit: MeasurementUnit,
-    thresholds: GaugeThresholds,
-    onSetThreshold: (GaugeThresholds) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(TILE_CORNER_RADIUS_DP.dp)
-    var selected by remember { mutableStateOf(ThresholdColor.YELLOW) }
-    var displayValue by remember { mutableStateOf(initialDisplayThreshold(thresholds, selected, unit, unit)) }
-    // Re-seed the stepper from the persisted band whenever the selected color (or an external edit)
-    // changes — our own persists round-trip back to the same value, so this never clobbers a step.
-    LaunchedEffect(selected, thresholds) {
-        displayValue = initialDisplayThreshold(thresholds, selected, unit, unit)
-    }
-    val step: (Int) -> Unit = { steps ->
-        val next = stepThreshold(displayValue, steps)
-        displayValue = next
-        onSetThreshold(thresholdsWithDisplayValue(thresholds, selected, next, unit, unit))
-    }
-    Row(
-        modifier =
-            modifier
-                .background(MaterialTheme.colorScheme.surfaceVariant, shape)
-                .border(SWAP_FRAME_BORDER_WIDTH_DP.dp, MaterialTheme.colorScheme.primary, shape)
-                .padding(THRESHOLD_EDITOR_PADDING_DP.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        // Left: the vertical +/number/- stepper for the selected boundary.
-        Column(
-            modifier = Modifier.weight(1f),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            StepperButton(glyph = "＋", testTag = "gauge-threshold-plus", onClick = { step(1) })
-            Text(
-                text = formatGaugeValue(displayValue, unit),
-                // titleLarge (not the tile's huge GaugeValueTextStyle): the editor's card is only
-                // ~75% of a tile, which can be a small 1×1 cell — a big number ellipsizes to "2…"
-                // there. This still reads as the focal "large number" beside the small squares.
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("gauge-threshold-value"),
-            )
-            StepperButton(glyph = "−", testTag = "gauge-threshold-minus", onClick = { step(-1) })
-        }
-        // Right: the two color squares, YELLOW over RED.
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(THRESHOLD_SQUARE_SPACING_DP.dp),
-        ) {
-            ThresholdSquare(
-                fill = GaugeAmber,
-                selected = selected == ThresholdColor.YELLOW,
-                testTag = "gauge-threshold-square-yellow",
-                onClick = { selected = ThresholdColor.YELLOW },
-            )
-            ThresholdSquare(
-                fill = GaugeRed,
-                selected = selected == ThresholdColor.RED,
-                testTag = "gauge-threshold-square-red",
-                onClick = { selected = ThresholdColor.RED },
-            )
-        }
-    }
-}
-
-/** One tappable +/- stepper button on the threshold editor's back face. */
-@Composable
-private fun StepperButton(
-    glyph: String,
-    testTag: String,
-    onClick: () -> Unit,
-) {
-    val currentOnClick by rememberUpdatedState(onClick)
-    Box(
-        modifier =
-            Modifier
-                .size(THRESHOLD_STEP_BUTTON_DP.dp)
-                .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick() }) }
-                .testTag(testTag),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text = glyph, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
-    }
-}
-
-/** One color square on the threshold editor: [fill]-tinted, framed blue when [selected]. */
-@Composable
-private fun ThresholdSquare(
-    fill: Color,
-    selected: Boolean,
-    testTag: String,
-    onClick: () -> Unit,
-) {
-    val currentOnClick by rememberUpdatedState(onClick)
-    val shape = RoundedCornerShape(THRESHOLD_SQUARE_CORNER_DP.dp)
-    Box(
-        modifier =
-            Modifier
-                .size(THRESHOLD_SQUARE_SIZE_DP.dp)
-                .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick() }) }
-                .background(fill.copy(alpha = THRESHOLD_SQUARE_FILL_ALPHA), shape)
-                .border(
-                    width = if (selected) THRESHOLD_SELECT_BORDER_DP.dp else THRESHOLD_UNSELECT_BORDER_DP.dp,
-                    color = if (selected) ThresholdSelectBlue else MaterialTheme.colorScheme.outline,
-                    shape = shape,
-                ).testTag(testTag),
-    )
-}
+// OBD-66/72: the flipped card's back face (style picker + threshold editor) lives in its own
+// file, GaugeEditorFace.kt — see that file's own header comment for why.
 
 /** Size presets the picker offers, each `(colSpan × rowSpan)` with a compact label. */
 internal val SIZE_PRESETS: List<Triple<String, Int, Int>> =
@@ -610,16 +531,26 @@ internal fun PickerEditControls(
     }
 }
 
-/** One tappable chip in [PickerEditControls] — a bordered, optionally filled rounded label. */
+/**
+ * One tappable chip in [PickerEditControls] — a bordered, optionally filled rounded label.
+ * `internal` (not `private`): [GaugeEditorFace.kt]'s `StylePickerRow` (OBD-72) reuses this same
+ * chip for its style picker, so the resize/remove/add bar and the style picker read as one visual
+ * language.
+ */
 @Composable
 @Suppress("LongParameterList") // label/selected/onClick/colors/modifier are all load-bearing.
-private fun EditChip(
+internal fun EditChip(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
     borderColor: Color,
     fillColor: Color,
     modifier: Modifier = Modifier,
+    // OBD-72: defaulted so the resize/add bar's chips keep their fixed size, while the style
+    // picker on the flip-card editor passes tile-scaled values (see GaugeEditorFace's EditorScale).
+    fontSize: TextUnit = TextUnit.Unspecified,
+    horizontalPadding: Dp = EDIT_CHIP_H_PADDING_DP.dp,
+    verticalPadding: Dp = EDIT_CHIP_V_PADDING_DP.dp,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val shape = RoundedCornerShape(EDIT_CHIP_CORNER_RADIUS_DP.dp)
@@ -630,10 +561,18 @@ private fun EditChip(
                 .pointerInput(Unit) { detectTapGestures(onTap = { currentOnClick() }) }
                 .background(fill, shape)
                 .border(width = EDIT_CHIP_BORDER_WIDTH_DP.dp, color = borderColor, shape = shape)
-                .padding(horizontal = EDIT_CHIP_H_PADDING_DP.dp, vertical = EDIT_CHIP_V_PADDING_DP.dp),
+                .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = label, style = MaterialTheme.typography.labelMedium)
+        // maxLines=1 + softWrap=false: a chip label is a single token — never let a narrow
+        // container (e.g. the style picker on a 1-wide editor face) wrap it character-by-character.
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontSize = fontSize,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
