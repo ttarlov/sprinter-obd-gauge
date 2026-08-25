@@ -4,7 +4,7 @@ title: Log export on the Garmin — broaden share MIME (surface Bluetooth) + mak
 module: app
 owner: ui-agent
 sprint: telemetry
-status: open
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []
@@ -41,6 +41,22 @@ useless on Taras's PRIMARY device, so the "get the data off" path needs to actua
   grant flag; FileProvider uri resolves.
 - Device (🖐 Taras — the real gate): on the **Garmin**, Share now shows at least Bluetooth / a file manager;
   a CSV successfully beams to the phone over BT and opens; the on-device path is discoverable for USB pull.
+
+## Scope shipped (v1) / deferred
+
+Shipped: **fix #1 only** — the MIME broadening (`text/csv` → `text/plain`). Deferred to a possible
+follow-up: fix #2 (surface the on-device path in Recordings / optional Downloads copy) — not needed now that
+Bluetooth works. Taras: "This is good enough."
+
+## Hardware checklist
+
+Device-verified by Taras on the **Garmin Overlander (API 23)**, 2026-08-24. **PASS.**
+
+- [x] **Bluetooth now appears in the Share chooser** — with `text/plain`, tapping Share on a recording shows
+  Bluetooth (and file-manager targets) instead of the empty menu it showed with `text/csv`. Confirmed on
+  the served test build (`obdgauge-GARMIN-api23-OBD75-share-45d026f.apk`).
+- [x] **Wireless export path** — the CSV can be beamed off the Garmin over Bluetooth (the whole point).
+- [x] **Taras sign-off:** "yep shows up in BT. This is good enough." (2026-08-24)
 
 ## Out of scope
 

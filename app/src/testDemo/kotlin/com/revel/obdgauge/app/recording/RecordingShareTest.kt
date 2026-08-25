@@ -36,7 +36,7 @@ class RecordingShareTest {
     // temp path and throw. Splitting this into two `@Test`s reproduced exactly that; production
     // has no such hazard (one process, one filesystem root for the app's whole lifetime).
     @Test
-    fun `buildShareIntent is ACTION_SEND, text-csv, grants read, and the uri resolves`() {
+    fun `buildShareIntent is ACTION_SEND, text-plain, grants read, and the uri resolves`() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         val logsDirectory = logsDir(context)
         logsDirectory.mkdirs()
@@ -46,7 +46,9 @@ class RecordingShareTest {
         val intent = buildShareIntent(context, file)
 
         assertEquals(Intent.ACTION_SEND, intent.action)
-        assertEquals("text/csv", intent.type)
+        // OBD-75: text/plain (not text/csv) so bare devices (Garmin/Android 6) surface Bluetooth +
+        // file-manager targets instead of an empty chooser; the .csv filename still identifies it.
+        assertEquals("text/plain", intent.type)
         assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val uri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
         assertNotNull(uri)
