@@ -33,6 +33,7 @@
 | Ad-hoc — OBD-44 shrink animation + OBD-45 dual-channel builds | ~500k (orchestrator-set) | ✅ done 2026-08-11 — OBD-45 → main, OBD-44 → develop (promotion = Taras feel verdict) | ~930k | 2 merged / 0 rolled |
 | Sprint 3 — Real Van (software half) | +900k / +400k / +300k | ✅ COMPLETE 2026-08-12: 43+49, 23+48, 24+27, 25 → 58c0f8e. 1031+ tests. | ~1.5M + ~290k + ~500k | 7 merged |
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
+| Maintenance — OBD-79 (foundation + manual tracker) | +600k | 🔄 in progress 2026-09-04 | — | — |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
 original table was ~3.5× optimistic against Sprint 0–1 actuals.
