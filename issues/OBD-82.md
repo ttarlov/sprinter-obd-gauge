@@ -4,7 +4,7 @@ title: Connect button must restart the foreground service, not just the link (in
 module: app
 owner: ui-agent
 sprint: reliability
-status: open
+status: in-review
 type: bug
 hardware-verify: true
 blocked-by: []
