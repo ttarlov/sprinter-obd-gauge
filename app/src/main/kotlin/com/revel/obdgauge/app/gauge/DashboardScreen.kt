@@ -141,6 +141,9 @@ internal const val GRID_PORTRAIT_COLUMNS = 2
 // icon-free style (no material-icons dependency).
 private const val SETTINGS_GLYPH = "⚙"
 
+// OBD-79: wrench glyph for the Maintenance section entry point — same plain-text/emoji style.
+private const val MAINTENANCE_GLYPH = "🔧"
+
 /** OBD-68: which empty cell, in which orientation's layout, a "＋" add-palette open targets. */
 private data class AddAtTarget(
     val cell: Cell,
@@ -239,6 +242,8 @@ val LocalDangerPulseEnabled = staticCompositionLocalOf { true }
  * @param onSettingsClick invoked by the gear button; the caller (here, `MainActivity`) owns
  *   navigation — this composable has no nav-library dependency, per the codebase's minimal
  *   style.
+ * @param onMaintenanceClick OBD-79: invoked by the wrench button, same navigation-ownership shape
+ *   as [onSettingsClick].
  * @param onConnect OBD-25: the connect/retry action shown in [ConnectionBanner]. `null` (the
  *   default, and what the `demo` flavor passes — it has no link) renders the pre-OBD-25 banner
  *   exactly, which is why this change leaves both dashboard screenshots byte-identical. See
@@ -268,6 +273,7 @@ fun GaugeDashboard(
     renderStyles: Map<String, GaugeRenderStyle> = emptyMap(),
     scales: Map<String, GaugeScale> = GaugeScaleDefaults.seed,
     onSettingsClick: () -> Unit = {},
+    onMaintenanceClick: () -> Unit = {},
     onSwapGauge: (oldId: String, newId: String) -> Unit = { _, _ -> },
     onAddGauge: (id: String) -> Unit = {},
     onRemoveGauge: (id: String) -> Unit = {},
@@ -543,6 +549,10 @@ fun GaugeDashboard(
                         onTapIdle = { showRecordConfirm = true },
                         onTapRecording = onStopRecording,
                     )
+                    // OBD-79: plain-text glyph, matching SETTINGS_GLYPH's own icon-free style.
+                    TextButton(onClick = onMaintenanceClick, modifier = Modifier.testTag("maintenance-button")) {
+                        Text(text = MAINTENANCE_GLYPH, style = MaterialTheme.typography.titleLarge)
+                    }
                     TextButton(onClick = onSettingsClick, modifier = Modifier.testTag("settings-button")) {
                         Text(text = SETTINGS_GLYPH, style = MaterialTheme.typography.titleLarge)
                     }

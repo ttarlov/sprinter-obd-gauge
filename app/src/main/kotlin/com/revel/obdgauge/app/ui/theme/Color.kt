@@ -64,3 +64,12 @@ val GaugeFaceSweat = Color(0xFFBFE3F5)
 // with headroom, while staying visually the same hue family (still clearly not green/amber/red).
 val GaugeUnverifiedBadge = Color(0xFF5A4E99)
 val GaugeUnverifiedBadgeContent = Color(0xFFFFFFFF)
+
+// OBD-79: Maintenance section structural chrome — a muted teal (Taras's rally palette, per
+// design_aesthetic: teal/orange) reserved for category dividers and the odometer readout panel's
+// border/label. Deliberately never used for status — the green/amber/red threshold vocabulary
+// above stays the only color that answers "is this due," so a chip's color is never ambiguous
+// with the section's own chrome.
+val MaintenanceTeal = Color(0xFF4FA8A0)
+val MaintenancePanelBackground = Color(0xFF181D26)
+val MaintenanceNeutralChip = Color(0xFF7A8493)

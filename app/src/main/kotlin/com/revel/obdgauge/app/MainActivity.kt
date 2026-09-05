@@ -25,6 +25,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.revel.obdgauge.app.gauge.DashboardViewModel
 import com.revel.obdgauge.app.gauge.GaugeDashboard
 import com.revel.obdgauge.app.link.LinkController
+import com.revel.obdgauge.app.maintenance.MaintenanceRoute
 import com.revel.obdgauge.app.service.ObdConnectionService
 import com.revel.obdgauge.app.settings.SettingsRoute
 import com.revel.obdgauge.app.speed.SpeedSource
@@ -42,8 +43,9 @@ import javax.inject.Inject
  * [DashboardViewModel] is `@HiltViewModel`-annotated; `@AndroidEntryPoint` below patches this
  * Activity's default `ViewModelProvider.Factory` so the plain Compose `viewModel()` call
  * resolves it with its Hilt-injected constructor — no `hilt-navigation-compose` dependency
- * needed for a single-Activity app with no nav graph. OBD-21's settings screen is reached the
- * same way: a `mutableStateOf<Screen>` swap below, not a nav library.
+ * needed for a single-Activity app with no nav graph. OBD-21's settings screen (and OBD-79's
+ * Maintenance section) are reached the same way: a `mutableStateOf<Screen>` swap below, not a
+ * nav library.
  */
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -134,10 +136,11 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * The app's one screen swap (dashboard vs. OBD-21 settings) plus every piece of
-     * [DashboardViewModel] state the dashboard needs — pulled out of [onCreate] (OBD-72: adding
-     * `renderStyles`/`scales` pushed that function's body past detekt's `LongMethod` line count)
-     * rather than trimmed down, since every collected `StateFlow` here is genuinely load-bearing.
+     * The app's one screen swap (dashboard vs. OBD-21 settings vs. OBD-79 Maintenance) plus every
+     * piece of [DashboardViewModel] state the dashboard needs — pulled out of [onCreate] (OBD-72:
+     * adding `renderStyles`/`scales` pushed that function's body past detekt's `LongMethod` line
+     * count) rather than trimmed down, since every collected `StateFlow` here is genuinely
+     * load-bearing.
      */
     @Composable
     private fun DashboardOrSettings() {
@@ -164,34 +167,39 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        var showSettings by remember { mutableStateOf(false) }
-        if (showSettings) {
-            SettingsRoute(onBack = { showSettings = false })
-        } else {
-            GaugeDashboard(
-                uiState = uiState,
-                gaugeOrder = gaugeOrder,
-                gridLayoutsByColumns = gridLayoutsByColumns,
-                thresholds = thresholds,
-                renderStyles = renderStyles,
-                scales = scales,
-                onSettingsClick = { showSettings = true },
-                onSwapGauge = viewModel::swapGauge,
-                onAddGauge = viewModel::addGauge,
-                onAddGaugeAt = viewModel::addGaugeAt,
-                onRemoveGauge = viewModel::removeGauge,
-                onResizeGauge = viewModel::resizeGauge,
-                onSetThreshold = viewModel::setThreshold,
-                onSetRenderStyle = viewModel::setRenderStyle,
-                onMoveGauge = viewModel::moveGauge,
-                // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
-                onConnect = if (linkController.isPresent) ::requestConnect else null,
-                recordingState = recordingState,
-                onStartRecording = viewModel::startRecording,
-                onStopRecording = viewModel::stopRecording,
-            )
+        var screen by remember { mutableStateOf(Screen.DASHBOARD) }
+        when (screen) {
+            Screen.SETTINGS -> SettingsRoute(onBack = { screen = Screen.DASHBOARD })
+            Screen.MAINTENANCE -> MaintenanceRoute(onBack = { screen = Screen.DASHBOARD })
+            Screen.DASHBOARD ->
+                GaugeDashboard(
+                    uiState = uiState,
+                    gaugeOrder = gaugeOrder,
+                    gridLayoutsByColumns = gridLayoutsByColumns,
+                    thresholds = thresholds,
+                    renderStyles = renderStyles,
+                    scales = scales,
+                    onSettingsClick = { screen = Screen.SETTINGS },
+                    onMaintenanceClick = { screen = Screen.MAINTENANCE },
+                    onSwapGauge = viewModel::swapGauge,
+                    onAddGauge = viewModel::addGauge,
+                    onAddGaugeAt = viewModel::addGaugeAt,
+                    onRemoveGauge = viewModel::removeGauge,
+                    onResizeGauge = viewModel::resizeGauge,
+                    onSetThreshold = viewModel::setThreshold,
+                    onSetRenderStyle = viewModel::setRenderStyle,
+                    onMoveGauge = viewModel::moveGauge,
+                    // null on `demo` — no link, so no button (GaugeDashboard's KDoc).
+                    onConnect = if (linkController.isPresent) ::requestConnect else null,
+                    recordingState = recordingState,
+                    onStartRecording = viewModel::startRecording,
+                    onStopRecording = viewModel::stopRecording,
+                )
         }
     }
+
+    /** OBD-79: the app's top-level screen swap — [DashboardOrSettings]'s own local nav state. */
+    private enum class Screen { DASHBOARD, SETTINGS, MAINTENANCE }
 
     /**
      * The banner's Connect/Retry tap: request exactly what's missing, then connect — or connect

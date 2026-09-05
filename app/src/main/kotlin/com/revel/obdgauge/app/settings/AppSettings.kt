@@ -108,7 +108,43 @@ data class AppSettings(
      * property's own KDoc for why. Empty until a user edits a scale.
      */
     val scaleOverrides: Map<String, GaugeScale> = emptyMap(),
+    /**
+     * OBD-79: the manual odometer anchor — "Set odometer" writes this + stamps
+     * [lastManualEntryEpochMillis]. `0` on a fresh install means "never set," which
+     * [currentOdometerMiles] and the Maintenance list both render as an honest zero rather than a
+     * sentinel — the "Set odometer" affordance is always visible as the fix.
+     */
+    val odometerAnchorMiles: Int = 0,
+    /** Wall-clock time [odometerAnchorMiles] was last set, for a future "as of" display. */
+    val anchorAtEpochMillis: Long = 0,
+    /**
+     * OBD-80: PID `0131` ("distance since codes cleared," km) read at the moment
+     * [odometerAnchorMiles] was last set — the baseline OBD-80's auto-advance diffs against.
+     * Always `0` from this issue (no OBD read happens here); OBD-80 is the only writer.
+     */
+    val anchorRefDistanceKm: Int = 0,
+    /**
+     * OBD-80: miles accumulated since the anchor via the `0131` auto-advance, added to
+     * [odometerAnchorMiles] by a future revision of [currentOdometerMiles]. Always `0.0` from this
+     * issue — see that property's KDoc.
+     */
+    val accumulatedSinceAnchorMiles: Double = 0.0,
+    /**
+     * Wall-clock time of the last manual "Set odometer" entry — distinct from
+     * [anchorAtEpochMillis] only once OBD-80 can also move the anchor on its own.
+     */
+    val lastManualEntryEpochMillis: Long = 0,
 )
+
+/**
+ * OBD-79: the single accessor every screen reads for "what mileage is this van at right now" —
+ * today just [odometerAnchorMiles], the manual anchor. OBD-80 lands PID `0131` auto-advance by
+ * changing ONLY this function's body to add [accumulatedSinceAnchorMiles] (already plumbed and
+ * defaulted to `0.0` above), so no caller of [currentOdometerMiles] needs to change when that
+ * lands — see `issues/OBD-79.md`'s "Interaction with OBD-80" section.
+ */
+val AppSettings.currentOdometerMiles: Int
+    get() = odometerAnchorMiles
 
 /** [ThresholdConfig.seed] with [AppSettings.thresholdOverrides] layered on top. */
 fun AppSettings.effectiveThresholds(): Map<String, GaugeThresholds> = ThresholdConfig.seed + thresholdOverrides

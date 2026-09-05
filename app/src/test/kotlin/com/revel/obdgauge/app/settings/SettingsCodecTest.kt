@@ -334,6 +334,41 @@ class SettingsCodecTest {
         assertEquals(AppSettings().gaugeOrder, decoded.gaugeOrder)
     }
 
+    @Test
+    fun `OBD-79 the manual odometer mileage fields round-trip`() {
+        val settings =
+            AppSettings(
+                odometerAnchorMiles = 142_318,
+                anchorAtEpochMillis = 1_756_000_000_000L,
+                anchorRefDistanceKm = 42,
+                accumulatedSinceAnchorMiles = 3.75,
+                lastManualEntryEpochMillis = 1_756_000_100_000L,
+            )
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(settings, preferences)
+
+        val decoded = decodeAppSettings(preferences.toPreferences())
+
+        assertEquals(settings.odometerAnchorMiles, decoded.odometerAnchorMiles)
+        assertEquals(settings.anchorAtEpochMillis, decoded.anchorAtEpochMillis)
+        assertEquals(settings.anchorRefDistanceKm, decoded.anchorRefDistanceKm)
+        assertEquals(settings.accumulatedSinceAnchorMiles, decoded.accumulatedSinceAnchorMiles, 0.0)
+        assertEquals(settings.lastManualEntryEpochMillis, decoded.lastManualEntryEpochMillis)
+        assertEquals(settings.odometerAnchorMiles, decoded.currentOdometerMiles)
+    }
+
+    @Test
+    fun `OBD-79 the manual odometer mileage fields default to zero when missing`() {
+        val decoded = decodeAppSettings(emptyPreferences())
+
+        assertEquals(0, decoded.odometerAnchorMiles)
+        assertEquals(0L, decoded.anchorAtEpochMillis)
+        assertEquals(0, decoded.anchorRefDistanceKm)
+        assertEquals(0.0, decoded.accumulatedSinceAnchorMiles, 0.0)
+        assertEquals(0L, decoded.lastManualEntryEpochMillis)
+        assertEquals(0, decoded.currentOdometerMiles)
+    }
+
     private companion object {
         // A synthetic "5th DASHBOARD_PIDS entry" for the M2 regression test above — not a real
         // catalog addition, just enough of a PidDefinition to populate a Map<String,

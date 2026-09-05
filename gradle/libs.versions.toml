@@ -8,6 +8,10 @@ activityCompose = "1.12.4"
 lifecycle = "2.10.0"
 coreKtx = "1.18.0"
 datastore = "1.2.1"
+# OBD-79: Room for the maintenance catalog/record tables (growing, queryable, editable data —
+# kept out of DataStore's AppSettings blob, see maintenance/MODULE notes). 2.7.2 is the latest
+# stable release compatible with this project's KSP 2.1.21-2.0.2 / Kotlin 2.1.21 / AGP 8.13.2.
+room = "2.7.2"
 hilt = "2.57.2"
 junit = "4.13.2"
 androidxTestExtJunit = "1.3.0"
@@ -31,6 +35,9 @@ androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-ru
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
 
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }

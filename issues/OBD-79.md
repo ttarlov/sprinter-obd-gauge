@@ -4,7 +4,7 @@ title: Maintenance tracker + suggester — foundation & manual tracker
 module: app
 owner: ui-agent
 sprint: maintenance
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

@@ -4,6 +4,8 @@ import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.revel.obdgauge.app.gauge.DASHBOARD_PIDS_BY_ID
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
@@ -39,6 +41,14 @@ private val KEY_GRID_LAYOUTS = stringPreferencesKey("grid_layout")
 // gauge order/threshold overrides above.
 private val KEY_RENDER_STYLES = stringPreferencesKey("render_styles")
 private val KEY_SCALE_OVERRIDES = stringPreferencesKey("scale_overrides")
+
+// OBD-79: the manual odometer anchor — small, frequently-written numbers, so DataStore rather
+// than the Room maintenance tables (see AppSettings' own KDoc on these fields).
+private val KEY_ODOMETER_ANCHOR_MILES = intPreferencesKey("odometer_anchor_miles")
+private val KEY_ANCHOR_AT_EPOCH_MILLIS = longPreferencesKey("anchor_at_epoch_millis")
+private val KEY_ANCHOR_REF_DISTANCE_KM = intPreferencesKey("anchor_ref_distance_km")
+private val KEY_ACCUMULATED_SINCE_ANCHOR_MILES = doublePreferencesKey("accumulated_since_anchor_miles")
+private val KEY_LAST_MANUAL_ENTRY_EPOCH_MILLIS = longPreferencesKey("last_manual_entry_epoch_millis")
 
 private const val ENTRY_SEPARATOR = ";"
 private const val FIELD_SEPARATOR = ":"
@@ -79,8 +89,30 @@ fun decodeAppSettings(preferences: Preferences): AppSettings {
         // scale falls back to GaugeScaleDefaults.seed) — never throws, same discipline as above.
         renderStyles = preferences[KEY_RENDER_STYLES]?.let(::decodeRenderStyles) ?: defaults.renderStyles,
         scaleOverrides = preferences[KEY_SCALE_OVERRIDES]?.let(::decodeScaleOverrides) ?: defaults.scaleOverrides,
-    )
+    ).let { withoutOdometer -> applyOdometerAnchor(withoutOdometer, preferences, defaults) }
 }
+
+/**
+ * OBD-79's five mileage-state fields, decoded in their own step — pulled out of
+ * [decodeAppSettings] purely to keep that function under detekt's `CyclomaticComplexMethod`
+ * threshold (each of these is one more per-field `?:` branch, same discipline as every field
+ * above, just counted separately). Absent/malformed → each field's own [defaults], never throws.
+ */
+private fun applyOdometerAnchor(
+    settings: AppSettings,
+    preferences: Preferences,
+    defaults: AppSettings,
+): AppSettings =
+    settings.copy(
+        odometerAnchorMiles = preferences[KEY_ODOMETER_ANCHOR_MILES] ?: defaults.odometerAnchorMiles,
+        anchorAtEpochMillis = preferences[KEY_ANCHOR_AT_EPOCH_MILLIS] ?: defaults.anchorAtEpochMillis,
+        anchorRefDistanceKm = preferences[KEY_ANCHOR_REF_DISTANCE_KM] ?: defaults.anchorRefDistanceKm,
+        accumulatedSinceAnchorMiles =
+            preferences[KEY_ACCUMULATED_SINCE_ANCHOR_MILES]?.takeIf { it.isFinite() }
+                ?: defaults.accumulatedSinceAnchorMiles,
+        lastManualEntryEpochMillis =
+            preferences[KEY_LAST_MANUAL_ENTRY_EPOCH_MILLIS] ?: defaults.lastManualEntryEpochMillis,
+    )
 
 /** Writes [settings] into [preferences] (an in-progress `dataStore.edit {}` transaction). */
 fun encodeAppSettings(
@@ -99,6 +131,11 @@ fun encodeAppSettings(
     }
     preferences[KEY_RENDER_STYLES] = encodeRenderStyles(settings.renderStyles)
     preferences[KEY_SCALE_OVERRIDES] = encodeScaleOverrides(settings.scaleOverrides)
+    preferences[KEY_ODOMETER_ANCHOR_MILES] = settings.odometerAnchorMiles
+    preferences[KEY_ANCHOR_AT_EPOCH_MILLIS] = settings.anchorAtEpochMillis
+    preferences[KEY_ANCHOR_REF_DISTANCE_KM] = settings.anchorRefDistanceKm
+    preferences[KEY_ACCUMULATED_SINCE_ANCHOR_MILES] = settings.accumulatedSinceAnchorMiles
+    preferences[KEY_LAST_MANUAL_ENTRY_EPOCH_MILLIS] = settings.lastManualEntryEpochMillis
 }
 
 private fun encodeGaugeOrder(order: List<GaugeOrderEntry>): String =

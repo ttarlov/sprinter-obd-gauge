@@ -151,6 +151,11 @@ dependencies {
     // OBD-21 settings persistence — own DataStore file, see settings/di/SettingsModule.kt.
     implementation(libs.androidx.datastore.preferences)
 
+    // OBD-79 maintenance tracker persistence — flavor-common (:core:model only, no BLE/protocol).
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(platform(libs.compose.bom))
