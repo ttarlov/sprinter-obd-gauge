@@ -91,6 +91,12 @@ Complementary (lower priority, optional): have `DashboardViewModel` re-issue `da
   stop, or wait out the 20-min idle-stop) → tap **Connect** → gauges resume **without** a quit+relaunch.
   Fold into the same van trip as OBD-71/OBD-78 verification. `hardware-verify: true`.
 
+## Hardware checklist
+
+- [ ] On the van: let the app idle-stop / engine-off-stop the service (wait out the ~20-min idle-stop,
+  or key-off long enough), then tap **Connect** → gauges resume **without** a quit+relaunch. Confirm no
+  regression to the normal launch/connect path. (Fold into the same van trip as OBD-71/OBD-78.)
+
 ## Out of scope
 - The zombie-Ready wedge itself (OBD-78).
 - Engine-off drain / deterministic teardown (OBD-71).
