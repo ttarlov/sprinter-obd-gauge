@@ -35,7 +35,7 @@
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 | Maintenance — OBD-79 (foundation + manual tracker) | +600k | ✅ MERGED 2026-09-04 `5d83ad5` | ~1 build+2 review rounds | 1 merged / 0 rolled |
 | Reliability — OBD-82 (Connect restarts service) | +250k | ✅ built+approved 2026-09-04, ⛔ awaiting Taras van-verify | ~1 build+1 review | 0 merged (in-review) |
-| UX — OBD-83 (Immersive mode nav-bar toggle) | +250k | 🔄 in progress 2026-09-04 | — | — |
+| UX — OBD-83 (Immersive mode nav-bar toggle) | +250k | ✅ built+approved 2026-09-04 `6aa0510`, ⛔ awaiting device-verify (Pixel+Garmin) | ~1 build+1 review | 0 merged (in-review) |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
 original table was ~3.5× optimistic against Sprint 0–1 actuals.

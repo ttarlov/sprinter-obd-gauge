@@ -4,7 +4,7 @@ title: Immersive mode — toggleable setting that hides the system nav bar (swip
 module: app
 owner: ui-agent
 sprint: ux
-status: open
+status: in-review
 type: feature
 hardware-verify: true
 blocked-by: [OBD-79]
