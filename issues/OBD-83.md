@@ -27,6 +27,12 @@ Motivation: on the dash-mounted Garmin the 3-button nav row competes with the ap
 controls. Hiding it removes the collision and gives the dashboard the full height. Making it a toggle
 (not forced) keeps the phone usable normally when Taras wants the nav bar.
 
+**Folded-in fix (Taras, on-device 2026-09-04):** the **Settings** and **Recordings** screens had the same
+status-bar/nav-bar safe-area inset bug that Maintenance had (their headers drew under the status bar) —
+pre-existing, unrelated to immersive mode, but same file (`SettingsScreen.kt`) this issue already
+touches. Added `.safeDrawingPadding()` to both screens' outer scroll Columns, matching the
+`DashboardScreen`/`MaintenanceScreen` idiom. Rides along here to give one combined device-verify build.
+
 ## Blocked by OBD-79
 OBD-79 also adds an `AppSettings` field + `SettingsCodec` key + edits `MainActivity`. Build this **after
 OBD-79 merges**, off the updated `main`, to avoid a three-file merge conflict.
