@@ -61,6 +61,14 @@ OBD-79 merges**, off the updated `main`, to avoid a three-file merge conflict.
   auto-hides; status bar stays visible throughout. Toggle OFF → nav bar returns and stays.
   `hardware-verify: true` (the whole point is device chrome behavior, esp. the Garmin).
 
+## Hardware checklist
+
+- [ ] On the **Garmin Overlander (API 23)**: toggle Immersive mode ON → the system nav bar hides and app
+  content fills the reclaimed space; swipe up from the bottom reveals it transiently, then it auto-hides;
+  the top status bar stays visible throughout. Toggle OFF → nav bar returns and stays. No 3-button-nav
+  collision with app controls while ON.
+- [ ] On the **Pixel**: same toggle behavior; content/insets don't jump when the bar peeks.
+
 ## Out of scope
 - Hiding the **status bar** (Taras wants it kept).
 - Per-screen or automatic immersive (single global toggle only).
