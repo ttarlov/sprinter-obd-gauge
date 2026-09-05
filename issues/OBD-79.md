@@ -4,7 +4,7 @@ title: Maintenance tracker + suggester — foundation & manual tracker
 module: app
 owner: ui-agent
 sprint: maintenance
-status: open
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
@@ -116,6 +116,21 @@ following (Mercedes A-numbers; **flag low-confidence items in `specNotes`**):
 - **Device (🖐 Taras, non-gating smoke):** dashboard → Maintenance; seed list renders; log a service;
   edit a part number and it persists; set odometer; countdowns/colors correct. `hardware-verify: false`
   (no OBD path in this issue).
+
+### Acceptance → test map
+
+| Acceptance item | Test |
+|---|---|
+| `MaintenanceStatus` miles-only boundaries (OK/DUE_SOON/OVERDUE) | `MaintenanceStatusTest.miles-only item classifies OK, DUE_SOON, and OVERDUE purely off the mileage trigger` |
+| `MaintenanceStatus` time-only boundaries (OK/DUE_SOON/OVERDUE) | `MaintenanceStatusTest.time-only item classifies OK, DUE_SOON, and OVERDUE purely off the time trigger` |
+| `MaintenanceStatus` whichever-trigger-is-nearer wins, both directions | `MaintenanceStatusTest.whichever-first - the more urgent of miles and time drives the overall level and trigger`, `...the reverse case, miles overdue while time is fine, is driven by miles`, `...a tie in severity between miles and time prefers MILES as the driving trigger` |
+| `MaintenanceStatus` never-serviced (incl. a no-interval watch item) | `MaintenanceStatusTest.never-serviced item is NEVER_SERVICED even with intervals set`, `...never-serviced watch item with no interval is still NEVER_SERVICED, not OK`, `...logged watch item with no interval at all is OK with no driving trigger` |
+| `MaintenanceStatus` disabled overrides everything | `MaintenanceStatusTest.disabled item is DISABLED regardless of everything else` |
+| Room CRUD (create/read item + record, edit item) | `MaintenanceRepositoryTest.updateServiceItem persists an edit to intervals, part numbers, and spec notes`, `...logService inserts a record retrievable by recordsFor, newest first`, `...latestRecordByItemId returns only the most recent record per item` |
+| Seed inserts exactly once, re-open → no dupes | `MaintenanceRepositoryTest.seedIfNeeded inserts the full NCV3-OM642 catalog exactly once`, `...seedIfNeeded does not overwrite a catalog that already has user data` |
+| `AppSettings` mileage-field codec round-trip + default-on-missing | `SettingsCodecTest.OBD-79 the manual odometer mileage fields round-trip`, `...OBD-79 the manual odometer mileage fields default to zero when missing` |
+| List screen: status chips across OK/due-soon/overdue/never-serviced/disabled | `MaintenanceScreenshotTest.maintenance list, chips across every status` (`maintenance_list.png`) |
+| Detail screen: editable part numbers | `MaintenanceScreenshotTest.maintenance detail, editable part numbers` (`maintenance_detail.png`) |
 
 ## Interaction with OBD-80
 
