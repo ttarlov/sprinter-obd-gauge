@@ -4,7 +4,7 @@ title: Overnight cold-reconnect — app won't auto-reconnect after sitting overn
 module: app
 owner: ble-agent
 sprint: reliability
-status: open
+status: in-review
 type: bug
 hardware-verify: true
 blocked-by: []
@@ -220,3 +220,7 @@ stale-`Ready` link; revisit after the drain fix. And confirm the fix on the **Ga
 
 - Full trip-detection / motion-based auto-start (a heavier feature; this is just the overnight-cold
   reconnect gap).
+
+## Hardware checklist
+
+- [x] Reconnect/drain verified on the Garmin (Taras, 2026-09-12)
