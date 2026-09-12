@@ -13,6 +13,8 @@ import com.revel.obdgauge.app.gauge.GAUGE_CATALOG
 import com.revel.obdgauge.app.recording.RecordingState
 import com.revel.obdgauge.app.recording.logsDir
 import com.revel.obdgauge.app.recording.readSessionIndex
+import com.revel.obdgauge.model.PidIds
+import com.revel.obdgauge.model.Reading
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
@@ -27,6 +29,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.Instant
 
 /**
  * Runs [ObdConnectionService] through Robolectric against the REAL `demo`-flavor Hilt graph —
@@ -400,10 +403,154 @@ class ObdConnectionServiceTest {
         controller.destroy()
     }
 
+    // ---- OBD-71: the engine-off + user-presence watchdog ----
+    //
+    // A fresh RecordingVehicleDataSource replaces the real demo-flavor GRADE_CLIMB fake (RPM
+    // 2000-3200, never 0) via the same field-swap seam `onDestroy cancels the service scope...`
+    // above already uses, so these tests can drive RPM directly instead of waiting on a script.
+    // evaluateEngineOffAndMaybeStop is called directly (not through the real 1 s watchdog loop),
+    // mirroring how the OBD-69 tests above drive checkIdleAndMaybeStop deterministically.
+
+    @Test
+    fun `RPM greater than zero never triggers the engine-off watchdog, present or absent`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val fake = RecordingVehicleDataSource()
+        service.dataSource = fake
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(2400.0)))
+
+        val presentAction = service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START, userPresent = true)
+        val absentAction = service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START + 1, userPresent = false)
+
+        assertEquals(EngineOffAction.None, presentAction)
+        assertEquals(EngineOffAction.None, absentAction)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `engine-off confirmed, user absent, past the silent grace stops - even with non-RPM data still emitting`() {
+        // The exact OBD-71 overnight scenario this fix targets: RPM reads a confirmed 0, but the
+        // ECU keeps trickling other data (coolant cooling) as it does all night — that non-RPM
+        // data arriving must not matter once RPM says the engine is off and nobody's watching.
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val fake = RecordingVehicleDataSource()
+        service.dataSource = fake
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0), "coolant" to freshCoolant()))
+        service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START, userPresent = false)
+
+        val confirmedAtMillis = ENGINE_OFF_START + ENGINE_OFF_DEBOUNCE
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0), "coolant" to freshCoolant()))
+        val atConfirm = service.evaluateEngineOffAndMaybeStop(confirmedAtMillis, userPresent = false)
+        assertEquals(EngineOffAction.None, atConfirm)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0), "coolant" to freshCoolant()))
+        val action =
+            service.evaluateEngineOffAndMaybeStop(
+                confirmedAtMillis + ENGINE_OFF_SILENT_GRACE,
+                userPresent = false,
+            )
+
+        assertEquals(EngineOffAction.Stop, action)
+        assertTrue(shadowOf(service).isStoppedBySelf)
+        assertTrue(shadowOf(service).isForegroundStopped)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `engine-off confirmed, user present, shows the prompt then stops on countdown-expiry`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val fake = RecordingVehicleDataSource()
+        service.dataSource = fake
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0)))
+        service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START, userPresent = true)
+
+        val confirmedAtMillis = ENGINE_OFF_START + ENGINE_OFF_DEBOUNCE
+        val shown = service.evaluateEngineOffAndMaybeStop(confirmedAtMillis, userPresent = true)
+
+        assertTrue(shown is EngineOffAction.ShowPrompt)
+        // Published through the same bridge the dialog observes — pins the UI wiring, not just
+        // the internal decision.
+        assertEquals(shown, service.engineOffBridge.state.value)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        val stopAction =
+            service.evaluateEngineOffAndMaybeStop(confirmedAtMillis + ENGINE_OFF_PROMPT_TIMEOUT, userPresent = true)
+
+        assertEquals(EngineOffAction.Stop, stopAction)
+        assertTrue(shadowOf(service).isStoppedBySelf)
+        assertTrue(shadowOf(service).isForegroundStopped)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `Keep monitoring cancels the prompt-path stop and the connection stays up`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val fake = RecordingVehicleDataSource()
+        service.dataSource = fake
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0)))
+        service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START, userPresent = true)
+        val confirmedAtMillis = ENGINE_OFF_START + ENGINE_OFF_DEBOUNCE
+        service.evaluateEngineOffAndMaybeStop(confirmedAtMillis, userPresent = true)
+
+        // The dialog's button, exercised through the real bridge (not the controller directly).
+        service.engineOffBridge.keepMonitoring()
+
+        val action =
+            service.evaluateEngineOffAndMaybeStop(confirmedAtMillis + ENGINE_OFF_PROMPT_TIMEOUT, userPresent = true)
+
+        assertEquals(EngineOffAction.None, action)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        controller.destroy()
+    }
+
+    @Test
+    fun `an active recording inhibits the engine-off silent stop too`() {
+        val controller = Robolectric.buildService(ObdConnectionService::class.java)
+        val service = controller.create().get()
+        val fake = RecordingVehicleDataSource()
+        service.dataSource = fake
+        service.recordingBridge.publish(
+            RecordingState.Recording(startedAtMillis = 0L, file = java.io.File("unused"), rowCount = 1),
+        )
+        fake.setReadings(mapOf(PidIds.RPM to freshRpm(0.0)))
+        service.evaluateEngineOffAndMaybeStop(ENGINE_OFF_START, userPresent = false)
+
+        val action =
+            service.evaluateEngineOffAndMaybeStop(
+                ENGINE_OFF_START + ENGINE_OFF_DEBOUNCE + ENGINE_OFF_SILENT_GRACE,
+                userPresent = false,
+            )
+
+        assertEquals(EngineOffAction.None, action)
+        assertFalse(shadowOf(service).isStoppedBySelf)
+
+        controller.destroy()
+    }
+
+    private fun freshRpm(value: Double): Reading = Reading(PidIds.RPM, value, Instant.EPOCH, stale = false)
+
+    private fun freshCoolant(): Reading = Reading("coolant", 150.0, Instant.EPOCH, stale = false)
+
     private companion object {
         // Comfortably past the 20-min IDLE_TIMEOUT_MILLIS (file-private to ObdConnectionService).
         const val IDLE_MILLIS_WELL_PAST_TIMEOUT = 25L * 60 * 1000
         const val HEADER_LINE_COUNT = 6
+
+        // Mirrors EngineOffWatchdog.kt's file-private ENGINE_OFF_*_MILLIS constants (not visible
+        // here — `private` in Kotlin is file-scoped, stricter than `internal`).
+        const val ENGINE_OFF_START = 1_000_000L
+        const val ENGINE_OFF_DEBOUNCE = 45L * 1000
+        const val ENGINE_OFF_PROMPT_TIMEOUT = 20L * 1000
+        const val ENGINE_OFF_SILENT_GRACE = 30L * 1000
 
         // Comfortably past the recorder's real 1 Hz tick, without padding the suite too much.
         const val TICK_WAIT_MILLIS = 1_300L

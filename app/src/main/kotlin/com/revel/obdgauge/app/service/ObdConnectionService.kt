@@ -99,6 +99,12 @@ import javax.inject.Inject
  * transport reconnect policy — that's OBD-23) and, beyond that, orthogonal to this service.
  */
 @AndroidEntryPoint
+// OBD-71 added a second watchdog (evaluateEngineOffAndMaybeStop/isUserPresent) alongside OBD-69's
+// original one, sharing their teardown (stopForIdle) — this is now the service's actual, cohesive
+// job (own the notification, keep the poll loop alive, and decide when it should stop, via
+// however many independent signals that decision needs), not sprawl; same call DashboardViewModel
+// already made for its own multi-mutator surface.
+@Suppress("TooManyFunctions")
 class ObdConnectionService : Service() {
     @Inject
     lateinit var dataSource: VehicleDataSource
@@ -132,6 +138,14 @@ class ObdConnectionService : Service() {
     @LoggablePids
     lateinit var loggablePids: List<PidDefinition>
 
+    /** OBD-71: the UI's handle onto [engineOffController] — see [EngineOffBridge]'s KDoc. */
+    @Inject
+    lateinit var engineOffBridge: EngineOffBridge
+
+    /** OBD-71: half of "user present" — see [AppForegroundState]'s KDoc for the other half. */
+    @Inject
+    lateinit var appForegroundState: AppForegroundState
+
     // internal (not private): ObdConnectionServiceTest substitutes a test double controller and
     // reads wakeLock/serviceScope state directly — Robolectric's ShadowService can't reproduce
     // the round-1 B1 crash or observe onDestroy's teardown any other way (see both classes' KDoc).
@@ -159,6 +173,14 @@ class ObdConnectionService : Service() {
      * [checkIdleAndMaybeStop] deterministically without waiting on the coarse watchdog interval.
      */
     internal val idleTracker = IdleActivityTracker()
+
+    /**
+     * OBD-71: the engine-off + user-presence decision (see its own KDoc) — a second, faster,
+     * more-specific watchdog alongside [idleTracker]'s generic no-data backstop. `internal` so
+     * `ObdConnectionServiceTest` can drive [evaluateEngineOffAndMaybeStop] deterministically
+     * without waiting on the watchdog's real interval, the same seam [idleTracker] already is.
+     */
+    internal val engineOffController = EngineOffPromptController()
 
     private var lastPosted: ServiceNotificationState? = null
 
@@ -213,6 +235,13 @@ class ObdConnectionService : Service() {
         // drive keeps the CPU awake indefinitely (round-1 blocker). See [refreshWakeLock].
         launchDataIdleReset(serviceScope, dataSource, idleTracker) { refreshWakeLock(wakeLock) }
         launchIdleWatchdog(serviceScope, SystemClock::elapsedRealtime, ::checkIdleAndMaybeStop)
+        // OBD-71: a second, independent watchdog — see EngineOffPromptController's KDoc for why
+        // it doesn't replace the one above. Published to the UI via engineOffBridge.attach, same
+        // shape as recordingBridge just above.
+        engineOffBridge.attach(engineOffController)
+        launchEngineOffWatchdog(serviceScope, SystemClock::elapsedRealtime) { nowMillis ->
+            evaluateEngineOffAndMaybeStop(nowMillis, isUserPresent())
+        }
     }
 
     /** B5: an explicit Stop-action tap ends the session; every other start (including a bare
@@ -266,6 +295,7 @@ class ObdConnectionService : Service() {
         recorder?.stop()
         recorder = null
         recordingBridge.attach(null)
+        engineOffBridge.attach(null)
         controller?.stop()
         controller = null
         releaseWakeLock(wakeLock)
@@ -276,12 +306,8 @@ class ObdConnectionService : Service() {
 
     /**
      * OBD-69: the watchdog's one decision-and-act step, `internal` as the direct test seam (see
-     * [idleTracker]). The timing itself is the pure [shouldStopForIdle]; this only wires its `true`
-     * to the stop path. Stopping reuses the user-stop teardown deliberately: [disconnectLinkOnUserStop]
-     * disarms `:core:ble`'s never-give-up reconnect (or it would keep scanning the missing dongle all
-     * night), `stopForeground` drops the notification, and `stopSelf()` reaches [onDestroy] to release
-     * the wake lock and the poll loop. Reopening the app reconnects via
-     * `MainActivity.connectIfRemembered` — the resume path; auto-resume is out of scope (OBD-69).
+     * [idleTracker]). The timing itself is the pure [shouldStopForIdle]; this only wires its
+     * `true` to [stopForIdle] — see that function's KDoc for what the teardown actually does.
      *
      * @return `true` if the service is now stopping (idle); `false` if it should keep running. The
      *   watchdog coroutine breaks its loop on `true` so the stop fires exactly once.
@@ -294,10 +320,57 @@ class ObdConnectionService : Service() {
         val recording = recordingBridge.state.value is RecordingState.Recording
         val idle = shouldStopForIdle(idleTracker.lastDataAtMillis, nowMillis, IDLE_TIMEOUT_MILLIS)
         if (recording || !idle) return false
+        stopForIdle()
+        return true
+    }
+
+    /**
+     * OBD-71: [engineOffController]'s one decision-and-act step, mirroring [checkIdleAndMaybeStop]
+     * exactly — `internal` as the direct test seam, [userPresent] passed in rather than queried
+     * live so a test drives it with plain booleans, the same split [checkIdleAndMaybeStop] already
+     * has via [idleTracker]. Production always calls this with the live [isUserPresent] via
+     * [launchEngineOffWatchdog]. Publishes every result to [engineOffBridge] (dedupe-by-value lives
+     * in the `StateFlow` itself — a repeated [EngineOffAction.ShowPrompt] with the same deadline is
+     * a no-op re-publish) and reuses [stopForIdle] on [EngineOffAction.Stop] so both watchdogs tear
+     * the connection down exactly the same way.
+     */
+    internal fun evaluateEngineOffAndMaybeStop(
+        nowMillis: Long,
+        userPresent: Boolean,
+    ): EngineOffAction {
+        val recording = recordingBridge.state.value is RecordingState.Recording
+        val action =
+            engineOffController.evaluate(
+                nowMillis = nowMillis,
+                rpm = rpmSignal(dataSource.readings.value),
+                userPresent = userPresent,
+                recording = recording,
+            )
+        engineOffBridge.publish(action)
+        if (action is EngineOffAction.Stop) stopForIdle()
+        return action
+    }
+
+    /** OBD-71: the other half of "user present" — see [AppForegroundState]'s KDoc. */
+    private fun isUserPresent(): Boolean {
+        val interactive = getSystemService<PowerManager>()?.isInteractive ?: false
+        return appForegroundState.isForeground.value && interactive
+    }
+
+    /**
+     * OBD-69/71: the shared teardown both idle paths ([checkIdleAndMaybeStop]'s no-data backstop,
+     * [evaluateEngineOffAndMaybeStop]'s engine-off+absence trigger) call. [disconnectLinkOnUserStop]
+     * disarms `:core:ble`'s never-give-up reconnect (or it would keep scanning the missing dongle
+     * all night), `stopForeground` drops the notification, and `stopSelf()` reaches [onDestroy] to
+     * release the wake lock and the poll loop. Reopening the app reconnects via
+     * `MainActivity.connectIfRemembered` — the resume path; auto-resume is out of scope (OBD-69).
+     * Safe to call from either watchdog even if the other already fired: `stopSelf`/`disconnect`/
+     * `stopForeground` are all idempotent against an already-stopping service.
+     */
+    private fun stopForIdle() {
         disconnectLinkOnUserStop()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
-        return true
     }
 
     private fun postNotification(state: ServiceNotificationState) {
@@ -393,6 +466,11 @@ private const val IDLE_TIMEOUT_MILLIS = 20 * 60 * 1000L
 // OBD-69: how often the watchdog coroutine checks the idle timeout. Coarse on purpose — the
 // decision only needs ~minute resolution and each wake is cheap.
 private const val WATCHDOG_INTERVAL_MILLIS = 60 * 1000L
+
+// OBD-71: how often the engine-off watchdog ticks — much finer than WATCHDOG_INTERVAL_MILLIS
+// above, since this one drives a visible 20-second countdown dialog and needs sub-minute
+// resolution to feel responsive; still cheap (a StateFlow read + a few comparisons per tick).
+private const val ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS = 1000L
 
 // OBD-69: dropped from 12h to a ~25-min backstop, just above IDLE_TIMEOUT_MILLIS. The idle
 // watchdog is the primary release; this only bounds a watchdog that somehow never ran, so even a
@@ -490,6 +568,27 @@ private fun launchIdleWatchdog(
         while (isActive) {
             delay(WATCHDOG_INTERVAL_MILLIS)
             if (checkAndMaybeStop(now())) break
+        }
+    }
+}
+
+/**
+ * OBD-71: [EngineOffPromptController]'s watchdog coroutine — a much finer
+ * ([ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS]) loop than [launchIdleWatchdog]'s, since it has to drive
+ * a visible 20-second countdown rather than just eventually notice a 20-minute one. `tick` is
+ * `ObdConnectionService.evaluateEngineOffAndMaybeStop` bound to the live `isUserPresent()`
+ * (`onCreate`'s closure) — see that method's own KDoc. Stops looping the moment `tick` returns
+ * [EngineOffAction.Stop], same one-shot shape as [launchIdleWatchdog].
+ */
+private fun launchEngineOffWatchdog(
+    scope: CoroutineScope,
+    now: () -> Long,
+    tick: (Long) -> EngineOffAction,
+) {
+    scope.launch {
+        while (isActive) {
+            if (tick(now()) is EngineOffAction.Stop) break
+            delay(ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS)
         }
     }
 }

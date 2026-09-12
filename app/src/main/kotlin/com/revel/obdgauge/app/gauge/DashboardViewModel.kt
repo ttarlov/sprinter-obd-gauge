@@ -8,6 +8,8 @@ import com.revel.obdgauge.app.gauge.grid.GridLayoutSet
 import com.revel.obdgauge.app.recording.RecordingBridge
 import com.revel.obdgauge.app.recording.RecordingState
 import com.revel.obdgauge.app.service.ActivePollSet
+import com.revel.obdgauge.app.service.EngineOffAction
+import com.revel.obdgauge.app.service.EngineOffBridge
 import com.revel.obdgauge.app.service.PollKeepAlive
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.DEFAULT_GAUGE_ORDER
@@ -49,6 +51,9 @@ import javax.inject.Inject
  *   the WIDENED set rather than silently narrowing it back down. See [ActivePollSet]'s KDoc.
  * @param recordingBridge OBD-70: the Record button's UI handle onto whichever `Recorder`
  *   `ObdConnectionService` currently owns — see [RecordingBridge]'s KDoc.
+ * @param engineOffBridge OBD-71: the "Engine off — keep monitoring?" dialog's UI handle onto
+ *   whichever `EngineOffPromptController` `ObdConnectionService` currently owns — see
+ *   [EngineOffBridge]'s KDoc.
  */
 @HiltViewModel
 // One small mutator per grid/threshold/swap operation (OBD-64/66/67) is the cohesive shape this
@@ -57,6 +62,12 @@ import javax.inject.Inject
 @Suppress("TooManyFunctions")
 class DashboardViewModel
     @Inject
+    // OBD-71 added engineOffBridge as the 7th collaborator — every one is a distinct, real Hilt
+    // singleton this ViewModel genuinely depends on (mirrors ObdConnectionService's own
+    // @Suppress("TooManyFunctions") right above it for the same "this growth is the class's
+    // actual job, not sprawl" reason), not a param-list smell worth introducing a params object
+    // to hide.
+    @Suppress("LongParameterList")
     constructor(
         private val dataSource: VehicleDataSource,
         private val clock: Clock,
@@ -64,6 +75,7 @@ class DashboardViewModel
         private val keepAlive: PollKeepAlive = PollKeepAlive(),
         private val activePollSet: ActivePollSet = ActivePollSet(),
         private val recordingBridge: RecordingBridge = RecordingBridge(),
+        private val engineOffBridge: EngineOffBridge = EngineOffBridge(),
     ) : ViewModel() {
         init {
             // OBD-68 (was "eager-seed the ONE canonical grid" under OBD-64 — see the round-4 pivot
@@ -202,6 +214,12 @@ class DashboardViewModel
 
         /** The recording indicator's one-tap stop. */
         fun stopRecording() = recordingBridge.stop()
+
+        /** OBD-71: what `EngineOffPromptHost` renders — see [EngineOffBridge]. */
+        val engineOffAction: StateFlow<EngineOffAction> = engineOffBridge.state
+
+        /** The "Engine off — keep monitoring?" dialog's one button. */
+        fun keepMonitoring() = engineOffBridge.keepMonitoring()
 
         /**
          * OBD-42: the long-press picker's "tap a candidate" action. Replaces [oldId] with

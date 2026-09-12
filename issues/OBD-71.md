@@ -4,7 +4,7 @@ title: Overnight cold-reconnect — app won't auto-reconnect after sitting overn
 module: app
 owner: ble-agent
 sprint: reliability
-status: in-review
+status: merged
 type: bug
 hardware-verify: true
 blocked-by: []

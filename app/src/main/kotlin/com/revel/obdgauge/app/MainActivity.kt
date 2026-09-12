@@ -23,9 +23,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.revel.obdgauge.app.gauge.DashboardViewModel
+import com.revel.obdgauge.app.gauge.EngineOffPromptHost
 import com.revel.obdgauge.app.gauge.GaugeDashboard
 import com.revel.obdgauge.app.link.LinkController
 import com.revel.obdgauge.app.maintenance.MaintenanceRoute
+import com.revel.obdgauge.app.service.AppForegroundState
 import com.revel.obdgauge.app.service.ObdConnectionService
 import com.revel.obdgauge.app.settings.SettingsRoute
 import com.revel.obdgauge.app.speed.SpeedSource
@@ -66,6 +68,14 @@ class MainActivity : ComponentActivity() {
      */
     @Inject
     lateinit var speedSource: Optional<SpeedSource>
+
+    /**
+     * OBD-71: half of `EngineOffPromptController`'s "user present" signal — set in [onStart]/
+     * [onStop], the same foreground/visible lifecycle pair [speedSource] already follows. See
+     * [AppForegroundState]'s KDoc for the other half (screen-interactive, read by the service).
+     */
+    @Inject
+    lateinit var appForegroundState: AppForegroundState
 
     /**
      * OBD-25 / OBD-17: the BLE runtime permissions, requested **at the connect moment** rather
@@ -156,6 +166,10 @@ class MainActivity : ComponentActivity() {
         val scales by viewModel.scales.collectAsStateWithLifecycle()
         val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
         val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
+        val engineOffAction by viewModel.engineOffAction.collectAsStateWithLifecycle()
+
+        // OBD-71: a no-op for every EngineOffAction except ShowPrompt — see its KDoc.
+        EngineOffPromptHost(action = engineOffAction, onKeepMonitoring = viewModel::keepMonitoring)
 
         // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
         // and it's cleared automatically the moment the setting flips back off.
@@ -233,11 +247,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         startSpeedSource()
+        appForegroundState.setForeground(true)
     }
 
     override fun onStop() {
         super.onStop()
         speedSource.orElse(null)?.stop()
+        appForegroundState.setForeground(false)
     }
 
     /** Starts GPS speed updates iff the permission is granted and a provider exists. */
