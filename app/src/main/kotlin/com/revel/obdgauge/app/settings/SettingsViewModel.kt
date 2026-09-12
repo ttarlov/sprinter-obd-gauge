@@ -80,6 +80,8 @@ class SettingsViewModel
 
         fun setKeepScreenOn(enabled: Boolean) = update { it.copy(keepScreenOn = enabled) }
 
+        fun setShowConnectionStatus(enabled: Boolean) = update { it.copy(showConnectionStatus = enabled) }
+
         fun setPollRate(rate: PollRate) = update { it.copy(pollRate = rate) }
 
         private fun update(transform: (AppSettings) -> AppSettings) {

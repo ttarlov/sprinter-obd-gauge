@@ -248,6 +248,9 @@ val LocalDangerPulseEnabled = staticCompositionLocalOf { true }
  *   default, and what the `demo` flavor passes — it has no link) renders the pre-OBD-25 banner
  *   exactly, which is why this change leaves both dashboard screenshots byte-identical. See
  *   [ConnectionBanner]'s KDoc for which link states show a button and why the busy ones don't.
+ * @param showConnectionStatus OBD-84: Settings' "Show connection status" toggle, threaded
+ *   straight into [ConnectionBanner] — gates only its permanent `Ready` state, see that
+ *   composable's own KDoc. Defaults `true`.
  * @param onSwapGauge OBD-42: invoked `(oldId, newId)` the moment a picker candidate is tapped —
  *   the caller is expected to persist it via the same `gaugeOrder` path OBD-21's settings screen
  *   uses (`DashboardViewModel.swapGauge`/`AppSettings.withGaugeSwapped`). Picker-mode dismissal
@@ -283,6 +286,10 @@ fun GaugeDashboard(
     onMoveGauge: (id: String, col: Int, row: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onAddGaugeAt: (id: String, col: Int, row: Int, columns: Int) -> Unit = { _, _, _, _ -> },
     onConnect: (() -> Unit)? = null,
+    // OBD-84: gates the permanent connection-status pill's `Ready` state — see ConnectionBanner's
+    // KDoc. Default true so every pre-OBD-84 call site (every preview, every test that doesn't
+    // care) renders with the pill on, matching AppSettings.showConnectionStatus's own default.
+    showConnectionStatus: Boolean = true,
     dangerPulseEnabled: Boolean = true,
     // OBD-70: the Record control's state and actions — see RecordingControls.kt/RecordControl.
     // Idle default so a caller that doesn't pass any of this (every pre-OBD-70 call site, every
@@ -485,8 +492,21 @@ fun GaugeDashboard(
                 )
             }
             Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    ConnectionBanner(uiState.connection, modifier = Modifier.weight(1f), onConnect = onConnect)
+                // OBD-84: testTag exists purely so DashboardScreenTest can assert this Row's
+                // height stays constant across every ConnectionBanner state — see that fix's own
+                // round-6/7 KDoc on DashboardScreen.kt and ConnectionBanner.kt for why height
+                // drift here shrinks the grid viewport (and thus every tile).
+                Row(
+                    modifier = Modifier.fillMaxWidth().testTag("dashboard-header-row"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ConnectionBanner(
+                        connection = uiState.connection,
+                        dataFlowing = uiState.dataFlowing,
+                        showConnectionStatus = showConnectionStatus,
+                        modifier = Modifier.weight(1f),
+                        onConnect = onConnect,
+                    )
                     // OBD-67 round-8 device-verified fix: rearrange mode's below-fold "＋" empty
                     // cells (see EmptyCellAddButton below) became practically unreachable once
                     // round 5 made tiles full-viewport-height in rearrange mode — a vertical swipe

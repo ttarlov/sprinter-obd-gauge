@@ -4,7 +4,7 @@ title: Permanent connection-status pill (dongle link + ECU-feeding), toggleable 
 module: app
 owner: ui-agent
 sprint: ux
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []

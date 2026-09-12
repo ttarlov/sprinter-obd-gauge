@@ -62,6 +62,7 @@ fun SettingsScreen(
     onResetThresholds: () -> Unit,
     onSetUnits: (UnitPreferences) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
+    onSetShowConnectionStatus: (Boolean) -> Unit,
     onSetPollRate: (PollRate) -> Unit,
     onOpenRecordings: () -> Unit,
     onBack: () -> Unit,
@@ -87,6 +88,17 @@ fun SettingsScreen(
             UnitsSection(settings.units, onSetUnits)
             HorizontalDivider()
             KeepScreenOnSection(settings.keepScreenOn, onSetKeepScreenOn)
+            HorizontalDivider()
+            // OBD-84: inlined rather than its own private fun, same reasoning as the Recordings
+            // section below — this file is already at detekt's per-file function-count bar.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Show connection status", modifier = Modifier.weight(1f))
+                Switch(
+                    checked = settings.showConnectionStatus,
+                    onCheckedChange = onSetShowConnectionStatus,
+                    modifier = Modifier.testTag("show-connection-status-switch"),
+                )
+            }
             HorizontalDivider()
             PollRateSection(settings.pollRate, onSetPollRate)
             HorizontalDivider()
@@ -385,6 +397,7 @@ fun SettingsRoute(
         onResetThresholds = viewModel::resetThresholdsToDefault,
         onSetUnits = viewModel::setUnits,
         onSetKeepScreenOn = viewModel::setKeepScreenOn,
+        onSetShowConnectionStatus = viewModel::setShowConnectionStatus,
         onSetPollRate = viewModel::setPollRate,
         onOpenRecordings = { showRecordings = true },
         onBack = onBack,

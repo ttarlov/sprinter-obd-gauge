@@ -48,6 +48,10 @@ class SettingsCodecTest {
                     ),
                 units = UnitPreferences(temperatureUnit = MeasurementUnit.CELSIUS, pressureUnit = MeasurementUnit.KPA),
                 keepScreenOn = true,
+                // Non-default (false) so this test actually exercises the round trip rather than
+                // coinciding with AppSettings()'s own true default — see the dedicated
+                // default-true-on-missing test below for that case.
+                showConnectionStatus = false,
                 pollRate = PollRate.HZ_2,
                 speedCorrectionFactor = 1.1,
                 renderStyles =
@@ -66,6 +70,18 @@ class SettingsCodecTest {
         val decoded = decodeAppSettings(preferences.toPreferences())
 
         assertEquals(settings, decoded)
+    }
+
+    @Test
+    fun `OBD-84 show-connection-status round-trips, and defaults to true when missing`() {
+        // Present: an explicit "off" choice survives a round trip.
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(AppSettings(showConnectionStatus = false), preferences)
+        assertFalse(decodeAppSettings(preferences.toPreferences()).showConnectionStatus)
+
+        // Absent (a pre-OBD-84 install, or fresh preferences): defaults on, matching
+        // AppSettings()'s own default — "it's meant to be permanent."
+        assertTrue(decodeAppSettings(emptyPreferences()).showConnectionStatus)
     }
 
     @Test

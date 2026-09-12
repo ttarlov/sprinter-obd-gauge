@@ -1,5 +1,8 @@
 package com.revel.obdgauge.app.gauge
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -12,6 +15,7 @@ import com.revel.obdgauge.app.ui.theme.GaugeGreen
 import com.revel.obdgauge.app.ui.theme.GaugeNeutral
 import com.revel.obdgauge.app.ui.theme.GaugeRed
 import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
+import com.revel.obdgauge.model.LinkError
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidIds
 import com.revel.obdgauge.model.Reading
@@ -112,6 +116,51 @@ class DashboardScreenTest {
 
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals("190°F")
         composeTestRule.onNodeWithTag("gauge-coolant-stale").assertTextEquals("last seen ${STALE_ELAPSED_SECONDS}s ago")
+    }
+
+    /**
+     * OBD-84's #1 gotcha (see `ConnectionBanner.kt`/`DashboardScreen.kt`'s KDoc): the header
+     * `Row`'s height must never depend on which connection-status pill state is showing, since
+     * that height drives the grid `BoxWithConstraints`' viewport (and thus every tile's size).
+     * Every state that can appear on a real dashboard — including both halves of the new
+     * permanent `Ready` split — is asserted to render the SAME header height.
+     */
+    @Test
+    fun `header height is identical across every connection-status pill state`() {
+        val now = Instant.EPOCH
+        val liveReadings = mapOf(PidIds.COOLANT to Reading(PidIds.COOLANT, 190.0, now, stale = false))
+        val waitingReadings = mapOf(PidIds.COOLANT to Reading(PidIds.COOLANT, 190.0, now, stale = true))
+        val statesByName =
+            linkedMapOf(
+                "disconnected" to toDashboardUiState(emptyMap(), LinkState.Disconnected, now),
+                "connecting" to toDashboardUiState(emptyMap(), LinkState.Connecting, now),
+                "ready-live" to toDashboardUiState(liveReadings, LinkState.Ready, now),
+                "ready-waiting" to toDashboardUiState(waitingReadings, LinkState.Ready, now),
+                "error" to toDashboardUiState(emptyMap(), LinkState.Error(LinkError.Timeout), now),
+            )
+
+        // setContent may only be called once per test (see ConnectionBannerTest's own
+        // DISCONNECT_RECONNECT walk for the same pattern) — a single composition is driven
+        // forward state-by-state via mutableStateOf instead.
+        var uiState by mutableStateOf(statesByName.getValue("disconnected"))
+        composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(uiState) } }
+
+        val heightsPx =
+            statesByName.mapValues { (_, state) ->
+                uiState = state
+                composeTestRule.waitForIdle()
+                composeTestRule
+                    .onNodeWithTag("dashboard-header-row")
+                    .fetchSemanticsNode()
+                    .size.height
+            }
+
+        val distinctHeights = heightsPx.values.toSet()
+        assertEquals(
+            "expected one constant header height across all states, got $heightsPx",
+            1,
+            distinctHeights.size,
+        )
     }
 
     @Config(qualifiers = "w360dp-h640dp-port")

@@ -112,6 +112,41 @@ class DashboardUiStateTest {
         assertEquals(null, rawFrame.capturedText)
     }
 
+    // ---- OBD-84: dataFlowing ----
+
+    @Test
+    fun `dataFlowing is false when there are no readings at all`() {
+        val state = toDashboardUiState(emptyMap(), LinkState.Ready, Instant.EPOCH)
+
+        assertEquals(false, state.dataFlowing)
+    }
+
+    @Test
+    fun `dataFlowing is false when every reading is stale`() {
+        val readings =
+            mapOf(
+                PidIds.COOLANT to Reading(PidIds.COOLANT, WIRE_VALUE_FAHRENHEIT, Instant.EPOCH, stale = true),
+                PidIds.OIL_TEMP to Reading(PidIds.OIL_TEMP, OIL_VALUE, Instant.EPOCH, stale = true),
+            )
+
+        val state = toDashboardUiState(readings, LinkState.Ready, Instant.EPOCH)
+
+        assertEquals(false, state.dataFlowing)
+    }
+
+    @Test
+    fun `dataFlowing is true when at least one reading is fresh, even if others are stale`() {
+        val readings =
+            mapOf(
+                PidIds.COOLANT to Reading(PidIds.COOLANT, WIRE_VALUE_FAHRENHEIT, Instant.EPOCH, stale = true),
+                PidIds.OIL_TEMP to Reading(PidIds.OIL_TEMP, OIL_VALUE, Instant.EPOCH, stale = false),
+            )
+
+        val state = toDashboardUiState(readings, LinkState.Ready, Instant.EPOCH)
+
+        assertEquals(true, state.dataFlowing)
+    }
+
     private companion object {
         const val WIRE_VALUE_FAHRENHEIT = 235.0
         const val RPM_VALUE = 3000.0

@@ -206,6 +206,19 @@ class DashboardViewModel
                     AppSettings().keepScreenOn,
                 )
 
+        /**
+         * OBD-84: whether the permanent connection-status pill's `Ready` state renders; `MainActivity`
+         * passes it straight into `GaugeDashboard`. Same shape as [keepScreenOn].
+         */
+        val showConnectionStatus: StateFlow<Boolean> =
+            settingsRepository.settings
+                .map { it.showConnectionStatus }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    AppSettings().showConnectionStatus,
+                )
+
         /** OBD-70: what the dashboard's Record control renders — see [RecordingBridge]. */
         val recordingState: StateFlow<RecordingState> = recordingBridge.state
 

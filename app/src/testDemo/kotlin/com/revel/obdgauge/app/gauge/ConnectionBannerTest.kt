@@ -48,11 +48,44 @@ class ConnectionBannerTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    // ---- OBD-84: the permanent pill's Ready split ----
+
     @Test
-    fun `Ready hides the banner entirely`() {
-        composeTestRule.setContent { ObdGaugeTheme { ConnectionBanner(LinkState.Ready) } }
+    fun `Ready with data flowing shows the Live pill`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Ready, dataFlowing = true) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("live"))
+        composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Live · reading ECU")
+    }
+
+    @Test
+    fun `Ready with no fresh data shows the waiting-for-ECU pill`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Ready, dataFlowing = false) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("waiting"))
+        composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Connected · waiting for ECU")
+    }
+
+    @Test
+    fun `Ready renders nothing when showConnectionStatus is off - the pre-OBD-84 behavior`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Ready, dataFlowing = true, showConnectionStatus = false) }
+        }
 
         composeTestRule.onNodeWithTag("connection-banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun `showConnectionStatus off still shows reconnect feedback - the toggle only gates Ready`() {
+        composeTestRule.setContent {
+            ObdGaugeTheme { ConnectionBanner(LinkState.Scanning, showConnectionStatus = false) }
+        }
+
+        composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("scanning"))
     }
 
     @Test
@@ -192,8 +225,11 @@ class ConnectionBannerTest {
         var uiState by mutableStateOf(readyBefore)
         composeTestRule.setContent { ObdGaugeTheme { GaugeDashboard(uiState) } }
 
-        // Ready (start of the sequence, no reading yet): banner hidden.
-        composeTestRule.onNodeWithTag("connection-banner").assertDoesNotExist()
+        // Ready (start of the sequence, no reading yet): OBD-84's permanent pill shows
+        // "waiting for ECU" rather than hiding — dataFlowing is false with no reading at all.
+        assertEquals(false, readyBefore.dataFlowing)
+        composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("waiting"))
+        composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Connected · waiting for ECU")
 
         // Error(Timeout) — connection just dropped; the coolant reading (last fresh at 191°F,
         // t=1000ms virtual) is now frozen+stale, and only 500ms of real/test time has elapsed
@@ -218,11 +254,14 @@ class ConnectionBannerTest {
         composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Connecting…")
         composeTestRule.onNodeWithTag("gauge-coolant-stale").assertTextEquals("last seen 1s ago")
 
-        // Ready again, post-recovery: banner hidden, fresh (non-stale) 192°F reading.
+        // Ready again, post-recovery: fresh (non-stale) 192°F reading means dataFlowing is true,
+        // so OBD-84's pill now reads "Live" rather than hiding.
         assertEquals(192.0, readyAfter.coolant.rawValue, 0.0)
         assertEquals(false, readyAfter.coolant.isStale)
+        assertEquals(true, readyAfter.dataFlowing)
         uiState = readyAfter
-        composeTestRule.onNodeWithTag("connection-banner").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("connection-banner").assert(hasBannerState("live"))
+        composeTestRule.onNodeWithTag("connection-banner-message").assertTextEquals("Live · reading ECU")
         composeTestRule.onNodeWithTag("gauge-coolant-value").assertTextEquals("192°F")
     }
 

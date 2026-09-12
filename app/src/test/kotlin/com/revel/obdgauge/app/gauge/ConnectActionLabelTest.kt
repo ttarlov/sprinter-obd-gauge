@@ -38,8 +38,7 @@ class ConnectActionLabelTest {
     }
 
     @Test
-    fun `a healthy link offers nothing - the banner does not render at all`() {
+    fun `a healthy link offers nothing to tap - OBD-84's permanent pill has no action`() {
         assertNull(connectActionLabel(LinkState.Ready))
-        assertNull(connectionBannerMessage(LinkState.Ready))
     }
 }

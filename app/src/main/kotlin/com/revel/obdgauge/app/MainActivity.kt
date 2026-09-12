@@ -165,6 +165,7 @@ class MainActivity : ComponentActivity() {
         val renderStyles by viewModel.renderStyles.collectAsStateWithLifecycle()
         val scales by viewModel.scales.collectAsStateWithLifecycle()
         val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+        val showConnectionStatus by viewModel.showConnectionStatus.collectAsStateWithLifecycle()
         val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
         val engineOffAction by viewModel.engineOffAction.collectAsStateWithLifecycle()
 
@@ -193,6 +194,7 @@ class MainActivity : ComponentActivity() {
                     thresholds = thresholds,
                     renderStyles = renderStyles,
                     scales = scales,
+                    showConnectionStatus = showConnectionStatus,
                     onSettingsClick = { screen = Screen.SETTINGS },
                     onMaintenanceClick = { screen = Screen.MAINTENANCE },
                     onSwapGauge = viewModel::swapGauge,

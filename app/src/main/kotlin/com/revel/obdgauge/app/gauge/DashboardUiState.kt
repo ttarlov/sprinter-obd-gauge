@@ -77,6 +77,17 @@ data class DashboardUiState(
     val boost: GaugeTileUiState,
     val connection: LinkState,
     /**
+     * OBD-84: whether the vehicle data source is actually feeding in fresh data right now —
+     * `true` when at least one [Reading] in the last [toDashboardUiState] pass is non-stale.
+     * Distinct from [connection]: a [LinkState.Ready] dongle can still have `dataFlowing = false`
+     * (ignition off, `SEARCHING…`, a protocol wedge — every reading frozen stale), which is
+     * exactly the "Connected · waiting for ECU" vs. "Live · reading ECU" split
+     * [ConnectionBanner]'s permanent pill renders. Mirrors OBD-69's
+     * `applyReadingsToIdleSignal` "non-empty = data" rule, tightened with [Reading.stale] so a
+     * frozen-stale reading from a dead link doesn't itself read as "live."
+     */
+    val dataFlowing: Boolean = false,
+    /**
      * OBD-42: tile state for every [GAUGE_CATALOG] id that ISN'T one of the four fixed fields
      * above (today, just [PidIds.RPM]) — computed the same way, off the same [Reading]/
      * threshold/unit inputs, so a swap-picker mini-card and a swapped-in dashboard tile show
@@ -146,6 +157,10 @@ fun toDashboardUiState(
         oilTemp = tiles.getValue(PidIds.OIL_TEMP),
         boost = tiles.getValue(PidIds.BOOST),
         connection = connection,
+        // OBD-84: "any fresh reading at all" — not gated to the four core tiles, so a data feed
+        // that's currently only updating an extra/swapped-in gauge (e.g. RPM) still counts as
+        // "flowing" for the permanent pill's Live/waiting split.
+        dataFlowing = readings.values.any { !it.stale },
         extraTiles = tiles - CORE_TILE_IDS,
         rawFrames = rawFrames,
     )

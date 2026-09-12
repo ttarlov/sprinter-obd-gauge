@@ -81,6 +81,7 @@ class LiveRecolorTest {
                     onResetThresholds = settingsViewModel::resetThresholdsToDefault,
                     onSetUnits = settingsViewModel::setUnits,
                     onSetKeepScreenOn = settingsViewModel::setKeepScreenOn,
+                    onSetShowConnectionStatus = settingsViewModel::setShowConnectionStatus,
                     onSetPollRate = settingsViewModel::setPollRate,
                     onOpenRecordings = {},
                     onBack = {},

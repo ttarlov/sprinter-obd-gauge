@@ -77,6 +77,15 @@ data class AppSettings(
     val thresholdOverrides: Map<String, GaugeThresholds> = emptyMap(),
     val units: UnitPreferences = UnitPreferences(),
     val keepScreenOn: Boolean = false,
+    /**
+     * OBD-84: whether the dashboard's permanent connection-status pill renders its `Ready`
+     * (Live/waiting) state — Settings' "Show connection status" toggle, cloned from
+     * [keepScreenOn]'s own shape. Defaults `true` ("it's meant to be permanent," per the issue)
+     * so a fresh/old install shows the pill without any setup. `false` reverts to the
+     * pre-OBD-84 banner: reconnect states (Disconnected/Scanning/Connecting/Error) still show —
+     * this only gates the steady `Ready` state — see [ConnectionBanner]'s KDoc.
+     */
+    val showConnectionStatus: Boolean = true,
     val pollRate: PollRate = PollRate.HZ_4,
     // OBD-61: the GPS-auto-learned speedometer correction multiplier (true = ecu × factor).
     // 1.0 means "no correction / not yet learned", which is what a fresh install renders — the

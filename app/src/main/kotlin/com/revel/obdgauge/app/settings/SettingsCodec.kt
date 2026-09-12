@@ -29,6 +29,11 @@ private val KEY_THRESHOLD_OVERRIDES = stringPreferencesKey("threshold_overrides"
 private val KEY_TEMPERATURE_UNIT = stringPreferencesKey("temperature_unit")
 private val KEY_PRESSURE_UNIT = stringPreferencesKey("pressure_unit")
 private val KEY_KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+
+// OBD-84: same Boolean-toggle shape as KEY_KEEP_SCREEN_ON above — default-true-on-missing (see
+// decodeAppSettings) so an install that predates this feature gets the pill on, matching
+// AppSettings.showConnectionStatus's own default.
+private val KEY_SHOW_CONNECTION_STATUS = booleanPreferencesKey("show_connection_status")
 private val KEY_POLL_RATE = stringPreferencesKey("poll_rate")
 private val KEY_SPEED_CORRECTION_FACTOR = doublePreferencesKey("speed_correction_factor")
 
@@ -73,6 +78,7 @@ fun decodeAppSettings(preferences: Preferences): AppSettings {
                 pressureUnit = preferences[KEY_PRESSURE_UNIT]?.let(::decodeUnit) ?: defaults.units.pressureUnit,
             ),
         keepScreenOn = preferences[KEY_KEEP_SCREEN_ON] ?: defaults.keepScreenOn,
+        showConnectionStatus = preferences[KEY_SHOW_CONNECTION_STATUS] ?: defaults.showConnectionStatus,
         pollRate = preferences[KEY_POLL_RATE]?.let(::decodePollRate) ?: defaults.pollRate,
         // Missing/malformed (NaN/infinite) → the 1.0 default, matching the file's "worst case is
         // a silent reset, never a crash" discipline.
@@ -124,6 +130,7 @@ fun encodeAppSettings(
     preferences[KEY_TEMPERATURE_UNIT] = settings.units.temperatureUnit.name
     preferences[KEY_PRESSURE_UNIT] = settings.units.pressureUnit.name
     preferences[KEY_KEEP_SCREEN_ON] = settings.keepScreenOn
+    preferences[KEY_SHOW_CONNECTION_STATUS] = settings.showConnectionStatus
     preferences[KEY_POLL_RATE] = settings.pollRate.name
     preferences[KEY_SPEED_CORRECTION_FACTOR] = settings.speedCorrectionFactor
     if (settings.gridLayoutsByColumns.isNotEmpty()) {

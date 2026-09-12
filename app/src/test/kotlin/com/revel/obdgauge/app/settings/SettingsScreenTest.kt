@@ -12,6 +12,7 @@ import com.revel.obdgauge.app.ui.theme.ObdGaugeTheme
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidIds
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -168,6 +169,7 @@ class SettingsScreenTest {
                     onResetThresholds = {},
                     onSetUnits = { settings.value = settings.value.copy(units = it) },
                     onSetKeepScreenOn = {},
+                    onSetShowConnectionStatus = {},
                     onSetPollRate = {},
                     onOpenRecordings = {},
                     onBack = {},
@@ -234,6 +236,18 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `show-connection-status switch reports the toggled value`() {
+        var reported: Boolean? = null
+        // Unlike keepScreenOn, AppSettings' default is true here ("it's meant to be
+        // permanent") — a tap on the default-content switch reports false.
+        setFullScreenContent(onSetShowConnectionStatus = { enabled -> reported = enabled })
+
+        composeTestRule.onNodeWithTag("show-connection-status-switch").performScrollTo().performClick()
+
+        assertFalse(reported!!)
+    }
+
+    @Test
     fun `selecting a poll rate reports it`() {
         var reported: PollRate? = null
         setFullScreenContent(onSetPollRate = { rate -> reported = rate })
@@ -252,6 +266,7 @@ class SettingsScreenTest {
         onResetThresholds: () -> Unit = {},
         onSetUnits: (UnitPreferences) -> Unit = {},
         onSetKeepScreenOn: (Boolean) -> Unit = {},
+        onSetShowConnectionStatus: (Boolean) -> Unit = {},
         onSetPollRate: (PollRate) -> Unit = {},
         onBack: () -> Unit = {},
     ) {
@@ -265,6 +280,7 @@ class SettingsScreenTest {
                     onResetThresholds = onResetThresholds,
                     onSetUnits = onSetUnits,
                     onSetKeepScreenOn = onSetKeepScreenOn,
+                    onSetShowConnectionStatus = onSetShowConnectionStatus,
                     onSetPollRate = onSetPollRate,
                     onOpenRecordings = {},
                     onBack = onBack,
