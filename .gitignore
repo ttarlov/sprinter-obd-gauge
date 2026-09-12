@@ -26,3 +26,6 @@ captures/
 
 # OBD-72 design reference images — third-party product photos, kept local only (not in the public repo)
 docs/ui-refs/
+
+# Personal writing — keep local, never commit
+writing/
