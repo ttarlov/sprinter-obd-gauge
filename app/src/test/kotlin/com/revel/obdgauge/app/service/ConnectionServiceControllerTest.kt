@@ -187,6 +187,29 @@ class ConnectionServiceControllerTest {
             assertEquals(afterFirstReady + 1, dataSource.startCallCount)
         }
 
+    // OBD-82: the in-session-resume race. A service restarted by MainActivity.connectNow() builds
+    // a brand-new ConnectionServiceController, so `wasReady` starts `false` regardless of what the
+    // link was doing before this instance existed. If the link already reached Ready by the time
+    // `start()`'s collector attaches (it can start collecting before `connect()` even resolves,
+    // since `combine` immediately reads each StateFlow's *current* value), the very first emission
+    // still computes `becameReady = true`, so the parked poll loop resumes without waiting for a
+    // fresh Connecting→Ready transition. An edge-only implementation (comparing against the link's
+    // real prior state rather than this controller's own local `wasReady`) would fail this — the
+    // resume would never fire, reproducing OBD-82's "Connect does nothing" symptom.
+    @Test
+    fun `resumes polling when the link is already Ready at collection start`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val dataSource = RecordingVehicleDataSource()
+            dataSource.setConnection(LinkState.Ready)
+            val controller = ConnectionServiceController(dataSource, backgroundScope) {}
+
+            controller.start()
+
+            // 1 = start()'s own unconditional call; 2 = the resume triggered by observing the
+            // already-Ready state on the collector's first emission. Never 1 alone.
+            assertEquals(2, dataSource.startCallCount)
+        }
+
     @Test
     fun `does not restart while stopped even if the link comes back Ready`() =
         runTest(UnconfinedTestDispatcher()) {

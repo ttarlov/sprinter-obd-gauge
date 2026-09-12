@@ -233,8 +233,21 @@ class MainActivity : ComponentActivity() {
      * The one user-gesture-driven `connect()` in the app (the other caller is
      * `connectIfRemembered` at launch). Everything after this — retry cadence, backoff, giving up
      * — belongs to `:core:ble`'s reconnect machine; see `LinkController`'s ownership KDoc.
+     *
+     * OBD-82: also (re)starts [ObdConnectionService], exactly like [onCreate]'s launch-time call —
+     * idempotent for the same reason (`onStartCommand` only acts on `ACTION_STOP`,
+     * `ConnectionServiceController.start()` no-ops while already running). This matters because the
+     * OBD-69 idle-stop and OBD-71 engine-off-stop both `stopSelf()` the service: without this, a
+     * later Connect tap only re-armed the link — nothing left alive to restart the parked poll loop
+     * once it reached `Ready` again, so gauges stayed frozen until a full quit+relaunch. Ordered
+     * before `connect()` so the freshly (re)started `ConnectionServiceController` is already
+     * collecting `connection` by the time the link moves; even if the link somehow won the race
+     * (already `Ready` when the controller's collector attaches), that collector's `wasReady` starts
+     * `false` per-launch, so a currently-`Ready` first emission still reads as `becameReady` and
+     * resumes polling — see `ConnectionServiceControllerTest`'s "already Ready" case.
      */
     private fun connectNow() {
+        ContextCompat.startForegroundService(this, Intent(this, ObdConnectionService::class.java))
         lifecycleScope.launch { linkController.orElse(null)?.connect() }
     }
 
