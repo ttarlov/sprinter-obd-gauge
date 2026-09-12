@@ -4,7 +4,7 @@ title: Data-liveness reconnect watchdog — self-heal a silent-but-connected don
 module: app
 owner: ble-agent
 sprint: reliability
-status: in-review
+status: merged
 type: feature
 hardware-verify: true
 blocked-by: []

@@ -38,7 +38,13 @@ interface LinkController {
      */
     val missingPermissions: List<String>
 
-    /** Connects, and stays connected: arms `:core:ble`'s auto-reconnect. User-gesture only. */
+    /**
+     * Connects, and stays connected: arms `:core:ble`'s auto-reconnect. User-gesture only, with ONE
+     * sanctioned automated caller: `ObdConnectionService`'s OBD-78 wedge-recovery watchdog, which
+     * forces a reconnect when the link is `Ready` but has produced no data for a session-relative
+     * window. That is a data-liveness trigger, not a `LinkState` reaction, so it does not reintroduce
+     * the OBD-24 hazard the "user-gesture only" rule exists for (see `ConnectionServiceController`).
+     */
     suspend fun connect()
 
     /** Explicit user stop: disarms auto-reconnect and drops the link. User-gesture only. */

@@ -1,3 +1,10 @@
+// garmin-conn integration (OBD-71 + OBD-78): this file now hosts BOTH watchdog-helper lineages that
+// each lived here alone on their own branch — OBD-71's launchEngineOffWatchdog and OBD-78's
+// generalized launchWatchdog + launchReadySinceTracker. Their combined top-level count trips detekt's
+// file-level TooManyFunctions; the file-scope suppress records that this is the natural product of
+// integrating the two reconnect fixes, not sprawl (the class body already carries its own suppress).
+@file:Suppress("TooManyFunctions")
+
 package com.revel.obdgauge.app.service
 
 import android.app.Notification
@@ -25,6 +32,7 @@ import com.revel.obdgauge.app.recording.RecordingBridge
 import com.revel.obdgauge.app.recording.RecordingState
 import com.revel.obdgauge.app.recording.di.LoggablePids
 import com.revel.obdgauge.app.recording.logsDir
+import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.PidDefinition
 import com.revel.obdgauge.model.VehicleDataSource
 import dagger.hilt.android.AndroidEntryPoint
@@ -99,11 +107,14 @@ import javax.inject.Inject
  * transport reconnect policy — that's OBD-23) and, beyond that, orthogonal to this service.
  */
 @AndroidEntryPoint
-// OBD-71 added a second watchdog (evaluateEngineOffAndMaybeStop/isUserPresent) alongside OBD-69's
-// original one, sharing their teardown (stopForIdle) — this is now the service's actual, cohesive
-// job (own the notification, keep the poll loop alive, and decide when it should stop, via
-// however many independent signals that decision needs), not sprawl; same call DashboardViewModel
-// already made for its own multi-mutator surface.
+// OBD-71/OBD-78 added watchdogs alongside OBD-69's original idle one: the engine-off + user-presence
+// decision (evaluateEngineOffAndMaybeStop/isUserPresent, sharing stopForIdle's teardown) and the
+// wedge liveness self-heal (checkWedgeAndMaybeReconnect). This is now the service's actual, cohesive
+// job (own the notification, keep the poll loop alive, and decide when it should stop or reconnect,
+// via however many independent signals that decision needs), not sprawl. The Android Service
+// lifecycle overrides (onCreate/onStartCommand/onBind/onTaskRemoved/onDestroy) are fixed cost, and
+// each watchdog decision step belongs beside the service state it acts on; the pure decisions
+// already live out-of-class (shouldStopForIdle, wedgeReconnectDecision).
 @Suppress("TooManyFunctions")
 class ObdConnectionService : Service() {
     @Inject
@@ -182,6 +193,34 @@ class ObdConnectionService : Service() {
      */
     internal val engineOffController = EngineOffPromptController()
 
+    /**
+     * OBD-78: latches after [checkWedgeAndMaybeReconnect] forces a reconnect, so a wedge recovery is
+     * attempted at most once per episode; cleared only by *sustained* data (see the decision's KDoc).
+     * `internal` so `ObdConnectionServiceTest` can assert the no-storm property directly.
+     */
+    internal var wedgeReconnectPending = false
+
+    /**
+     * OBD-78 (round-3 M1): elapsed-realtime the link last became `Ready`, stamped by the connection
+     * collector in [onCreate]; `0` while not `Ready`. The wedge staleness is measured from
+     * `max(this, lastData)`, so a link that just recovered from a long outage (a fuel stop, a
+     * key-off) is immune until it has genuinely had its own quiet window — not torn down for the
+     * global stamp having aged while it was gone.
+     *
+     * `@Volatile` (round-4 m1): written by [launchReadySinceTracker]'s collector and read by the
+     * wedge watchdog — two coroutines — exactly like [IdleActivityTracker.lastDataAtMillis] next door.
+     */
+    @Volatile
+    internal var readySinceMillis = 0L
+
+    /**
+     * OBD-78 (round-3 B3): elapsed-realtime data *started* flowing continuously, or `0` when it is
+     * not. The latch re-arms only once this has held for [SUSTAINED_HEALTH_MILLIS] — a single sample
+     * (which keeps the link "not stale" for only one [WEDGE_RECONNECT_STALE_MILLIS] window) can never
+     * reach it, so a dongle that answers once then re-wedges is recovered exactly once, not in a loop.
+     */
+    internal var dataHealthySinceMillis = 0L
+
     private var lastPosted: ServiceNotificationState? = null
 
     override fun onCreate() {
@@ -225,23 +264,52 @@ class ObdConnectionService : Service() {
                 channel = if (BuildConfig.APPLICATION_ID.endsWith(DEV_CHANNEL_SUFFIX)) "dev" else "main",
                 onStateChanged = recordingBridge::publish,
             ).also { recordingBridge.attach(it) }
-        // OBD-69: arm the idle watchdog. Count from now, so a session that never sees a single
-        // sample (app open, vehicle off, dongle unreachable) still trips the timeout from start.
-        // (This explicit stamp and launchDataIdleReset's first collected stamp are both ~now and
-        // race harmlessly — @Volatile + latest-value semantics; see round-1 review nit.)
+        startWatchdogs()
+    }
+
+    /**
+     * OBD-69/71/78: arm the data-idle reset, the idle-stop watchdog, the engine-off watchdog, the
+     * wedge-recovery watchdog, and the Ready-edge stamp. Split out of [onCreate] so it stays
+     * readable (detekt LongMethod).
+     */
+    private fun startWatchdogs() {
+        // OBD-69: count from now, so a session that never sees a single sample (app open, vehicle
+        // off, dongle unreachable) still trips the idle timeout from start.
         idleTracker.record(SystemClock.elapsedRealtime())
-        // The refresh lambda re-holds the wake lock on each data sample: the 25-min timeout then
-        // lapses ~25 min after data STOPS, not 25 min after service start, so a live screen-off
-        // drive keeps the CPU awake indefinitely (round-1 blocker). See [refreshWakeLock].
+        // The refresh lambda re-holds the wake lock on each data sample: the timeout lapses ~25 min
+        // after data STOPS, not after service start (round-1 blocker). See [refreshWakeLock].
         launchDataIdleReset(serviceScope, dataSource, idleTracker) { refreshWakeLock(wakeLock) }
-        launchIdleWatchdog(serviceScope, SystemClock::elapsedRealtime, ::checkIdleAndMaybeStop)
+        launchWatchdog(
+            scope = serviceScope,
+            now = SystemClock::elapsedRealtime,
+            intervalMillis = WATCHDOG_INTERVAL_MILLIS,
+            breakOnResult = true,
+            check = ::checkIdleAndMaybeStop,
+        )
         // OBD-71: a second, independent watchdog — see EngineOffPromptController's KDoc for why
-        // it doesn't replace the one above. Published to the UI via engineOffBridge.attach, same
-        // shape as recordingBridge just above.
+        // it doesn't replace the idle one above. Published to the UI via engineOffBridge.attach,
+        // same shape as recordingBridge in onCreate.
         engineOffBridge.attach(engineOffController)
         launchEngineOffWatchdog(serviceScope, SystemClock::elapsedRealtime) { nowMillis ->
             evaluateEngineOffAndMaybeStop(nowMillis, isUserPresent())
         }
+        // OBD-78: a separate, faster, NON-terminating loop — a link can wedge, recover, and wedge
+        // again, so this keeps watching (breakOnResult = false) unlike the idle watchdog above.
+        launchWatchdog(
+            scope = serviceScope,
+            now = SystemClock::elapsedRealtime,
+            intervalMillis = WEDGE_CHECK_INTERVAL_MILLIS,
+            breakOnResult = false,
+            check = ::checkWedgeAndMaybeReconnect,
+        )
+        // OBD-78 (round-3 M1): stamp when the link becomes Ready, on the edge — a flow collector, not
+        // the coarse wedge tick, so a fast reconnect's Ready edge is never missed.
+        launchReadySinceTracker(
+            scope = serviceScope,
+            dataSource = dataSource,
+            onReadyEdge = { readySinceMillis = it },
+            onNotReady = { readySinceMillis = 0L },
+        )
     }
 
     /** B5: an explicit Stop-action tap ends the session; every other start (including a bare
@@ -373,6 +441,78 @@ class ObdConnectionService : Service() {
         stopSelf()
     }
 
+    /**
+     * OBD-78: the wedge-recovery watchdog's one decision-and-act step, `internal` as the direct
+     * test seam (like [checkIdleAndMaybeStop]).
+     *
+     * **The failure it fixes.** Some ELM327 clones stop answering while keeping the BLE link
+     * nominally `Ready` — no `STATE_DISCONNECTED` ever fires, so `:core:ble`'s auto-reconnect (which
+     * only triggers on a real drop) never books a retry, and `RealVehicleDataSource`'s poll loop
+     * **parks** on the first timeout and produces no more samples. The app sits `Ready` with dead
+     * gauges until the user cycles the ignition (which finally drops the radio). See
+     * `reviews/OBD-78-round2.md` for why this cannot be detected inside `:core:ble` (the link sees a
+     * single timeout, indistinguishable from a brief silent ECU, before the loop stops asking).
+     *
+     * **Why this signal.** The wedge is exactly *"the link is `Ready` but no fresh sample has
+     * arrived for [WEDGE_RECONNECT_STALE_MILLIS]"* — data-flow staleness the [idleTracker] already
+     * measures for OBD-69, read here against a much shorter window and a different action. A
+     * `Ready` link producing nothing for ~30 s is unambiguous (a healthy one samples every few
+     * hundred ms), and this composes with the other watchdogs by construction: a real drop leaves
+     * `Ready` (auto-reconnect's job, not ours), and [stop] freezes the tracker so nothing fires.
+     *
+     * **Why it can't storm.** [wedgeReconnectPending] latches on the forced reconnect and clears
+     * ONLY when fresh data actually returns — so one recovery is attempted per wedge episode. A
+     * reconnect that comes back `Ready`-but-still-silent does not re-fire; the user power-cycles and
+     * OBD-69's idle-stop remains the backstop.
+     *
+     * Reconnecting via [LinkController.connect] (release the wedged session, re-establish, re-arm
+     * auto-reconnect) is a NEW, deliberate trigger — data-liveness, not a `LinkState` reaction — so
+     * it does not reintroduce the OBD-24 hazard [ConnectionServiceController] is built to avoid.
+     *
+     * **Known bound (round-4 m5).** This detects "no data *at all*", not "frozen gauges". A *partial*
+     * wedge — some PIDs still answering — keeps the poll loop running and, because `Reading.timestamp`
+     * is in `equals` (OBD-71's root cause), re-stamps the tracker every cycle, so `stale` never trips
+     * and such a link is not recovered here. That is the same failure OBD-71 addresses from the other
+     * side; a per-PID freshness signal would be its own issue.
+     *
+     * @return `true` if a reconnect was forced this tick; `false` otherwise (the watchdog keeps
+     *   running either way — unlike [checkIdleAndMaybeStop], this never ends its loop).
+     */
+    internal fun checkWedgeAndMaybeReconnect(nowMillis: Long): Boolean {
+        val controller = linkController.orElse(null)
+        // round-4 m2: read readiness from readySinceMillis (0 ⇔ not Ready, stamped by the collector),
+        // NOT a second `connection.value` source — so readiness and the session clock can never
+        // disagree, and the sub-ms Ready-edge window before the collector stamps reads as "not ready"
+        // (fail-safe: nothing fires) instead of "Ready with a zero session clock" (spurious force).
+        val ready = readySinceMillis != 0L
+        val inputs =
+            wedgeInputs(
+                linkReady = ready,
+                readySinceMillis = readySinceMillis,
+                lastDataAtMillis = idleTracker.lastDataAtMillis,
+                dataHealthySinceMillis = dataHealthySinceMillis,
+                nowMillis = nowMillis,
+                staleAfterMillis = WEDGE_RECONNECT_STALE_MILLIS,
+                sustainedAfterMillis = SUSTAINED_HEALTH_MILLIS,
+            )
+        dataHealthySinceMillis = inputs.dataHealthySinceMillis
+        val decision =
+            wedgeReconnectDecision(
+                linkAvailable = controller != null && controller.available,
+                linkReady = ready,
+                stale = inputs.stale,
+                sustainedHealthy = inputs.sustainedHealthy,
+                pending = wedgeReconnectPending,
+            )
+        wedgeReconnectPending = decision.pending
+        if (decision.forceReconnect && controller != null) {
+            // Not the one-shot scope disconnectLinkOnUserStop uses: this does NOT stop the service,
+            // so serviceScope (which outlives the reconnect) is correct.
+            serviceScope.launch { controller.connect() }
+        }
+        return decision.forceReconnect
+    }
+
     private fun postNotification(state: ServiceNotificationState) {
         // B7: one-line last-state guard — without it every reading tick re-posts the identical
         // text (measured: 22 posts / 3 distinct texts, ~14,400 binder round-trips/hour at 2Hz).
@@ -414,6 +554,12 @@ class ObdConnectionService : Service() {
     /**
      * `IMPORTANCE_LOW`: shows in the status bar/shade without a sound, vibration, or heads-up
      * pop — this notification exists to answer "are we still connected," not to interrupt.
+     *
+     * Channels are an API 26 concept and, unlike `java.time`, are a platform class that core
+     * library desugaring cannot backport. Below O there is nothing to create: the notification's
+     * importance comes from `NotificationCompat.PRIORITY_LOW` (already set in [buildNotification]),
+     * which is exactly what the pre-channel platform reads. Skipping the call is the correct
+     * no-op, not a degradation — this is the Garmin Overlander (API 23) path.
      */
     private fun createNotificationChannel() {
         val channel =
@@ -471,6 +617,25 @@ private const val WATCHDOG_INTERVAL_MILLIS = 60 * 1000L
 // above, since this one drives a visible 20-second countdown dialog and needs sub-minute
 // resolution to feel responsive; still cheap (a StateFlow read + a few comparisons per tick).
 private const val ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS = 1000L
+
+// OBD-78: a Ready link that has produced no fresh sample for this long is a silent-but-connected
+// dongle (a healthy one samples every few hundred ms) — force a reconnect. Comfortably longer than
+// any real SEARCHING…/slow-PID stretch, well short of the user noticing dead gauges. `internal` so
+// WedgeInputsTest can bind the SUSTAINED > STALE invariant to the real constant (round-4).
+internal const val WEDGE_RECONNECT_STALE_MILLIS = 30 * 1000L
+
+// OBD-78: the wedge watchdog checks more often than the idle one — a dead dash wants recovering in
+// tens of seconds, not the idle watchdog's ~minute resolution.
+private const val WEDGE_CHECK_INTERVAL_MILLIS = 10 * 1000L
+
+// OBD-78 (round-3 B3): the health clock must run this long before a forced reconnect's latch
+// re-arms. STRICTLY GREATER than WEDGE_RECONNECT_STALE_MILLIS, so a single confirming sample (which
+// keeps the link non-stale for only one stale window) can never satisfy it — the property that stops
+// an answers-once-then-wedges dongle from looping and defeating OBD-69's idle-stop. Note (round-4
+// m3): because `dataFlowing` tolerates up to a STALE-sized gap, the EFFECTIVE floor of *real* data
+// needed is ~(SUSTAINED − STALE) ≈ 60 s — that difference, not 90 s, is what to reason about when
+// retuning either number. `internal` for the same WedgeInputsTest invariant check.
+internal const val SUSTAINED_HEALTH_MILLIS = 90 * 1000L
 
 // OBD-69: dropped from 12h to a ~25-min backstop, just above IDLE_TIMEOUT_MILLIS. The idle
 // watchdog is the primary release; this only bounds a watchdog that somehow never ran, so even a
@@ -553,32 +718,56 @@ private fun launchDataIdleReset(
 }
 
 /**
- * OBD-69: the watchdog coroutine — a coarse ([WATCHDOG_INTERVAL_MILLIS]) loop that calls
- * [checkAndMaybeStop] and stops looping once it fires, so the stop happens exactly once. Launched
- * on the service scope, so it is cancelled with the service and can never outlive it or leak.
- * `now` is a seam (production passes `SystemClock::elapsedRealtime`); the timing decision itself is
- * the pure [shouldStopForIdle].
+ * OBD-78 (round-3 M1): stamps the elapsed-realtime the link becomes `Ready`, on the transition
+ * EDGE — a flow collector, so a fast reconnect between the coarse wedge ticks is never missed.
+ * [onNotReady] clears it. Launched on the service scope; cancelled with the service.
  */
-private fun launchIdleWatchdog(
+private fun launchReadySinceTracker(
+    scope: CoroutineScope,
+    dataSource: VehicleDataSource,
+    onReadyEdge: (Long) -> Unit,
+    onNotReady: () -> Unit,
+) {
+    scope.launch {
+        var wasReady = false
+        dataSource.connection.collect { state ->
+            val ready = state == LinkState.Ready
+            if (ready && !wasReady) onReadyEdge(SystemClock.elapsedRealtime())
+            if (!ready) onNotReady()
+            wasReady = ready
+        }
+    }
+}
+
+/**
+ * OBD-69/78: the shared watchdog coroutine. [breakOnResult] distinguishes the two callers: the
+ * OBD-69 idle watchdog ends its loop once it has stopped the service (`true`); the OBD-78 wedge
+ * watchdog keeps watching for the service's whole lifetime (`false`), since a link can wedge, be
+ * recovered, and wedge again — its once-per-episode guarantee lives in the latch inside [check], not
+ * here. Runs on [ObdConnectionService.serviceScope], so `onDestroy`'s cancel stops it.
+ */
+private fun launchWatchdog(
     scope: CoroutineScope,
     now: () -> Long,
-    checkAndMaybeStop: (Long) -> Boolean,
+    intervalMillis: Long,
+    breakOnResult: Boolean,
+    check: (Long) -> Boolean,
 ) {
     scope.launch {
         while (isActive) {
-            delay(WATCHDOG_INTERVAL_MILLIS)
-            if (checkAndMaybeStop(now())) break
+            delay(intervalMillis)
+            if (check(now()) && breakOnResult) break
         }
     }
 }
 
 /**
  * OBD-71: [EngineOffPromptController]'s watchdog coroutine — a much finer
- * ([ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS]) loop than [launchIdleWatchdog]'s, since it has to drive
- * a visible 20-second countdown rather than just eventually notice a 20-minute one. `tick` is
+ * ([ENGINE_OFF_WATCHDOG_INTERVAL_MILLIS]) loop than [launchWatchdog]'s idle tick, since it has to
+ * drive a visible 20-second countdown rather than just eventually notice a 20-minute one. `tick` is
  * `ObdConnectionService.evaluateEngineOffAndMaybeStop` bound to the live `isUserPresent()`
  * (`onCreate`'s closure) — see that method's own KDoc. Stops looping the moment `tick` returns
- * [EngineOffAction.Stop], same one-shot shape as [launchIdleWatchdog].
+ * [EngineOffAction.Stop], the same one-shot shape as [launchWatchdog] with `breakOnResult = true`.
  */
 private fun launchEngineOffWatchdog(
     scope: CoroutineScope,
