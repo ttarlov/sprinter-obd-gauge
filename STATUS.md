@@ -39,6 +39,7 @@
 | Reliability — OBD-82 (Connect restarts service) | +250k | ✅ MERGED 2026-09-12 (with 71+78) | — | 3 merged |
 | UX — OBD-83 (Immersive mode nav-bar toggle) | +250k | ✅ built+approved 2026-09-04 `aebee9a` (r2, +Settings/Recordings padding), ⛔ awaiting device-verify (Pixel+Garmin) | ~1 build+1 review | 0 merged (in-review) |
 | UX — OBD-84 (Connection-status pill) | +250k | ✅ MERGED 2026-09-12 `c48375b` (approved, gate green) | ~1 build+1 review | 1 merged |
+| Telemetry — OBD-86 (Engine-load gauge) | +150k | ✅ MERGED 2026-09-18 `a874df5` (approved, gate green) | ~1 build+1 review | 1 merged |
 
 Targets recalibrated 2026-08-09 per D4 (risk-tiered review + batching, doc 05 §5.5/§10.3);
 original table was ~3.5× optimistic against Sprint 0–1 actuals.
