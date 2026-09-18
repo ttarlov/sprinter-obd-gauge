@@ -4,7 +4,7 @@ title: Surface engine load (PID 0104) as a selectable dashboard gauge
 module: app
 owner: ui-agent
 sprint: telemetry
-status: open
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
@@ -33,7 +33,7 @@ show it. This issue only **surfaces** it — no protocol/identification work nee
   range **0–100**. Value already flows: `DisplayUnitDataSource` passes `engineLoad` through untouched
   (it's a unitless %), so no unit-conversion change.
 - **Polling:** being in `GAUGE_CATALOG` makes `DashboardViewModel.start(GAUGE_CATALOG.activePids())` poll
-  it automatically (SLOW-priority per the registry) — no poll-loop change.
+  it automatically (FAST-priority per the registry) — no poll-loop change.
 
 ## The gotcha — tests that use engineLoad as the "not in catalog" example
 `engineLoad` is currently the canonical **decoded-but-undisplayed** example in tests. Adding it to the
