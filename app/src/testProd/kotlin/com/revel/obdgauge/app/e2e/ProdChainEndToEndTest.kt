@@ -63,12 +63,12 @@ import kotlin.time.Duration.Companion.milliseconds
  *
  * ### Why the two halves
  * The `readings` half asks the source for **every channel the session captured**, including
- * `engineLoad` and `throttle` — which have no dashboard tile today, because `GAUGE_CATALOG` is
- * deliberately pinned to the core four plus rpm (`GaugeCatalogTest`, OBD-42). Those two are still
- * the strongest evidence the parser and scheduler are right about this van, so they are asserted
- * where they exist: in the readings map. The `uiState` half then runs the ViewModel exactly as
- * the app does — `start(GAUGE_CATALOG)`, no more — and asserts what a person sitting in the van
- * would actually see.
+ * `throttle` — which has no dashboard tile today, because `GAUGE_CATALOG` is deliberately pinned
+ * to the core four plus rpm, speed, and (since OBD-86) engine load (`GaugeCatalogTest`). It is
+ * still the strongest evidence the parser and scheduler are right about this van, so it is
+ * asserted where it exists: in the readings map. The `uiState` half then runs the ViewModel
+ * exactly as the app does — `start(GAUGE_CATALOG)`, no more — and asserts what a person sitting
+ * in the van would actually see.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProdChainEndToEndTest {

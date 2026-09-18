@@ -59,8 +59,8 @@ import java.time.ZoneOffset
  * `performScrollToIndex` (the pager's own scroll semantics) rather than a synthetic swipe.
  *
  * `DEFAULT_GAUGE_ORDER` (all four core gauges placed) is used throughout, so every picker's pages
- * are exactly `[current, rpm, speed]` — the current gauge plus the two catalog-only swap-in
- * candidates.
+ * are exactly `[current, rpm, speed, engineLoad]` (OBD-86 added the third) — the current gauge
+ * plus the catalog-only swap-in candidates.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -137,7 +137,7 @@ class GaugeSwapPickerTest {
 
         composeTestRule.openSwapPager("coolant")
 
-        // Candidates (rpm, speed) are reachable pages with live values.
+        // Candidates (rpm, speed, engineLoad) are reachable pages with live values.
         composeTestRule.onNodeWithTag("gauge-swap-pager-coolant").performScrollToIndex(RPM_PAGE)
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("gauge-swap-page-rpm").assertExists()
@@ -374,8 +374,9 @@ class GaugeSwapPickerTest {
 
     private companion object {
         // OBD-66 stable ribbon: for a default-grid coolant picker the pages are the GAUGE_CATALOG
-        // order [coolant, rpm, speed] — coolant is catalog index 0 so it still leads here, with rpm
-        // and speed at these indices. (candidateGaugesFor keeps every candidate at its catalog slot.)
+        // order [coolant, rpm, speed, engineLoad] (OBD-86 appended engineLoad) — coolant is
+        // catalog index 0 so it still leads here, with rpm and speed at these indices.
+        // (candidateGaugesFor keeps every candidate at its catalog slot.)
         const val RPM_PAGE = 1
         const val SPEED_PAGE = 2
 

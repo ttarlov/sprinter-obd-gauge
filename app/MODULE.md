@@ -152,9 +152,9 @@ the declared units. `DisplayUnitDataSource` (`src/prod/.../datasource/`) is the 
 re-expresses each reading from the protocol catalog's unit into the app catalog's, once, in
 `prod` DI. Changing the declared units instead was rejected because it silently reinterprets
 thresholds already persisted on the phone (a 230 °F red line would become 230 °C) and would
-change what `demo` renders. Channels with no `:app` gauge (`engineLoad`, `throttle`, `map`,
-`speed`, `iat`) pass through untouched. Nothing is defaulted or substituted — an absent channel
-stays absent, which is the entire boost story.
+change what `demo` renders. Channels with no `:app` gauge (`throttle`, `map`, `iat`) pass through
+untouched. Nothing is defaulted or substituted — an absent channel stays absent, which is the
+entire boost story.
 
 ### The end-to-end test
 
@@ -170,11 +170,11 @@ driver-commanded plate), baro 82 kPa, boost as a typed unavailability and never 
 temp neither requested nor published behind the `DecodeFalsified` gate, and every tile's
 unverified badge agreeing with `PidCatalog.isVerified`.
 
-`engineLoad` and `throttle` have no dashboard tile — `GAUGE_CATALOG` is deliberately pinned to
-the core four plus rpm by `GaugeCatalogTest` (OBD-42) — so they are asserted in the readings
-map rather than in `DashboardUiState`. `speed` is left out of the fixture on purpose: the
-`0100` bitmap advertises it but the session never captured a reply, and scripting one would be
-a prediction rather than a capture.
+`throttle` has no dashboard tile — `GAUGE_CATALOG` is deliberately pinned to the core four plus
+rpm, speed, and (since OBD-86) engine load by `GaugeCatalogTest` — so it is asserted in the
+readings map rather than in `DashboardUiState`. `speed` is left out of the fixture on purpose:
+the `0100` bitmap advertises it but the session never captured a reply, and scripting one would
+be a prediction rather than a capture.
 
 ## Public surface
 
@@ -921,11 +921,11 @@ debug-only tooling, not a UI feature) — `OWNERSHIP` lists `/app/src/debug/` as
   so `PidCatalog.byId("oilTemp")` is `null` and the poll loop emits `PollEvent.UnknownPid` and
   moves on. The tile renders its "no reading" placeholder with an unverified badge, which is
   honest, but it is a permanently blank gauge on the van until OBD-35 schedules that channel.
-- **`engineLoad` and `throttle` are decoded but never displayed.** `GAUGE_CATALOG` is pinned to
-  the core four plus rpm (`GaugeCatalogTest`), and the ViewModel requests exactly that, so on
-  the van those two are not even polled — the end-to-end test exercises them by asking the data
-  source for them directly. Surfacing them means adding catalog entries and re-recording the
-  picker screenshot; deliberately not done here.
+- **`throttle`, `map`, and `iat` are decoded but never displayed.** `GAUGE_CATALOG` is pinned to
+  the core four plus rpm, speed, and (since OBD-86) engine load (`GaugeCatalogTest`), and the
+  ViewModel requests exactly that, so on the van these three are not even polled — the end-to-end
+  test exercises `throttle` by asking the data source for it directly. Surfacing one means adding
+  a catalog entry and re-recording the picker screenshot; deliberately not done here.
 - **`PollEvent`s go to logcat only.** `ChannelAvailabilityChanged` is what explains a blank
   boost gauge ("MAP unsupported on this vehicle") and a blank trans gauge ("decode falsified"),
   and nothing carries it to the UI — there is no contract for it today. A van-side "why is this

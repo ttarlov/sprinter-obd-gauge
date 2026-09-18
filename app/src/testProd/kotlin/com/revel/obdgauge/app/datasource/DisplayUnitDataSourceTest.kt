@@ -92,25 +92,26 @@ class DisplayUnitDataSourceTest {
         }
 
     /**
-     * Channels with no `:app` gauge (`engineLoad`, `throttle`, `map`, `speed`, `iat`) have no
-     * declared display unit to convert *to*. Inventing one would be worse than leaving the
-     * protocol's own, so they pass through untouched — including their unit's meaning.
+     * Channels with no `:app` gauge (`throttle`, `map`, `iat` — OBD-86 moved `engineLoad` out of
+     * this set into its own swap-only gauge) have no declared display unit to convert *to*.
+     * Inventing one would be worse than leaving the protocol's own, so they pass through
+     * untouched — including their unit's meaning.
      */
     @Test
     fun `channels the app has no gauge for keep their protocol units`() =
         runTest {
-            val upstream = FakeSource(reading(ProtocolPidIds.ENGINE_LOAD, LOAD_PERCENT))
+            val upstream = FakeSource(reading(ProtocolPidIds.THROTTLE, THROTTLE_PERCENT))
             val source = DisplayUnitDataSource(upstream, backgroundScope)
             advanceUntilIdle()
 
             assertEquals(
-                LOAD_PERCENT,
+                THROTTLE_PERCENT,
                 source.readings.value
-                    .getValue(ProtocolPidIds.ENGINE_LOAD)
+                    .getValue(ProtocolPidIds.THROTTLE)
                     .value,
                 TOLERANCE,
             )
-            assertTrue(ProtocolPidIds.ENGINE_LOAD !in GAUGE_CATALOG_BY_ID)
+            assertTrue(ProtocolPidIds.THROTTLE !in GAUGE_CATALOG_BY_ID)
         }
 
     /** Nothing is materialised: an absent channel stays absent, which is the boost story. */
@@ -171,7 +172,7 @@ class DisplayUnitDataSourceTest {
         const val VACUUM_KPA = -20.0
         const val VACUUM_PSI = -2.900750
         const val RPM = 727.0
-        const val LOAD_PERCENT = 55.7
+        const val THROTTLE_PERCENT = 83.0
         const val TOLERANCE = 0.001
     }
 }

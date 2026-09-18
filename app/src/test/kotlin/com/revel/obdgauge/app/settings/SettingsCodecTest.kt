@@ -304,7 +304,8 @@ class SettingsCodecTest {
         // The production call site always passes GAUGE_CATALOG_BY_ID (core + swap-only extras
         // like rpm), so a faithful "catalog grew" simulation must too, or a legitimately-
         // persisted rpm swap would itself look like drift here rather than the case under test.
-        val fiveGaugeCatalog: Map<String, PidDefinition> = GAUGE_CATALOG_BY_ID + (ENGINE_LOAD.id to ENGINE_LOAD)
+        val fiveGaugeCatalog: Map<String, PidDefinition> =
+            GAUGE_CATALOG_BY_ID + (UNDISPLAYED_CHANNEL.id to UNDISPLAYED_CHANNEL)
         // A 4-slot persisted order where coolant was swapped away (e.g. to rpm) — same shape a
         // real OBD-42 swap produces.
         val swappedOrder =
@@ -319,7 +320,7 @@ class SettingsCodecTest {
 
         assertEquals(4, reconciled.size)
         assertFalse(reconciled.any { it.id == PidIds.COOLANT })
-        assertFalse(reconciled.any { it.id == ENGINE_LOAD.id })
+        assertFalse(reconciled.any { it.id == UNDISPLAYED_CHANNEL.id })
 
         // Round-2 hardening: a SHORT order (fewer entries than the global DASHBOARD_PIDS size)
         // must also reconcile to exactly its filtered input. The retired slot-count heuristic
@@ -388,13 +389,16 @@ class SettingsCodecTest {
     private companion object {
         // A synthetic "5th DASHBOARD_PIDS entry" for the M2 regression test above — not a real
         // catalog addition, just enough of a PidDefinition to populate a Map<String,
-        // PidDefinition> the way `reconcileGaugeOrder`'s catalog param expects.
-        val ENGINE_LOAD =
+        // PidDefinition> the way `reconcileGaugeOrder`'s catalog param expects. `throttle`, not
+        // `engineLoad` (OBD-86 added engineLoad to the real GAUGE_CATALOG, so it's no longer a
+        // still-undisplayed id this simulation could safely stand in for) — throttle stays
+        // decoded-but-undisplayed by choice, see GaugeCatalog.kt.
+        val UNDISPLAYED_CHANNEL =
             PidDefinition(
-                id = "engineLoad",
-                label = "Load",
+                id = "throttle",
+                label = "Throttle",
                 unit = MeasurementUnit.PERCENT,
-                request = ObdRequest.StandardPid(mode = 1, pid = 0x04),
+                request = ObdRequest.StandardPid(mode = 1, pid = 0x11),
                 parse = { 0.0 },
                 pollPriority = PollPriority.SLOW,
             )

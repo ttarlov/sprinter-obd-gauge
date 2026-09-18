@@ -15,9 +15,9 @@ import org.junit.Test
  */
 class GaugeCatalogTest {
     @Test
-    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm and speed, and nothing else`() {
+    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm, speed and engine load, and nothing else`() {
         assertEquals(
-            DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM + SPEED_PID_ID,
+            DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM + SPEED_PID_ID + ENGINE_LOAD_PID_ID,
             GAUGE_CATALOG.map { it.id }.toSet(),
         )
     }
@@ -40,6 +40,30 @@ class GaugeCatalogTest {
         // No seed threshold entry → neutral coloring, like rpm and boost.
         assertFalse(SPEED_PID_ID in ThresholdConfig.seed)
         assertEquals(ThresholdZone.NEUTRAL, ThresholdConfig.classify(SPEED_PID_ID, ARBITRARY_SPEED_VALUE))
+    }
+
+    @Test
+    fun `OBD-86 engine load is a swap-only catalog gauge, never a default dashboard tile`() {
+        // Same discipline as rpm and speed: adding engine load to DASHBOARD_PIDS would make it a
+        // default-visible tile. It must be picker-only.
+        assertFalse(ENGINE_LOAD_PID_ID in DASHBOARD_PIDS_BY_ID)
+        assertTrue(ENGINE_LOAD_PID_ID in GAUGE_CATALOG_BY_ID)
+    }
+
+    @Test
+    fun `OBD-86 engine load is declared in PERCENT, verified, and classifies NEUTRAL`() {
+        val engineLoad = GAUGE_CATALOG_BY_ID.getValue(ENGINE_LOAD_PID_ID)
+        assertEquals(MeasurementUnit.PERCENT, engineLoad.unit)
+        // Standard mode-01 PID 0104 — SAE-standard, not a hypothesis, and confirmed answering on
+        // this van (~56 % observed, docs/hardware/session-2026-08-12.md).
+        assertTrue(engineLoad.verified)
+        assertEquals("Load", engineLoad.label)
+        // No seed threshold entry → neutral coloring, like rpm, speed and boost.
+        assertFalse(ENGINE_LOAD_PID_ID in ThresholdConfig.seed)
+        assertEquals(
+            ThresholdZone.NEUTRAL,
+            ThresholdConfig.classify(ENGINE_LOAD_PID_ID, ARBITRARY_ENGINE_LOAD_VALUE),
+        )
     }
 
     @Test
@@ -140,22 +164,25 @@ class GaugeCatalogTest {
 
         // OBD-66: current + unplaced-elsewhere ids, each at its GAUGE_CATALOG slot (coolant is first
         // in the catalog, so here it happens to lead) — trans/oil/boost placed elsewhere are dropped.
-        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID), candidates)
+        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), candidates)
     }
 
     @Test
     fun `candidateGaugesFor(placedIds) is a stable ribbon - a lower-index candidate sits LEFT of current`() {
-        // Current gauge = speed (last in the catalog ribbon); coolant is unplaced so it is offered.
-        // Because ordering is the stable GAUGE_CATALOG order, coolant (index 0) lands BEFORE speed:
-        // reachable by scrolling LEFT of the current gauge, later ids would be RIGHT.
+        // Current gauge = speed (second-to-last in the catalog ribbon since OBD-86 appended
+        // engine load); coolant is unplaced so it is offered. Because ordering is the stable
+        // GAUGE_CATALOG order, coolant (index 0) lands BEFORE speed: reachable by scrolling LEFT
+        // of the current gauge, later ids would be RIGHT.
         val placed = setOf(SPEED_PID_ID, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
         val candidates = candidateGaugesFor(SPEED_PID_ID, placed).map { it.id }
 
-        // Ribbon order: coolant(0), rpm(4), speed(5) — coolant and rpm precede the current speed.
-        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID), candidates)
+        // Ribbon order: coolant(0), rpm(4), speed(5), engineLoad(6) — coolant and rpm precede the
+        // current speed; engineLoad is unplaced too and sits AFTER speed (a RIGHT swipe away).
+        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), candidates)
         val currentIndex = candidates.indexOf(SPEED_PID_ID)
         assertEquals(2, currentIndex)
         assertTrue(candidates.indexOf(PidIds.COOLANT) < currentIndex)
+        assertTrue(candidates.indexOf(ENGINE_LOAD_PID_ID) > currentIndex)
     }
 
     @Test
@@ -164,7 +191,7 @@ class GaugeCatalogTest {
 
         val addable = addableGaugesFor(placed).map { it.id }.toSet()
 
-        assertEquals(setOf(PidIds.RPM, SPEED_PID_ID), addable)
+        assertEquals(setOf(PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), addable)
     }
 
     @Test
@@ -177,5 +204,6 @@ class GaugeCatalogTest {
     private companion object {
         const val ARBITRARY_RPM_VALUE = 3000.0
         const val ARBITRARY_SPEED_VALUE = 65.0
+        const val ARBITRARY_ENGINE_LOAD_VALUE = 56.0
     }
 }

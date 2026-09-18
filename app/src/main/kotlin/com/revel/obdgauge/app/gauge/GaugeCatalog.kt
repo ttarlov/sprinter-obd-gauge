@@ -68,12 +68,51 @@ val SPEED_PID_DEFINITION: PidDefinition =
     )
 
 /**
- * All gauges the OBD-42 swap picker may offer: [DASHBOARD_PIDS] plus [RPM_PID_DEFINITION] and
- * [SPEED_PID_DEFINITION] (OBD-61). Neutral-colored automatically — [ThresholdConfig.seed] has no
- * entry for [PidIds.RPM] or speed, and [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL]
- * for any id absent from its threshold table, exactly like [PidIds.BOOST].
+ * The channel id for calculated engine load, mirrored from `:core:protocol`'s
+ * `ProtocolPidIds.ENGINE_LOAD` ("engineLoad"). Defined locally for the same reason as
+ * [SPEED_PID_ID]: `:core:protocol` is a `prodImplementation`-only dependency, so flavor-common
+ * `src/main/` cannot import `ProtocolPidIds` directly. A `testProd` parity assertion pins this
+ * equal to `ProtocolPidIds.ENGINE_LOAD` so the two can never silently drift.
  */
-val GAUGE_CATALOG: List<PidDefinition> = DASHBOARD_PIDS + RPM_PID_DEFINITION + SPEED_PID_DEFINITION
+const val ENGINE_LOAD_PID_ID: String = "engineLoad"
+
+private const val ENGINE_LOAD_STANDARD_MODE = 1
+private const val ENGINE_LOAD_PID = 0x04
+private const val ENGINE_LOAD_UNUSED_PARSE_RESULT = 0.0
+
+/**
+ * OBD-86's engine load gauge: standard PID `0104`, `A × 100 / 255` %, already decoded and
+ * verified at the protocol layer (`PidRegistry.engineLoad`, ~56 % observed on this van). Declared
+ * in [MeasurementUnit.PERCENT] — a unitless percentage, so
+ * [DisplayUnitDataSource][com.revel.obdgauge.app.datasource.DisplayUnitDataSource] passes it
+ * through untouched, the same as every other channel with no display-unit mismatch to resolve.
+ *
+ * Swap-only, exactly like [RPM_PID_DEFINITION] and [SPEED_PID_DEFINITION]: added to
+ * [GAUGE_CATALOG] but deliberately NOT to [DASHBOARD_PIDS], so it is offered by the swap
+ * carousel and the "+" add-palette without becoming a fifth always-visible tile on a fresh
+ * install. No seed threshold entry ([ThresholdConfig.seed]) — a plain neutral readout, like
+ * boost and speed, not a green/amber/red band.
+ */
+val ENGINE_LOAD_PID_DEFINITION: PidDefinition =
+    PidDefinition(
+        id = ENGINE_LOAD_PID_ID,
+        label = "Load",
+        unit = MeasurementUnit.PERCENT,
+        request = ObdRequest.StandardPid(mode = ENGINE_LOAD_STANDARD_MODE, pid = ENGINE_LOAD_PID),
+        parse = { ENGINE_LOAD_UNUSED_PARSE_RESULT },
+        pollPriority = PollPriority.FAST,
+        verified = true,
+    )
+
+/**
+ * All gauges the OBD-42 swap picker may offer: [DASHBOARD_PIDS] plus [RPM_PID_DEFINITION],
+ * [SPEED_PID_DEFINITION] (OBD-61), and [ENGINE_LOAD_PID_DEFINITION] (OBD-86). Neutral-colored
+ * automatically — [ThresholdConfig.seed] has no entry for [PidIds.RPM], speed, or engine load,
+ * and [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL] for any id absent from its
+ * threshold table, exactly like [PidIds.BOOST].
+ */
+val GAUGE_CATALOG: List<PidDefinition> =
+    DASHBOARD_PIDS + RPM_PID_DEFINITION + SPEED_PID_DEFINITION + ENGINE_LOAD_PID_DEFINITION
 
 /** [GAUGE_CATALOG] keyed by [PidDefinition.id]. */
 val GAUGE_CATALOG_BY_ID: Map<String, PidDefinition> = GAUGE_CATALOG.associateBy { it.id }

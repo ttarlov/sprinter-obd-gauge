@@ -4,7 +4,7 @@ title: Surface engine load (PID 0104) as a selectable dashboard gauge
 module: app
 owner: ui-agent
 sprint: telemetry
-status: in-review
+status: merged
 type: feature
 hardware-verify: false
 blocked-by: []
