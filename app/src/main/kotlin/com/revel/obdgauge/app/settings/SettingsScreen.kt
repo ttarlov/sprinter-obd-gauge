@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -63,6 +64,7 @@ fun SettingsScreen(
     onSetUnits: (UnitPreferences) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetShowConnectionStatus: (Boolean) -> Unit,
+    onSetImmersiveMode: (Boolean) -> Unit,
     onSetPollRate: (PollRate) -> Unit,
     onOpenRecordings: () -> Unit,
     onBack: () -> Unit,
@@ -73,7 +75,12 @@ fun SettingsScreen(
         color = MaterialTheme.colorScheme.background,
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(SECTION_SPACING_DP.dp),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .safeDrawingPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(SECTION_SPACING_DP.dp),
             verticalArrangement = Arrangement.spacedBy(SECTION_SPACING_DP.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -87,18 +94,14 @@ fun SettingsScreen(
             HorizontalDivider()
             UnitsSection(settings.units, onSetUnits)
             HorizontalDivider()
-            KeepScreenOnSection(settings.keepScreenOn, onSetKeepScreenOn)
-            HorizontalDivider()
-            // OBD-84: inlined rather than its own private fun, same reasoning as the Recordings
-            // section below — this file is already at detekt's per-file function-count bar.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "Show connection status", modifier = Modifier.weight(1f))
-                Switch(
-                    checked = settings.showConnectionStatus,
-                    onCheckedChange = onSetShowConnectionStatus,
-                    modifier = Modifier.testTag("show-connection-status-switch"),
-                )
-            }
+            DisplaySection(
+                keepScreenOn = settings.keepScreenOn,
+                onSetKeepScreenOn = onSetKeepScreenOn,
+                showConnectionStatus = settings.showConnectionStatus,
+                onSetShowConnectionStatus = onSetShowConnectionStatus,
+                immersiveMode = settings.immersiveMode,
+                onSetImmersiveMode = onSetImmersiveMode,
+            )
             HorizontalDivider()
             PollRateSection(settings.pollRate, onSetPollRate)
             HorizontalDivider()
@@ -333,10 +336,20 @@ private fun UnitChoiceButton(
     }
 }
 
+// The three display/screen-behavior toggles, grouped in one section so `SettingsScreen` stays
+// under detekt's LongMethod bar without adding a per-toggle private fun (this file is already at
+// its per-file function-count bar). Each toggle keeps its own divider and testTag, so the
+// rendered layout is identical to the three formerly-separate rows (OBD-21 keep-screen-on,
+// OBD-84 show-connection-status, OBD-83 immersive).
 @Composable
-private fun KeepScreenOnSection(
+@Suppress("LongParameterList") // one param pair per independently-testable toggle.
+private fun DisplaySection(
     keepScreenOn: Boolean,
     onSetKeepScreenOn: (Boolean) -> Unit,
+    showConnectionStatus: Boolean,
+    onSetShowConnectionStatus: (Boolean) -> Unit,
+    immersiveMode: Boolean,
+    onSetImmersiveMode: (Boolean) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text = "Keep screen on", modifier = Modifier.weight(1f))
@@ -344,6 +357,30 @@ private fun KeepScreenOnSection(
             checked = keepScreenOn,
             onCheckedChange = onSetKeepScreenOn,
             modifier = Modifier.testTag("keep-screen-on-switch"),
+        )
+    }
+    HorizontalDivider()
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(text = "Show connection status", modifier = Modifier.weight(1f))
+        Switch(
+            checked = showConnectionStatus,
+            onCheckedChange = onSetShowConnectionStatus,
+            modifier = Modifier.testTag("show-connection-status-switch"),
+        )
+    }
+    HorizontalDivider()
+    Column(verticalArrangement = Arrangement.spacedBy(ROW_SPACING_DP.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "Immersive mode", modifier = Modifier.weight(1f))
+            Switch(
+                checked = immersiveMode,
+                onCheckedChange = onSetImmersiveMode,
+                modifier = Modifier.testTag("immersive-mode-switch"),
+            )
+        }
+        Text(
+            text = "Hides the navigation bar; swipe up to show it",
+            style = MaterialTheme.typography.labelSmall,
         )
     }
 }
@@ -398,6 +435,7 @@ fun SettingsRoute(
         onSetUnits = viewModel::setUnits,
         onSetKeepScreenOn = viewModel::setKeepScreenOn,
         onSetShowConnectionStatus = viewModel::setShowConnectionStatus,
+        onSetImmersiveMode = viewModel::setImmersiveMode,
         onSetPollRate = viewModel::setPollRate,
         onOpenRecordings = { showRecordings = true },
         onBack = onBack,

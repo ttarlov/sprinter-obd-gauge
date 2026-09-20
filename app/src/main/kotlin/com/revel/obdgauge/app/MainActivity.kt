@@ -19,6 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -166,19 +168,30 @@ class MainActivity : ComponentActivity() {
         val scales by viewModel.scales.collectAsStateWithLifecycle()
         val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
         val showConnectionStatus by viewModel.showConnectionStatus.collectAsStateWithLifecycle()
+        val immersiveMode by viewModel.immersiveMode.collectAsStateWithLifecycle()
         val recordingState by viewModel.recordingState.collectAsStateWithLifecycle()
         val engineOffAction by viewModel.engineOffAction.collectAsStateWithLifecycle()
 
         // OBD-71: a no-op for every EngineOffAction except ShowPrompt — see its KDoc.
         EngineOffPromptHost(action = engineOffAction, onKeepMonitoring = viewModel::keepMonitoring)
 
-        // OBD-21: FLAG_KEEP_SCREEN_ON follows the persisted setting live — no restart,
-        // and it's cleared automatically the moment the setting flips back off.
-        LaunchedEffect(keepScreenOn) {
+        // Both window behaviors follow their persisted settings live — no restart. OBD-21:
+        // FLAG_KEEP_SCREEN_ON clears the moment it flips off. OBD-83: only the nav bar is hidden
+        // (sticky-immersive; swipe up reveals it transiently) and re-shown — statusBars() is
+        // deliberately never touched. Kept in one effect (re-applying either on the other's change
+        // is idempotent) so this composable stays under detekt's LongMethod bar.
+        LaunchedEffect(keepScreenOn, immersiveMode) {
             if (keepScreenOn) {
                 window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            val controller = WindowInsetsControllerCompat(window, window.decorView)
+            if (immersiveMode) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.navigationBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.navigationBars())
             }
         }
 

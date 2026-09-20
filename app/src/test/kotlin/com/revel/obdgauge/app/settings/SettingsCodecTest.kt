@@ -52,6 +52,7 @@ class SettingsCodecTest {
                 // coinciding with AppSettings()'s own true default — see the dedicated
                 // default-true-on-missing test below for that case.
                 showConnectionStatus = false,
+                immersiveMode = true,
                 pollRate = PollRate.HZ_2,
                 speedCorrectionFactor = 1.1,
                 renderStyles =
@@ -93,6 +94,18 @@ class SettingsCodecTest {
 
         // Absent: empty preferences decode to the 1.0 default (no correction).
         assertEquals(1.0, decodeAppSettings(emptyPreferences()).speedCorrectionFactor, 0.0)
+    }
+
+    @Test
+    fun `OBD-83 immersive mode round-trips, and defaults to false when missing`() {
+        // Present: an enabled toggle survives a round trip.
+        val preferences = mutablePreferencesOf()
+        encodeAppSettings(AppSettings(immersiveMode = true), preferences)
+        assertTrue(decodeAppSettings(preferences.toPreferences()).immersiveMode)
+
+        // Absent: empty preferences (pre-OBD-83 install, or never toggled) decode to the false
+        // default, matching AppSettings' own default.
+        assertFalse(decodeAppSettings(emptyPreferences()).immersiveMode)
     }
 
     @Test

@@ -219,6 +219,16 @@ class DashboardViewModel
                     AppSettings().showConnectionStatus,
                 )
 
+        /** OBD-83's immersive-mode toggle; `MainActivity` applies it to the window. */
+        val immersiveMode: StateFlow<Boolean> =
+            settingsRepository.settings
+                .map { it.immersiveMode }
+                .stateIn(
+                    viewModelScope,
+                    SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    AppSettings().immersiveMode,
+                )
+
         /** OBD-70: what the dashboard's Record control renders — see [RecordingBridge]. */
         val recordingState: StateFlow<RecordingState> = recordingBridge.state
 

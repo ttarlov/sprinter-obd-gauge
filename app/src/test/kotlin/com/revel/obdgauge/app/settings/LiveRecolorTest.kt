@@ -82,6 +82,7 @@ class LiveRecolorTest {
                     onSetUnits = settingsViewModel::setUnits,
                     onSetKeepScreenOn = settingsViewModel::setKeepScreenOn,
                     onSetShowConnectionStatus = settingsViewModel::setShowConnectionStatus,
+                    onSetImmersiveMode = settingsViewModel::setImmersiveMode,
                     onSetPollRate = settingsViewModel::setPollRate,
                     onOpenRecordings = {},
                     onBack = {},

@@ -82,6 +82,8 @@ class SettingsViewModel
 
         fun setShowConnectionStatus(enabled: Boolean) = update { it.copy(showConnectionStatus = enabled) }
 
+        fun setImmersiveMode(enabled: Boolean) = update { it.copy(immersiveMode = enabled) }
+
         fun setPollRate(rate: PollRate) = update { it.copy(pollRate = rate) }
 
         private fun update(transform: (AppSettings) -> AppSettings) {

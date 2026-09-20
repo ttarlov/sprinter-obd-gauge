@@ -170,6 +170,7 @@ class SettingsScreenTest {
                     onSetUnits = { settings.value = settings.value.copy(units = it) },
                     onSetKeepScreenOn = {},
                     onSetShowConnectionStatus = {},
+                    onSetImmersiveMode = {},
                     onSetPollRate = {},
                     onOpenRecordings = {},
                     onBack = {},
@@ -248,6 +249,16 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun `immersive-mode switch reports the toggled value`() {
+        var reported: Boolean? = null
+        setFullScreenContent(onSetImmersiveMode = { enabled -> reported = enabled })
+
+        composeTestRule.onNodeWithTag("immersive-mode-switch").performScrollTo().performClick()
+
+        assertTrue(reported!!)
+    }
+
+    @Test
     fun `selecting a poll rate reports it`() {
         var reported: PollRate? = null
         setFullScreenContent(onSetPollRate = { rate -> reported = rate })
@@ -267,6 +278,7 @@ class SettingsScreenTest {
         onSetUnits: (UnitPreferences) -> Unit = {},
         onSetKeepScreenOn: (Boolean) -> Unit = {},
         onSetShowConnectionStatus: (Boolean) -> Unit = {},
+        onSetImmersiveMode: (Boolean) -> Unit = {},
         onSetPollRate: (PollRate) -> Unit = {},
         onBack: () -> Unit = {},
     ) {
@@ -281,6 +293,7 @@ class SettingsScreenTest {
                     onSetUnits = onSetUnits,
                     onSetKeepScreenOn = onSetKeepScreenOn,
                     onSetShowConnectionStatus = onSetShowConnectionStatus,
+                    onSetImmersiveMode = onSetImmersiveMode,
                     onSetPollRate = onSetPollRate,
                     onOpenRecordings = {},
                     onBack = onBack,

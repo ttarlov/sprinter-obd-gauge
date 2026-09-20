@@ -86,6 +86,13 @@ data class AppSettings(
      * this only gates the steady `Ready` state — see [ConnectionBanner]'s KDoc.
      */
     val showConnectionStatus: Boolean = true,
+    /**
+     * OBD-83: hides the system navigation bar in sticky-immersive mode (swipe up from the
+     * bottom edge reveals it transiently, then it auto-hides again) — the status bar stays
+     * visible either way. Default OFF: no surprise behavior change until a user opts in.
+     * `MainActivity` applies it to the window via `WindowInsetsControllerCompat`.
+     */
+    val immersiveMode: Boolean = false,
     val pollRate: PollRate = PollRate.HZ_4,
     // OBD-61: the GPS-auto-learned speedometer correction multiplier (true = ecu × factor).
     // 1.0 means "no correction / not yet learned", which is what a fresh install renders — the
