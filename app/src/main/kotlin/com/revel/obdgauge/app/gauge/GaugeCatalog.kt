@@ -105,14 +105,90 @@ val ENGINE_LOAD_PID_DEFINITION: PidDefinition =
     )
 
 /**
+ * The channel id for engine fuel rate, mirrored from `:core:protocol`'s
+ * `ProtocolPidIds.FUEL_RATE` ("fuelRate"). Defined locally for the same reason as
+ * [SPEED_PID_ID]/[ENGINE_LOAD_PID_ID]: `:core:protocol` is a `prodImplementation`-only
+ * dependency, so flavor-common `src/main/` cannot import `ProtocolPidIds` directly. A
+ * `testProd` parity assertion pins this equal to `ProtocolPidIds.FUEL_RATE` so the two can never
+ * silently drift.
+ */
+const val FUEL_RATE_PID_ID: String = "fuelRate"
+
+private const val FUEL_RATE_STANDARD_MODE = 1
+private const val FUEL_RATE_PID = 0x5E
+private const val FUEL_RATE_UNUSED_PARSE_RESULT = 0.0
+
+/**
+ * OBD-87's fuel-rate gauge: standard PID `015E`, `(256A+B)/20` L/h, already decoded and verified
+ * at the protocol layer (`PidRegistry.fuelRate`, live since OBD-58) but never before requested by
+ * `:app` — [GAUGE_CATALOG] is what `ActivePollSet.activePids()` polls, and fuel rate was absent
+ * from it, so the channel never went on the wire. Added here **swap-only**, exactly like
+ * [RPM_PID_DEFINITION]/[SPEED_PID_DEFINITION]/[ENGINE_LOAD_PID_DEFINITION], purely so this
+ * definition's presence in [GAUGE_CATALOG] puts fuel rate on the wire every session — the
+ * `InstantMpgDataSource` decorator (`app/src/prod/.../datasource/`) is what actually consumes it,
+ * but a gauge tile of its own is a legitimate bonus (raw L/h, mirrors `moduleVoltage`'s "live
+ * channel, not built for a tile yet until now" story).
+ *
+ * Declared in [MeasurementUnit.LITERS_PER_HOUR] — the same unit `:core:protocol` parses to, so
+ * [DisplayUnitDataSource][com.revel.obdgauge.app.datasource.DisplayUnitDataSource] passes it
+ * through untouched, like `moduleVoltage`/`maf` would if they ever got tiles.
+ */
+val FUEL_RATE_PID_DEFINITION: PidDefinition =
+    PidDefinition(
+        id = FUEL_RATE_PID_ID,
+        label = "Fuel Rate",
+        unit = MeasurementUnit.LITERS_PER_HOUR,
+        request = ObdRequest.StandardPid(mode = FUEL_RATE_STANDARD_MODE, pid = FUEL_RATE_PID),
+        parse = { FUEL_RATE_UNUSED_PARSE_RESULT },
+        pollPriority = PollPriority.SLOW,
+        verified = true,
+    )
+
+/**
+ * The channel id for the OBD-87 instant-MPG computed gauge — a purely local id, not mirrored from
+ * `:core:protocol` (there is no PID for it; it is computed at the `prod` DI seam's outermost
+ * decorator, `InstantMpgDataSource`, from GPS-corrected speed and fuel rate — see that class's
+ * KDoc). Named like [PidIds.BOOST]: a computed channel's id lives whichever layer computes it,
+ * and here that is `:app`, not `:core:protocol`.
+ */
+const val INSTANT_MPG_PID_ID: String = "instantMpg"
+
+private const val INSTANT_MPG_UNUSED_PARSE_RESULT = 0.0
+
+/**
+ * OBD-87's instant fuel-economy gauge: `corrected_speed_mph / (fuelRate_Lph / 3.785411784)`,
+ * lightly smoothed (~2-3 s rolling average) by `InstantMpgDataSource`. Like [PidIds.BOOST], this
+ * is a **computed estimate** (`verified = false`) with a placeholder [request]/[parse] that the
+ * app layer never calls — the real computation lives in `InstantMpgDataSource`, which injects the
+ * finished [com.revel.obdgauge.model.Reading] directly into the readings map under
+ * [INSTANT_MPG_PID_ID] rather than requesting anything over the wire for this id.
+ *
+ * Swap-only, neutral (no [ThresholdConfig.seed] entry — higher-is-better banding is a trivial
+ * follow-up, not this issue's scope). [GaugeScaleDefaults] does seed a ~0-40 mpg sweep for the
+ * needle/bar-arc styles.
+ */
+val INSTANT_MPG_PID_DEFINITION: PidDefinition =
+    PidDefinition(
+        id = INSTANT_MPG_PID_ID,
+        label = "MPG",
+        unit = MeasurementUnit.MILES_PER_GALLON,
+        request = ObdRequest.StandardPid(mode = FUEL_RATE_STANDARD_MODE, pid = FUEL_RATE_PID),
+        parse = { INSTANT_MPG_UNUSED_PARSE_RESULT },
+        pollPriority = PollPriority.SLOW,
+        verified = false,
+    )
+
+/**
  * All gauges the OBD-42 swap picker may offer: [DASHBOARD_PIDS] plus [RPM_PID_DEFINITION],
- * [SPEED_PID_DEFINITION] (OBD-61), and [ENGINE_LOAD_PID_DEFINITION] (OBD-86). Neutral-colored
- * automatically — [ThresholdConfig.seed] has no entry for [PidIds.RPM], speed, or engine load,
- * and [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL] for any id absent from its
+ * [SPEED_PID_DEFINITION] (OBD-61), [ENGINE_LOAD_PID_DEFINITION] (OBD-86), and, since OBD-87,
+ * [FUEL_RATE_PID_DEFINITION] and [INSTANT_MPG_PID_DEFINITION]. Neutral-colored automatically —
+ * [ThresholdConfig.seed] has no entry for any of these five swap-only ids, and
+ * [ThresholdConfig.classify] returns [ThresholdZone.NEUTRAL] for any id absent from its
  * threshold table, exactly like [PidIds.BOOST].
  */
 val GAUGE_CATALOG: List<PidDefinition> =
-    DASHBOARD_PIDS + RPM_PID_DEFINITION + SPEED_PID_DEFINITION + ENGINE_LOAD_PID_DEFINITION
+    DASHBOARD_PIDS + RPM_PID_DEFINITION + SPEED_PID_DEFINITION + ENGINE_LOAD_PID_DEFINITION +
+        FUEL_RATE_PID_DEFINITION + INSTANT_MPG_PID_DEFINITION
 
 /** [GAUGE_CATALOG] keyed by [PidDefinition.id]. */
 val GAUGE_CATALOG_BY_ID: Map<String, PidDefinition> = GAUGE_CATALOG.associateBy { it.id }

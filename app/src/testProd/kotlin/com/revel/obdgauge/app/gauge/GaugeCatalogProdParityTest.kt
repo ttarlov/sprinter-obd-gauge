@@ -16,4 +16,12 @@ class GaugeCatalogProdParityTest {
     fun `the local engine load id matches the protocol layer's ProtocolPidIds_ENGINE_LOAD`() {
         assertEquals(ProtocolPidIds.ENGINE_LOAD, ENGINE_LOAD_PID_ID)
     }
+
+    // OBD-87: same discipline for the fuel-rate id this issue adds to GAUGE_CATALOG so fuel rate
+    // goes on the wire. INSTANT_MPG_PID_ID has no protocol-layer counterpart to pin against — it
+    // is computed entirely at the app DI seam (InstantMpgDataSource), never a wire PID.
+    @Test
+    fun `the local fuel rate id matches the protocol layer's ProtocolPidIds_FUEL_RATE`() {
+        assertEquals(ProtocolPidIds.FUEL_RATE, FUEL_RATE_PID_ID)
+    }
 }

@@ -313,8 +313,9 @@ class ObdConnectionServiceTest {
         val csvFile = logsDirectory.listFiles { file -> file.name.startsWith("obdlog_") }?.firstOrNull()
         assertNotNull(csvFile)
         assertEquals("# sprinter-obd-gauge log v1", csvFile!!.readLines().first())
-        // demo's loggablePids (5) happen to be a subset of GAUGE_CATALOG (6, adds "speed"), so the
-        // union doesn't grow the COUNT here — prod's much larger PidCatalog.definitions set does.
+        // demo's loggablePids (5) happen to be a subset of GAUGE_CATALOG (8 since OBD-87's
+        // fuelRate/instantMpg additions), so the union doesn't grow the COUNT here — prod's much
+        // larger PidCatalog.definitions set does.
         // What's actually load-bearing (and true regardless of flavor): every recorded id is polled.
         assertEquals(service.loggablePids, service.activePollSet.recordingPids.value)
         val activeIds =

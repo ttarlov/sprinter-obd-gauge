@@ -15,9 +15,10 @@ import org.junit.Test
  */
 class GaugeCatalogTest {
     @Test
-    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm, speed and engine load, and nothing else`() {
+    fun `GAUGE_CATALOG is DASHBOARD_PIDS plus rpm, speed, engine load, fuel rate and instant mpg, and nothing else`() {
         assertEquals(
-            DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM + SPEED_PID_ID + ENGINE_LOAD_PID_ID,
+            DASHBOARD_PIDS.map { it.id }.toSet() + PidIds.RPM + SPEED_PID_ID + ENGINE_LOAD_PID_ID +
+                FUEL_RATE_PID_ID + INSTANT_MPG_PID_ID,
             GAUGE_CATALOG.map { it.id }.toSet(),
         )
     }
@@ -64,6 +65,45 @@ class GaugeCatalogTest {
             ThresholdZone.NEUTRAL,
             ThresholdConfig.classify(ENGINE_LOAD_PID_ID, ARBITRARY_ENGINE_LOAD_VALUE),
         )
+    }
+
+    @Test
+    fun `OBD-87 fuel rate is a swap-only catalog gauge, never a default dashboard tile`() {
+        // Same discipline as rpm/speed/engine load: adding fuel rate to DASHBOARD_PIDS would make
+        // it a default-visible tile. It must be picker-only — its real job is putting `015E` on
+        // the wire for InstantMpgDataSource to consume, a tile of its own is a bonus.
+        assertFalse(FUEL_RATE_PID_ID in DASHBOARD_PIDS_BY_ID)
+        assertTrue(FUEL_RATE_PID_ID in GAUGE_CATALOG_BY_ID)
+    }
+
+    @Test
+    fun `OBD-87 fuel rate is declared in LITERS_PER_HOUR, verified, and classifies NEUTRAL`() {
+        val fuelRate = GAUGE_CATALOG_BY_ID.getValue(FUEL_RATE_PID_ID)
+        assertEquals(MeasurementUnit.LITERS_PER_HOUR, fuelRate.unit)
+        // Standard mode-01 PID 015E — live-verified at the protocol layer since OBD-58.
+        assertTrue(fuelRate.verified)
+        assertEquals("Fuel Rate", fuelRate.label)
+        // No seed threshold entry → neutral coloring, like rpm, speed, engine load and boost.
+        assertFalse(FUEL_RATE_PID_ID in ThresholdConfig.seed)
+        assertEquals(ThresholdZone.NEUTRAL, ThresholdConfig.classify(FUEL_RATE_PID_ID, ARBITRARY_FUEL_RATE_VALUE))
+    }
+
+    @Test
+    fun `OBD-87 instant mpg is a swap-only catalog gauge, never a default dashboard tile`() {
+        assertFalse(INSTANT_MPG_PID_ID in DASHBOARD_PIDS_BY_ID)
+        assertTrue(INSTANT_MPG_PID_ID in GAUGE_CATALOG_BY_ID)
+    }
+
+    @Test
+    fun `OBD-87 instant mpg is declared in MILES_PER_GALLON, unverified (computed estimate), and classifies NEUTRAL`() {
+        val instantMpg = GAUGE_CATALOG_BY_ID.getValue(INSTANT_MPG_PID_ID)
+        assertEquals(MeasurementUnit.MILES_PER_GALLON, instantMpg.unit)
+        // Computed, like boost — badged unverified until it's more than a model of two live inputs.
+        assertFalse(instantMpg.verified)
+        assertEquals("MPG", instantMpg.label)
+        // No seed threshold entry → neutral coloring, like boost.
+        assertFalse(INSTANT_MPG_PID_ID in ThresholdConfig.seed)
+        assertEquals(ThresholdZone.NEUTRAL, ThresholdConfig.classify(INSTANT_MPG_PID_ID, ARBITRARY_MPG_VALUE))
     }
 
     @Test
@@ -164,25 +204,34 @@ class GaugeCatalogTest {
 
         // OBD-66: current + unplaced-elsewhere ids, each at its GAUGE_CATALOG slot (coolant is first
         // in the catalog, so here it happens to lead) — trans/oil/boost placed elsewhere are dropped.
-        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), candidates)
+        // OBD-87 appended fuelRate/instantMpg to the catalog, so both trail here too.
+        assertEquals(
+            listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID, FUEL_RATE_PID_ID, INSTANT_MPG_PID_ID),
+            candidates,
+        )
     }
 
     @Test
     fun `candidateGaugesFor(placedIds) is a stable ribbon - a lower-index candidate sits LEFT of current`() {
-        // Current gauge = speed (second-to-last in the catalog ribbon since OBD-86 appended
-        // engine load); coolant is unplaced so it is offered. Because ordering is the stable
-        // GAUGE_CATALOG order, coolant (index 0) lands BEFORE speed: reachable by scrolling LEFT
-        // of the current gauge, later ids would be RIGHT.
+        // Current gauge = speed; coolant is unplaced so it is offered. Because ordering is the
+        // stable GAUGE_CATALOG order, coolant (index 0) lands BEFORE speed: reachable by
+        // scrolling LEFT of the current gauge, later ids would be RIGHT.
         val placed = setOf(SPEED_PID_ID, PidIds.TRANS_TEMP, PidIds.OIL_TEMP, PidIds.BOOST)
         val candidates = candidateGaugesFor(SPEED_PID_ID, placed).map { it.id }
 
-        // Ribbon order: coolant(0), rpm(4), speed(5), engineLoad(6) — coolant and rpm precede the
-        // current speed; engineLoad is unplaced too and sits AFTER speed (a RIGHT swipe away).
-        assertEquals(listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), candidates)
+        // Ribbon order: coolant(0), rpm(4), speed(5), engineLoad(6), fuelRate(7), instantMpg(8) —
+        // coolant and rpm precede the current speed; the OBD-87 pair is unplaced too and sits
+        // AFTER speed (a RIGHT swipe away).
+        assertEquals(
+            listOf(PidIds.COOLANT, PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID, FUEL_RATE_PID_ID, INSTANT_MPG_PID_ID),
+            candidates,
+        )
         val currentIndex = candidates.indexOf(SPEED_PID_ID)
         assertEquals(2, currentIndex)
         assertTrue(candidates.indexOf(PidIds.COOLANT) < currentIndex)
         assertTrue(candidates.indexOf(ENGINE_LOAD_PID_ID) > currentIndex)
+        assertTrue(candidates.indexOf(FUEL_RATE_PID_ID) > currentIndex)
+        assertTrue(candidates.indexOf(INSTANT_MPG_PID_ID) > currentIndex)
     }
 
     @Test
@@ -191,7 +240,7 @@ class GaugeCatalogTest {
 
         val addable = addableGaugesFor(placed).map { it.id }.toSet()
 
-        assertEquals(setOf(PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID), addable)
+        assertEquals(setOf(PidIds.RPM, SPEED_PID_ID, ENGINE_LOAD_PID_ID, FUEL_RATE_PID_ID, INSTANT_MPG_PID_ID), addable)
     }
 
     @Test
@@ -205,5 +254,7 @@ class GaugeCatalogTest {
         const val ARBITRARY_RPM_VALUE = 3000.0
         const val ARBITRARY_SPEED_VALUE = 65.0
         const val ARBITRARY_ENGINE_LOAD_VALUE = 56.0
+        const val ARBITRARY_FUEL_RATE_VALUE = 1.2
+        const val ARBITRARY_MPG_VALUE = 18.0
     }
 }

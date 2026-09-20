@@ -65,6 +65,8 @@ class GaugeScaleTest {
                 com.revel.obdgauge.model.PidIds.BOOST,
                 com.revel.obdgauge.model.PidIds.RPM,
                 SPEED_PID_ID,
+                // OBD-87: the instant-MPG needle/bar-arc styles get a seeded ~0-40 mpg sweep too.
+                INSTANT_MPG_PID_ID,
             )
         assertEquals(expectedIds, GaugeScaleDefaults.seed.keys)
         expectedIds.forEach { id ->

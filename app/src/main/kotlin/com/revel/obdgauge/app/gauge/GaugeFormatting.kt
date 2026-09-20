@@ -25,6 +25,7 @@ fun unitSuffix(unit: MeasurementUnit): String =
         MeasurementUnit.GRAMS_PER_SECOND -> " g/s"
         MeasurementUnit.LITERS_PER_HOUR -> " L/h"
         MeasurementUnit.VOLTS -> " V"
+        MeasurementUnit.MILES_PER_GALLON -> " mpg"
     }
 
 /**

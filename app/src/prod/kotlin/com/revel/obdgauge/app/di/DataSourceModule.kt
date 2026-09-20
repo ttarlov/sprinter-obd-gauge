@@ -2,6 +2,7 @@ package com.revel.obdgauge.app.di
 
 import android.util.Log
 import com.revel.obdgauge.app.datasource.DisplayUnitDataSource
+import com.revel.obdgauge.app.datasource.InstantMpgDataSource
 import com.revel.obdgauge.app.datasource.SpeedCorrectionDataSource
 import com.revel.obdgauge.app.settings.SettingsRepository
 import com.revel.obdgauge.app.speed.GpsSpeedProvider
@@ -77,7 +78,12 @@ object DataSourceModule {
         // `display` (the factor is unitless, so it commutes with the km/h→mph conversion). Demo's
         // DI chain is untouched — it has no GpsSpeedProvider and shows raw fake speed.
         val calibrator = SpeedCalibrator(real, speedSource, settingsRepository, scope)
-        return SpeedCorrectionDataSource(display, calibrator.factor, scope)
+        val corrected = SpeedCorrectionDataSource(display, calibrator.factor, scope)
+        // OBD-87: the ONLY point in the chain where GPS-corrected mph speed and L/h fuel rate
+        // coexist — see InstantMpgDataSource's KDoc for why it must wrap `corrected` rather than
+        // sit anywhere upstream of it. Reuses this same `clock` (the singleton RealVehicleDataSource
+        // and DashboardViewModel already use) as the smoothing window's "now" source.
+        return InstantMpgDataSource(corrected, clock, scope)
     }
 
     @Provides

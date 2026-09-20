@@ -1,6 +1,7 @@
 package com.revel.obdgauge.app.datasource
 
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
+import com.revel.obdgauge.app.gauge.INSTANT_MPG_PID_ID
 import com.revel.obdgauge.model.LinkState
 import com.revel.obdgauge.model.MeasurementUnit
 import com.revel.obdgauge.model.PidDefinition
@@ -114,6 +115,30 @@ class DisplayUnitDataSourceTest {
             assertTrue(ProtocolPidIds.THROTTLE !in GAUGE_CATALOG_BY_ID)
         }
 
+    /**
+     * OBD-87: `instantMpg` is computed one layer OUTSIDE this class (`InstantMpgDataSource` wraps
+     * `SpeedCorrectionDataSource`, which wraps this one) — it never exists at this seam, but the
+     * id is also absent from [PidCatalog] entirely (there is no wire PID for a computed local
+     * channel), so [PROTOCOL_UNITS] has no entry for it and it would pass through unconverted
+     * even if it somehow arrived here early. Pins that "no unit to convert FROM" guarantee so a
+     * future refactor can't accidentally start rescaling an already-correct mpg value.
+     */
+    @Test
+    fun `a hypothetical instantMpg reading passes through unconverted - it has no protocol unit to convert from`() =
+        runTest {
+            val upstream = FakeSource(reading(INSTANT_MPG_PID_ID, MPG_VALUE))
+            val source = DisplayUnitDataSource(upstream, backgroundScope)
+            advanceUntilIdle()
+
+            assertEquals(
+                MPG_VALUE,
+                source.readings.value
+                    .getValue(INSTANT_MPG_PID_ID)
+                    .value,
+                TOLERANCE,
+            )
+        }
+
     /** Nothing is materialised: an absent channel stays absent, which is the boost story. */
     @Test
     fun `an absent channel is never defaulted into existence`() =
@@ -173,6 +198,7 @@ class DisplayUnitDataSourceTest {
         const val VACUUM_PSI = -2.900750
         const val RPM = 727.0
         const val THROTTLE_PERCENT = 83.0
+        const val MPG_VALUE = 18.4
         const val TOLERANCE = 0.001
     }
 }

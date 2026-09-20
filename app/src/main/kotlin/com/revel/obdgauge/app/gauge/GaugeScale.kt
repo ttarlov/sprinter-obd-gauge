@@ -34,6 +34,10 @@ data class GaugeScale(
  * Boost's 0–25 psi sweep is sized around sourced turbo hardware limits, not a claim the speed-
  * density *estimate* itself will track that range accurately (the "Est." badge should carry onto
  * the needle/bar-arc styles the same way it does onto the digital tile today).
+ *
+ * OBD-87 adds [INSTANT_MPG_PID_ID]'s 0–40 mpg sweep — a round range comfortably above this van's
+ * expected cruise economy (diesel Sprinter, roughly high-teens to low-20s mpg), not a researched
+ * hardware limit like the others.
  */
 object GaugeScaleDefaults {
     val seed: Map<String, GaugeScale> =
@@ -44,6 +48,7 @@ object GaugeScaleDefaults {
             PidIds.BOOST to GaugeScale(min = BOOST_MIN, max = BOOST_MAX, tick = BOOST_TICK),
             PidIds.RPM to GaugeScale(min = RPM_MIN, max = RPM_MAX, tick = RPM_TICK),
             SPEED_PID_ID to GaugeScale(min = SPEED_MIN, max = SPEED_MAX, tick = SPEED_TICK),
+            INSTANT_MPG_PID_ID to GaugeScale(min = MPG_MIN, max = MPG_MAX, tick = MPG_TICK),
         )
 
     private val FALLBACK = GaugeScale(min = FALLBACK_MIN, max = FALLBACK_MAX, tick = FALLBACK_TICK)
@@ -69,6 +74,9 @@ object GaugeScaleDefaults {
     private const val SPEED_MIN = 0.0
     private const val SPEED_MAX = 100.0
     private const val SPEED_TICK = 20.0
+    private const val MPG_MIN = 0.0
+    private const val MPG_MAX = 40.0
+    private const val MPG_TICK = 5.0
     private const val FALLBACK_MIN = 0.0
     private const val FALLBACK_MAX = 100.0
     private const val FALLBACK_TICK = 10.0

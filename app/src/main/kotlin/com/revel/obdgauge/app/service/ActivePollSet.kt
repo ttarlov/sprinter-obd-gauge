@@ -12,8 +12,8 @@ import javax.inject.Singleton
 /**
  * OBD-70: the single source of truth for "which PIDs should the shared
  * [com.revel.obdgauge.model.VehicleDataSource] be polling right now" — [GAUGE_CATALOG] (the
- * dashboard's own 6 channels) unioned with whatever a recording session currently wants (empty
- * when nothing is recording).
+ * dashboard's own channel catalog) unioned with whatever a recording session currently wants
+ * (empty when nothing is recording).
  *
  * ## The coordination hazard this settles
  *

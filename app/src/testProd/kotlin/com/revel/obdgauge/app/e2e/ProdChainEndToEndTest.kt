@@ -1,8 +1,11 @@
 package com.revel.obdgauge.app.e2e
 
 import com.revel.obdgauge.app.datasource.DisplayUnitDataSource
+import com.revel.obdgauge.app.datasource.InstantMpgDataSource
+import com.revel.obdgauge.app.datasource.SpeedCorrectionDataSource
 import com.revel.obdgauge.app.gauge.DashboardViewModel
 import com.revel.obdgauge.app.gauge.GAUGE_CATALOG_BY_ID
+import com.revel.obdgauge.app.gauge.INSTANT_MPG_PID_ID
 import com.revel.obdgauge.app.gauge.NO_READING_TEXT
 import com.revel.obdgauge.app.settings.AppSettings
 import com.revel.obdgauge.app.settings.SettingsRepository
@@ -165,6 +168,30 @@ class ProdChainEndToEndTest {
             assertEquals(1, link.commands.count { it == "ATZ" })
             val initialized = events.filterIsInstance<PollEvent.Initialized>().single()
             assertEquals("ELM327 v2.2", initialized.result.banner)
+        }
+
+    // ---- OBD-87: the real chain plus its two new outer decorators ----
+
+    @Test
+    fun `SpeedCorrection and InstantMpg wrap the real chain without disturbing any captured reading`() =
+        runTest(testDispatcher) {
+            // The 2026-08-12 capture never scripted a speed or fuel-rate reply (see
+            // CAPTURED_CHANNELS' KDoc), so this proves the two OBD-87 decorators are safe to sit
+            // on top of the real DisplayUnitDataSource output over an actual captured session:
+            // every already-verified value below is untouched, and — because neither of
+            // InstantMpgDataSource's two inputs ever arrived — no instantMpg reading appears.
+            val display = startVanSession(CAPTURED_CHANNELS)
+            val corrected = SpeedCorrectionDataSource(display, MutableStateFlow(1.0), backgroundScope)
+            val source = InstantMpgDataSource(corrected, clock, backgroundScope)
+            advanceUntilIdle()
+
+            val readings = source.readings.value
+            assertEquals(COOLANT_F, readings.getValue(PidIds.COOLANT).value, TOLERANCE)
+            assertTrue(readings.getValue(PidIds.RPM).value in RPM_IDLE_RANGE)
+            assertEquals(BARO_KPA, readings.getValue(PidIds.BARO).value, TOLERANCE)
+            assertNull(readings[ProtocolPidIds.SPEED])
+            assertNull(readings[ProtocolPidIds.FUEL_RATE])
+            assertNull(readings[INSTANT_MPG_PID_ID])
         }
 
     // ---- half 2: the same chain, through the real ViewModel, into rendered state ----

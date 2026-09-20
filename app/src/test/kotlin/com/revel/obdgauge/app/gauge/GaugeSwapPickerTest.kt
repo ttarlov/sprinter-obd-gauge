@@ -374,8 +374,9 @@ class GaugeSwapPickerTest {
 
     private companion object {
         // OBD-66 stable ribbon: for a default-grid coolant picker the pages are the GAUGE_CATALOG
-        // order [coolant, rpm, speed, engineLoad] (OBD-86 appended engineLoad) — coolant is
-        // catalog index 0 so it still leads here, with rpm and speed at these indices.
+        // order [coolant, rpm, speed, engineLoad, fuelRate, instantMpg] (OBD-86 appended
+        // engineLoad, OBD-87 appended the trailing pair) — coolant is catalog index 0 so it
+        // still leads here, with rpm and speed at these indices.
         // (candidateGaugesFor keeps every candidate at its catalog slot.)
         const val RPM_PAGE = 1
         const val SPEED_PAGE = 2

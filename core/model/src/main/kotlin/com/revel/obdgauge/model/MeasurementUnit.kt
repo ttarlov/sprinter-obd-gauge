@@ -45,4 +45,15 @@ enum class MeasurementUnit {
 
     /** Volts, used for control-module voltage (`0142`). Additive since OBD-58 (D9). */
     VOLTS,
+
+    /**
+     * Miles per US gallon, used for the OBD-87 instant-fuel-economy computed channel
+     * (`corrected_speed_mph / (fuelRate_Lph / 3.785411784)`). Additive since OBD-87 — same
+     * discipline as the OBD-58/D9 trio above: a real derived quantity this app now surfaces
+     * whose scaling was proven ahead of the unit landing. `UnitKind.OTHER` (see
+     * `app/gauge/UnitConversion.kt`) — the L/h→gal/h division is intrinsic to the compute
+     * function, not a `UnitConversion` between two units of the same kind, so no toggle exists
+     * or is implied by this member's presence.
+     */
+    MILES_PER_GALLON,
 }
