@@ -69,7 +69,7 @@ OBD-79 merges**, off the updated `main`, to avoid a three-file merge conflict.
 
 ## Hardware checklist
 
-- [ ] On the **Garmin Overlander (API 23)**: toggle Immersive mode ON → the system nav bar hides and app
+- [x] (Taras 2026-09-20: immersive works well on the Garmin) On the **Garmin Overlander (API 23)**: toggle Immersive mode ON → the system nav bar hides and app
   content fills the reclaimed space; swipe up from the bottom reveals it transiently, then it auto-hides;
   the top status bar stays visible throughout. Toggle OFF → nav bar returns and stays. No 3-button-nav
   collision with app controls while ON.
