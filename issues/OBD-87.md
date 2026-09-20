@@ -4,7 +4,7 @@ title: Instant MPG computed gauge (corrected speed ÷ fuel rate, lightly smoothe
 module: app
 owner: ui-agent
 sprint: telemetry
-status: open
+status: in-review
 type: feature
 hardware-verify: false
 blocked-by: []
