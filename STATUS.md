@@ -37,7 +37,7 @@
 | Sprint 4 — Telemetry & Hardening (Tier B/C) | +1.2M | ⬜ not started | — | — |
 | Maintenance — OBD-79 (foundation + manual tracker) | +600k | ✅ MERGED 2026-09-04 `5d83ad5` | ~1 build+2 review rounds | 1 merged / 0 rolled |
 | Reliability — OBD-82 (Connect restarts service) | +250k | ✅ MERGED 2026-09-12 (with 71+78) | — | 3 merged |
-| UX — OBD-83 (Immersive mode nav-bar toggle) | +250k | ✅ built+approved 2026-09-04 `aebee9a` (r2, +Settings/Recordings padding), ⛔ awaiting device-verify (Pixel+Garmin) | ~1 build+1 review | 0 merged (in-review) |
+| UX — OBD-83 (Immersive mode nav-bar toggle) | +250k | ✅ MERGED 2026-09-20 `76caa17` — Garmin-verified (immersive works well) | ~1 build+3 review | 1 merged |
 | UX — OBD-84 (Connection-status pill) | +250k | ✅ MERGED 2026-09-12 `c48375b` (approved, gate green) | ~1 build+1 review | 1 merged |
 | Telemetry — OBD-86 (Engine-load gauge) | +150k | ✅ MERGED 2026-09-18 `a874df5` (approved, gate green) | ~1 build+1 review | 1 merged |
 | Telemetry — OBD-87 (Instant MPG gauge) | +250k | ✅ MERGED 2026-09-19 `6dc5ee6` (approved, gate green); +bonus fuel-rate gauge | ~1 build+1 review | 1 merged |
